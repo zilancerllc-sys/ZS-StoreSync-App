@@ -1,0 +1,108 @@
+// ZS StoreSync — Prisma schema (Neon / PostgreSQL)
+// After editing run:  npx prisma migrate dev --name storesync_init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Shopify session storage (unchanged from your setup) ──────────────────────
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// ── A source store a merchant has connected to pull data FROM ────────────────
+model StoreConnection {
+  id            String   @id @default(cuid())
+  // the store that owns this connection (the merchant's main / target store)
+  ownerShop     String
+  // the connected source store domain, e.g. my-old-store.myshopify.com
+  sourceShop    String
+  // human label the merchant can set
+  label         String?
+  // whether we currently hold a valid offline token for sourceShop (in Session)
+  authorized    Boolean  @default(false)
+  lastUsedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([ownerShop, sourceShop])
+  @@index([ownerShop])
+}
+
+// ── A migration / sync run ──────────────────────────────────────────────────
+model MigrationJob {
+  id            String   @id @default(cuid())
+  shop          String   // owner (target) store
+  sourceShop    String
+  targetShop    String
+
+  // "migrate" | "sync" | "preview"
+  mode          String   @default("migrate")
+  // comma separated data types: "products,collections,pages,..."
+  dataTypes     String   @default("")
+
+  // "queued" | "running" | "completed" | "failed" | "partial"
+  status        String   @default("queued")
+
+  itemCount     Int      @default(0)   // total processed
+  createdCount  Int      @default(0)
+  updatedCount  Int      @default(0)
+  skippedCount  Int      @default(0)
+  failedCount   Int      @default(0)
+
+  summary       String?                // "320 products · 45 collections"
+  error         String?
+  logJson       String?  @db.Text      // JSON array of per-step logs
+
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([shop])
+  @@index([shop, createdAt])
+}
+
+// ── Per-shop billing / quota state ──────────────────────────────────────────
+model Subscription {
+  id            String   @id @default(cuid())
+  shop          String   @unique
+  // "free" | "starter" | "pro"
+  plan          String   @default("free")
+  // Shopify subscription gid (for paid plans)
+  shopifyChargeId String?
+  status        String   @default("active") // active | cancelled | frozen
+
+  // rolling monthly usage — legacy total count
+  monthlyUsed   Int      @default(0)
+  // per-type monthly usage (JSON: {"products":10,"collections":5,...})
+  usageJson     String   @db.Text      @default("{}")
+  periodStart   DateTime @default(now())  // when current 30-day window began
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([shop])
+}
