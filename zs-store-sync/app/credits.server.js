@@ -10,70 +10,120 @@ import db from "./db.server";
 // ─── Per-type limits per plan (0 = not available) ────────────────────────────
 export const PLAN_LIMITS = {
   free: {
-    products: 20,
+    products: 30,
     collections: 10,
-    pages: 10,
-    files: 0,
-    metaobjects: 0,
-    metafields: 0,
-    orders: 0,
-    customers: 0,
+    pages: 20,
+    discounts: 5,
+    files: 50,
+    menus: 3,
+    redirects: 100,
+    metaobjects: 20,
+    blogPosts: 20,
+    metafields: 1000,
+    orders: 5,
+    customers: 5,
   },
   starter: {
     products: 500,
-    collections: 100,
+    collections: 50,
     pages: 50,
-    files: 500,
-    metaobjects: 30,
-    metafields: 30,
-    orders: 0,
-    customers: 0,
+    discounts: 100,
+    files: 5000,
+    menus: 50,
+    redirects: 10000,
+    metaobjects: 100,
+    blogPosts: 20,
+    metafields: 50000,
+    orders: 200,
+    customers: 500,
   },
-  pro: {
-    products: 1000,
+  growth: {
+    products: 1500,
     collections: 500,
     pages: 200,
-    files: 1000,
-    metaobjects: 200,
-    metafields: 200,
-    orders: 100,
-    customers: 100,
+    discounts: 400,
+    files: 20000,
+    menus: 300,
+    redirects: 50000,
+    metaobjects: 250,
+    blogPosts: 20,
+    metafields: 75000,
+    orders: 500,
+    customers: 1000,
+  },
+  pro: {
+    products: 3000,
+    collections: 2000,
+    pages: 500,
+    discounts: 1000,
+    files: 50000,
+    menus: 1000,
+    redirects: 100000,
+    metaobjects: 500,
+    blogPosts: 20,
+    metafields: 100000,
+    orders: 500,
+    customers: 1000,
   },
 };
 
-// ─── Overage rate per item over limit (Pro plan only) ─────────────────────────
+// ─── Overage rate per item over limit ─────────────────────────────────────────
+// Kept for future per-item billing; no plan currently allows overage (all
+// tiers use hard limits, matching the published pricing).
 export const OVERAGE_RATE = {
   products: 0.02,
   collections: 0.05,
   pages: 0.05,
+  discounts: 0.05,
   files: 0.02,
+  menus: 0.05,
+  redirects: 0.02,
   metaobjects: 0.05,
+  blogPosts: 0.05,
   metafields: 0.02,
   orders: 0.5,
   customers: 0.5,
 };
 
 // ─── Which plans allow overage (pay-per-item past the limit) ──────────────────
-export const OVERAGE_PLANS = ["pro"];
+// Hard limits on every tier — no overage. (Empty = all limits are hard caps.)
+export const OVERAGE_PLANS = [];
 
 // ─── Monthly price shown in UI (Shopify Billing handles real charge) ──────────
 export const PLAN_PRICE = {
   free: 0,
   starter: 12.99,
+  growth: 24.99,
   pro: 39.99,
+};
+
+// ─── Annual price (billed once per year) ──────────────────────────────────────
+export const PLAN_PRICE_ANNUAL = {
+  free: 0,
+  starter: 139.99,
+  growth: 248.99,
+  pro: 459.99,
+};
+
+// ─── % saved by paying annually vs 12× monthly (shown in UI) ──────────────────
+export const PLAN_ANNUAL_SAVINGS = {
+  starter: 10,
+  growth: 17,
+  pro: 4,
 };
 
 export const PLAN_LABEL = {
   free: "Free Plan",
   starter: "Starter Plan",
+  growth: "Growth Plan",
   pro: "Pro Plan",
 };
 
 // All known data types (order matters for display)
 export const ALL_DATA_TYPES = [
-  "products", "collections", "pages",
-  "files", "metaobjects", "metafields",
-  "orders", "customers",
+  "products", "collections", "pages", "discounts",
+  "files", "menus", "redirects", "metaobjects",
+  "blogPosts", "metafields", "orders", "customers",
 ];
 
 const PERIOD_MS = 30 * 24 * 60 * 60 * 1000;

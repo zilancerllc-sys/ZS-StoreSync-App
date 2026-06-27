@@ -8,6 +8,7 @@ import {
   ArrowLeftRight, Package, Layers, FileText, Image, Users,
   ShoppingCart, Boxes, Tag, Zap, ShieldCheck, BookOpen,
   HelpCircle, Mail, Rocket, PlayCircle,
+  Percent, Menu, Shuffle, Newspaper,
 } from "lucide-react";
 
 // ─── Loader (live DB) ────────────────────────────────────────────────────────
@@ -214,8 +215,12 @@ export default function Index() {
     { icon: <Package size={18} />, name: "Products", sub: "Variants & images" },
     { icon: <Layers size={18} />, name: "Collections", sub: "Smart & manual" },
     { icon: <FileText size={18} />, name: "Pages", sub: "Content pages" },
+    { icon: <Percent size={18} />, name: "Discounts", sub: "Codes & automatic" },
     { icon: <Image size={18} />, name: "Files", sub: "Media library" },
+    { icon: <Menu size={18} />, name: "Menus", sub: "Navigation" },
+    { icon: <Shuffle size={18} />, name: "Redirects", sub: "URL redirects" },
     { icon: <Boxes size={18} />, name: "Metaobjects", sub: "Definitions & entries" },
+    { icon: <Newspaper size={18} />, name: "Blog Posts", sub: "Blogs & articles" },
     { icon: <Tag size={18} />, name: "Metafields", sub: "On products & more" },
     { icon: <ShoppingCart size={18} />, name: "Orders", sub: "Protected data", lock: "Pro" },
     { icon: <Users size={18} />, name: "Customers", sub: "Protected data", lock: "Pro" },
@@ -233,12 +238,14 @@ export default function Index() {
 
   const upgradeCta =
     plan.current === "free" ? "Upgrade to Starter — $12.99" :
-    plan.current === "starter" ? "Upgrade to Pro — $39.99" : "Manage Plan";
+    plan.current === "starter" ? "Upgrade to Growth — $24.99" :
+    plan.current === "growth" ? "Upgrade to Pro — $39.99" : "Manage Plan";
 
   const typeIcon = (t) => ({
     products:<Package size={17}/>,collections:<Layers size={17}/>,pages:<FileText size={17}/>,
     files:<Image size={17}/>,orders:<ShoppingCart size={17}/>,customers:<Users size={17}/>,
-    metaobjects:<Boxes size={17}/>,metafields:<Tag size={17}/>,
+    metaobjects:<Boxes size={17}/>,metafields:<Tag size={17}/>,discounts:<Percent size={17}/>,
+    menus:<Menu size={17}/>,redirects:<Shuffle size={17}/>,blogPosts:<Newspaper size={17}/>,
   }[t] || <ArrowLeftRight size={17}/>);
 
   return (
@@ -252,7 +259,7 @@ export default function Index() {
               <div className="zs-hero-left">
                 <span className="zs-hero-chip"><span className="zs-hero-chip-dot" />Store → Store · Nothing stored on our servers</span>
                 <h1>Move your store's <em>content</em>,<br />store to store.</h1>
-                <p className="zs-hero-lead">Copy products, collections, pages, files, metaobjects & metafields from one Shopify store into another — duplicates skipped, changes synced, no spreadsheets, no developer.</p>
+                <p className="zs-hero-lead">Copy products, collections, pages, discounts, files, menus, redirects, blog posts, metaobjects & metafields from one Shopify store into another — duplicates skipped, changes synced, no spreadsheets, no developer.</p>
                 <div className="zs-hero-btns">
                   <RouterLink to="/app/migrate" className="zs-btn-primary">Start a Migration <span>→</span></RouterLink>
                   <RouterLink to="/app/preview" className="zs-btn-ghost-white">Preview First</RouterLink>

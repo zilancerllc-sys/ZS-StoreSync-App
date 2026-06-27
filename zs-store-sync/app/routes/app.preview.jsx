@@ -82,8 +82,12 @@ const TYPES = [
   { id: "products", name: "Products" },
   { id: "collections", name: "Collections" },
   { id: "pages", name: "Pages" },
+  { id: "discounts", name: "Discounts" },
   { id: "files", name: "Files" },
+  { id: "menus", name: "Menus" },
+  { id: "redirects", name: "Redirects" },
   { id: "metaobjects", name: "Metaobjects" },
+  { id: "blogPosts", name: "Blog Posts" },
   { id: "metafields", name: "Metafields" },
 ];
 

@@ -19,7 +19,7 @@ import { brandStyles } from "./zs-styles.js";
 import {
   ArrowLeftRight, Package, Layers, FileText, Image, Users,
   ShoppingCart, Boxes, Tag, Link2, CheckCircle2, AlertCircle,
-  Loader2, RotateCw,
+  Loader2, RotateCw, Percent, Menu, Shuffle, Newspaper,
 } from "lucide-react";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
@@ -328,8 +328,12 @@ const ALL_TYPES = [
   { id: "products", name: "Products", icon: <Package size={16} /> },
   { id: "collections", name: "Collections", icon: <Layers size={16} /> },
   { id: "pages", name: "Pages", icon: <FileText size={16} /> },
+  { id: "discounts", name: "Discounts", icon: <Percent size={16} /> },
   { id: "files", name: "Files", icon: <Image size={16} /> },
+  { id: "menus", name: "Menus", icon: <Menu size={16} /> },
+  { id: "redirects", name: "Redirects", icon: <Shuffle size={16} /> },
   { id: "metaobjects", name: "Metaobjects", icon: <Boxes size={16} /> },
+  { id: "blogPosts", name: "Blog Posts", icon: <Newspaper size={16} /> },
   { id: "metafields", name: "Metafields", icon: <Tag size={16} /> },
   { id: "orders", name: "Orders", icon: <ShoppingCart size={16} /> },
   { id: "customers", name: "Customers", icon: <Users size={16} /> },

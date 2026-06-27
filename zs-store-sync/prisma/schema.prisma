@@ -89,7 +89,7 @@ model MigrationJob {
 model Subscription {
   id            String   @id @default(cuid())
   shop          String   @unique
-  // "free" | "starter" | "pro"
+  // "free" | "starter" | "growth" | "pro"
   plan          String   @default("free")
   // Shopify subscription gid (for paid plans)
   shopifyChargeId String?

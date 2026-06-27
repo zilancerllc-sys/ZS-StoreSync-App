@@ -576,14 +576,436 @@ async function migrateCustomers(ctx) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  URL REDIRECTS
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_REDIRECTS = `#graphql
+  query Redirects($cursor: String) {
+    urlRedirects(first: 100, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id path target } }
+    }
+  }`;
+
+const M_REDIRECT_CREATE = `#graphql
+  mutation CreateRedirect($redirect: UrlRedirectInput!) {
+    urlRedirectCreate(urlRedirect: $redirect) {
+      urlRedirect { id }
+      userErrors { field message }
+    }
+  }`;
+
+async function migrateRedirects(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+  const redirects = await fetchAll(source, Q_REDIRECTS, "urlRedirects", {}, (n) =>
+    onLog(`Fetched ${n} URL redirects…`),
+  );
+  onLog(`Total ${redirects.length} redirects found. Importing…`);
+
+  for (const r of redirects) {
+    if (!consume()) {
+      onLog("Quota reached — stopping redirects.");
+      break;
+    }
+    try {
+      const data = await gql(target, M_REDIRECT_CREATE, {
+        redirect: { path: r.path, target: r.target },
+      });
+      const errs = data?.urlRedirectCreate?.userErrors;
+      if (errs?.length) {
+        // path already exists → skip
+        counters.skipped++;
+        onLog(`↪︎ Skipped: ${r.path} — ${errs[0].message}`);
+      } else {
+        counters.created++;
+        onLog(`✓ Redirect: ${r.path} → ${r.target}`);
+      }
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ Redirect error: ${r.path} — ${String(err.message).slice(0, 120)}`);
+    }
+    await sleep(120);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  BLOG POSTS (blogs + articles)
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_BLOGS = `#graphql
+  query Blogs($cursor: String) {
+    blogs(first: 25, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id title handle
+        articles(first: 100) {
+          edges { node {
+            id title handle body summary tags isPublished publishedAt
+            author { name }
+            image { url altText }
+          } }
+        }
+      } }
+    }
+  }`;
+
+const Q_TARGET_BLOG_BY_HANDLE = `#graphql
+  query BlogByHandle($q: String!) {
+    blogs(first: 1, query: $q) { edges { node { id handle } } }
+  }`;
+
+const M_BLOG_CREATE = `#graphql
+  mutation CreateBlog($blog: BlogCreateInput!) {
+    blogCreate(blog: $blog) {
+      blog { id handle }
+      userErrors { field message }
+    }
+  }`;
+
+const M_ARTICLE_CREATE = `#graphql
+  mutation CreateArticle($article: ArticleCreateInput!) {
+    articleCreate(article: $article) {
+      article { id handle }
+      userErrors { field message }
+    }
+  }`;
+
+async function migrateBlogPosts(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+  const blogs = await fetchAll(source, Q_BLOGS, "blogs", {}, (n) =>
+    onLog(`Fetched ${n} blogs…`),
+  );
+  onLog(`Total ${blogs.length} blogs found. Importing articles…`);
+
+  for (const blog of blogs) {
+    // ensure a blog with this handle exists on the target
+    let targetBlogId = null;
+    try {
+      const found = await gql(target, Q_TARGET_BLOG_BY_HANDLE, {
+        q: `handle:${blog.handle}`,
+      });
+      targetBlogId = found?.blogs?.edges?.[0]?.node?.id ?? null;
+    } catch { /* ignore lookup errors */ }
+
+    if (!targetBlogId) {
+      try {
+        const created = await gql(target, M_BLOG_CREATE, {
+          blog: { title: blog.title, handle: blog.handle },
+        });
+        targetBlogId = created?.blogCreate?.blog?.id ?? null;
+        if (targetBlogId) onLog(`✓ Blog ready: ${blog.title}`);
+      } catch (err) {
+        onLog(`✕ Blog failed: ${blog.title} — ${String(err.message).slice(0, 100)}`);
+      }
+    } else {
+      onLog(`↪︎ Blog exists: ${blog.title}`);
+    }
+    if (!targetBlogId) continue;
+
+    const articles = (blog.articles?.edges || []).map((e) => e.node);
+    for (const a of articles) {
+      if (!consume()) {
+        onLog("Quota reached — stopping blog posts.");
+        return;
+      }
+      const article = {
+        blogId: targetBlogId,
+        title: a.title,
+        handle: a.handle,
+        body: a.body,
+        summary: a.summary || undefined,
+        tags: a.tags || [],
+        isPublished: a.isPublished,
+        author: a.author?.name ? { name: a.author.name } : undefined,
+      };
+      if (a.image?.url) {
+        article.image = { url: a.image.url, altText: a.image.altText || "" };
+      }
+      try {
+        const data = await gql(target, M_ARTICLE_CREATE, { article });
+        const errs = data?.articleCreate?.userErrors;
+        if (errs?.length) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped article: ${a.title} — ${errs[0].message}`);
+        } else {
+          counters.created++;
+          onLog(`✓ Article: ${a.title}`);
+        }
+      } catch (err) {
+        counters.failed++;
+        onLog(`✕ Article error: ${a.title} — ${String(err.message).slice(0, 120)}`);
+      }
+      await sleep(160);
+    }
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  MENUS (online store navigation)
+//
+//  Resource-bound items (collection/product/page links) reference gids that
+//  differ between stores, so those are recreated as plain URL (HTTP) links —
+//  the path usually still resolves when handles match. Front-page / search /
+//  http items copy across directly.
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_MENUS = `#graphql
+  query Menus($cursor: String) {
+    menus(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id title handle
+        items { id title type url tags
+          items { id title type url tags }
+        }
+      } }
+    }
+  }`;
+
+const Q_TARGET_MENU_BY_HANDLE = `#graphql
+  query MenuByHandle($q: String!) {
+    menus(first: 1, query: $q) { edges { node { id handle } } }
+  }`;
+
+const M_MENU_CREATE = `#graphql
+  mutation CreateMenu($title: String!, $handle: String!, $items: [MenuItemCreateInput!]!) {
+    menuCreate(title: $title, handle: $handle, items: $items) {
+      menu { id handle }
+      userErrors { field message }
+    }
+  }`;
+
+// types that need a resourceId we can't map across stores → fall back to URL
+const RESOURCE_MENU_TYPES = new Set([
+  "COLLECTION", "PRODUCT", "PAGE", "BLOG", "ARTICLE", "CATALOG", "SHOP_POLICY",
+]);
+
+function mapMenuItem(item) {
+  const isResource = RESOURCE_MENU_TYPES.has(item.type);
+  const node = {
+    title: item.title,
+    type: isResource ? "HTTP" : item.type,
+    tags: item.tags || [],
+  };
+  // FRONTPAGE / SEARCH don't take a url; everything else uses the source url
+  if (node.type !== "FRONTPAGE" && node.type !== "SEARCH") {
+    node.url = item.url || "/";
+  }
+  if (item.items?.length) {
+    node.items = item.items.map(mapMenuItem);
+  }
+  return node;
+}
+
+async function migrateMenus(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+  const menus = await fetchAll(source, Q_MENUS, "menus", {}, (n) =>
+    onLog(`Fetched ${n} menus…`),
+  );
+  onLog(`Total ${menus.length} menus found. Importing…`);
+
+  for (const m of menus) {
+    if (!consume()) {
+      onLog("Quota reached — stopping menus.");
+      break;
+    }
+    try {
+      const found = await gql(target, Q_TARGET_MENU_BY_HANDLE, {
+        q: `handle:${m.handle}`,
+      });
+      if (found?.menus?.edges?.length) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (exists): ${m.title}`);
+        continue;
+      }
+    } catch { /* ignore lookup errors, attempt create */ }
+
+    try {
+      const data = await gql(target, M_MENU_CREATE, {
+        title: m.title,
+        handle: m.handle,
+        items: (m.items || []).map(mapMenuItem),
+      });
+      const errs = data?.menuCreate?.userErrors;
+      if (errs?.length) {
+        counters.failed++;
+        onLog(`✕ Failed: ${m.title} — ${errs[0].message}`);
+      } else {
+        counters.created++;
+        onLog(`✓ Menu: ${m.title}`);
+      }
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ Menu error: ${m.title} — ${String(err.message).slice(0, 120)}`);
+    }
+    await sleep(180);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  DISCOUNTS
+//
+//  Best-effort: recreates basic code discounts and basic automatic discounts
+//  (percentage or fixed-amount off, applied to all items). Other discount
+//  classes (BxGy, free shipping, app discounts) are logged and skipped.
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_DISCOUNTS = `#graphql
+  query Discounts($cursor: String) {
+    discountNodes(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id
+        discount {
+          __typename
+          ... on DiscountCodeBasic {
+            title status startsAt endsAt appliesOncePerCustomer
+            codes(first: 1) { edges { node { code } } }
+            customerGets {
+              value {
+                __typename
+                ... on DiscountPercentage { percentage }
+                ... on DiscountAmount { amount { amount } }
+              }
+            }
+          }
+          ... on DiscountAutomaticBasic {
+            title status startsAt endsAt
+            customerGets {
+              value {
+                __typename
+                ... on DiscountPercentage { percentage }
+                ... on DiscountAmount { amount { amount } }
+              }
+            }
+          }
+        }
+      } }
+    }
+  }`;
+
+const M_DISCOUNT_CODE_BASIC_CREATE = `#graphql
+  mutation CreateCodeDiscount($basicCodeDiscount: DiscountCodeBasicInput!) {
+    discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
+      codeDiscountNode { id }
+      userErrors { field message }
+    }
+  }`;
+
+const M_DISCOUNT_AUTO_BASIC_CREATE = `#graphql
+  mutation CreateAutoDiscount($automaticBasicDiscount: DiscountAutomaticBasicInput!) {
+    discountAutomaticBasicCreate(automaticBasicDiscount: $automaticBasicDiscount) {
+      automaticDiscountNode { id }
+      userErrors { field message }
+    }
+  }`;
+
+// build the customerGets.value input from a source discount value
+function discountValueInput(value) {
+  if (!value) return null;
+  if (value.__typename === "DiscountPercentage") {
+    // Shopify expects a 0–1 fraction for percentage
+    return { percentage: (value.percentage ?? 0) };
+  }
+  if (value.__typename === "DiscountAmount") {
+    return {
+      discountAmount: {
+        amount: value.amount?.amount ?? "0",
+        appliesOnEachItem: false,
+      },
+    };
+  }
+  return null;
+}
+
+async function migrateDiscounts(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+  const nodes = await fetchAll(source, Q_DISCOUNTS, "discountNodes", {}, (n) =>
+    onLog(`Fetched ${n} discounts…`),
+  );
+  onLog(`Total ${nodes.length} discounts found. Importing…`);
+
+  for (const n of nodes) {
+    if (!consume()) {
+      onLog("Quota reached — stopping discounts.");
+      break;
+    }
+    const d = n.discount;
+    const kind = d?.__typename;
+
+    try {
+      if (kind === "DiscountCodeBasic") {
+        const value = discountValueInput(d.customerGets?.value);
+        if (!value) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped (unsupported value): ${d.title}`);
+          continue;
+        }
+        const code = d.codes?.edges?.[0]?.node?.code || d.title;
+        const data = await gql(target, M_DISCOUNT_CODE_BASIC_CREATE, {
+          basicCodeDiscount: {
+            title: d.title,
+            code,
+            startsAt: d.startsAt,
+            endsAt: d.endsAt || null,
+            appliesOncePerCustomer: !!d.appliesOncePerCustomer,
+            customerSelection: { all: true },
+            customerGets: { value, items: { all: true } },
+          },
+        });
+        const errs = data?.discountCodeBasicCreate?.userErrors;
+        if (errs?.length) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
+        } else {
+          counters.created++;
+          onLog(`✓ Code discount: ${d.title}`);
+        }
+      } else if (kind === "DiscountAutomaticBasic") {
+        const value = discountValueInput(d.customerGets?.value);
+        if (!value) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped (unsupported value): ${d.title}`);
+          continue;
+        }
+        const data = await gql(target, M_DISCOUNT_AUTO_BASIC_CREATE, {
+          automaticBasicDiscount: {
+            title: d.title,
+            startsAt: d.startsAt,
+            endsAt: d.endsAt || null,
+            customerGets: { value, items: { all: true } },
+            minimumRequirement: { quantity: { greaterThanOrEqualToQuantity: "1" } },
+          },
+        });
+        const errs = data?.discountAutomaticBasicCreate?.userErrors;
+        if (errs?.length) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
+        } else {
+          counters.created++;
+          onLog(`✓ Automatic discount: ${d.title}`);
+        }
+      } else {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (unsupported type ${kind || "unknown"})`);
+      }
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ Discount error: ${d?.title || "?"} — ${String(err.message).slice(0, 120)}`);
+    }
+    await sleep(220);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  ORCHESTRATOR
 // ═════════════════════════════════════════════════════════════════════════════
 const RUNNERS = {
   products: migrateProducts,
   collections: migrateCollections,
   pages: migratePages,
+  discounts: migrateDiscounts,
   files: migrateFiles,
+  menus: migrateMenus,
+  redirects: migrateRedirects,
   metaobjects: migrateMetaobjects,
+  blogPosts: migrateBlogPosts,
   metafields: migrateMetafields,
   orders: migrateOrders,
   customers: migrateCustomers,
@@ -597,7 +1019,12 @@ const RUN_ORDER = [
   "collections",
   "products",
   "pages",
+  "blogPosts",
   "files",
+  "discounts",
+  "redirects",
+  // menus link to collections/pages/blogs by handle — run after them
+  "menus",
   "orders",
   "customers",
 ];
