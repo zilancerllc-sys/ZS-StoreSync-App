@@ -150,14 +150,13 @@ const TYPE_LABEL = {
   blogPosts: "Blog Posts",
   metafields: "Metafields",
   orders: "Orders",
-  draftOrders: "Draft Orders",
   customers: "Customers",
 };
 
 const DISPLAY_TYPES = [
   "products", "collections", "pages", "discounts",
   "files", "menus", "redirects", "metaobjects",
-  "blogPosts", "metafields", "orders", "draftOrders", "customers",
+  "blogPosts", "metafields", "orders", "customers",
 ];
 
 // Format a limit for the feature list (e.g. 5000 → "5k", 100000 → "100k")
@@ -173,7 +172,7 @@ function featureLines(L) {
     `${fmt(L.metaobjects)} Metaobjects`,
     `${fmt(L.blogPosts)} Blog Posts`,
     `${fmt(L.metafields)} Metafields`,
-    `${fmt(L.orders)} Orders, ${fmt(L.draftOrders)} Draft Orders, ${fmt(L.customers)} Customers`,
+    `${fmt(L.orders)} Orders, ${fmt(L.customers)} Customers`,
   ];
 }
 

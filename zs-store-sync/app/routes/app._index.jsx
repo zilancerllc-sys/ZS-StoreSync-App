@@ -8,7 +8,7 @@ import {
   ArrowLeftRight, Package, Layers, FileText, Image, Users,
   ShoppingCart, Boxes, Tag, Zap, ShieldCheck, BookOpen,
   HelpCircle, Mail, Rocket, PlayCircle,
-  Percent, Menu, Shuffle, Newspaper, ClipboardList,
+  Percent, Menu, Shuffle, Newspaper,
 } from "lucide-react";
 
 // ─── Loader (live DB) ────────────────────────────────────────────────────────
@@ -222,8 +222,7 @@ export default function Index() {
     { icon: <Boxes size={18} />, name: "Metaobjects", sub: "Definitions & entries" },
     { icon: <Newspaper size={18} />, name: "Blog Posts", sub: "Blogs & articles" },
     { icon: <Tag size={18} />, name: "Metafields", sub: "On products & more" },
-    { icon: <ShoppingCart size={18} />, name: "Orders", sub: "Protected data", lock: "Approval" },
-    { icon: <ClipboardList size={18} />, name: "Draft Orders", sub: "Open drafts" },
+    { icon: <ShoppingCart size={18} />, name: "Orders", sub: "Incl. drafts · Protected data", lock: "Approval" },
     { icon: <Users size={18} />, name: "Customers", sub: "Protected data", lock: "Approval" },
   ];
 
@@ -244,7 +243,7 @@ export default function Index() {
 
   const typeIcon = (t) => ({
     products:<Package size={17}/>,collections:<Layers size={17}/>,pages:<FileText size={17}/>,
-    files:<Image size={17}/>,orders:<ShoppingCart size={17}/>,draftOrders:<ClipboardList size={17}/>,customers:<Users size={17}/>,
+    files:<Image size={17}/>,orders:<ShoppingCart size={17}/>,customers:<Users size={17}/>,
     metaobjects:<Boxes size={17}/>,metafields:<Tag size={17}/>,discounts:<Percent size={17}/>,
     menus:<Menu size={17}/>,redirects:<Shuffle size={17}/>,blogPosts:<Newspaper size={17}/>,
   }[t] || <ArrowLeftRight size={17}/>);

@@ -21,7 +21,6 @@ export const PLAN_LIMITS = {
     blogPosts: 20,
     metafields: 1000,
     orders: 5,
-    draftOrders: 5,
     customers: 5,
   },
   starter: {
@@ -36,7 +35,6 @@ export const PLAN_LIMITS = {
     blogPosts: 20,
     metafields: 50000,
     orders: 200,
-    draftOrders: 200,
     customers: 500,
   },
   growth: {
@@ -51,7 +49,6 @@ export const PLAN_LIMITS = {
     blogPosts: 20,
     metafields: 75000,
     orders: 500,
-    draftOrders: 500,
     customers: 1000,
   },
   pro: {
@@ -66,7 +63,6 @@ export const PLAN_LIMITS = {
     blogPosts: 20,
     metafields: 100000,
     orders: 500,
-    draftOrders: 500,
     customers: 1000,
   },
 };
@@ -86,7 +82,6 @@ export const OVERAGE_RATE = {
   blogPosts: 0.05,
   metafields: 0.02,
   orders: 0.5,
-  draftOrders: 0.5,
   customers: 0.5,
 };
 
@@ -128,7 +123,7 @@ export const PLAN_LABEL = {
 export const ALL_DATA_TYPES = [
   "products", "collections", "pages", "discounts",
   "files", "menus", "redirects", "metaobjects",
-  "blogPosts", "metafields", "orders", "draftOrders", "customers",
+  "blogPosts", "metafields", "orders", "customers",
 ];
 
 const PERIOD_MS = 30 * 24 * 60 * 60 * 1000;

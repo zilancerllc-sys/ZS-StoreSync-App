@@ -791,10 +791,14 @@ async function migrateOrders(ctx) {
     }
     await sleep(250);
   }
+
+  // Draft orders are migrated as part of the orders module — they share the
+  // same per-plan quota (consume() below still checks the "orders" limit).
+  await migrateDraftOrders(ctx);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  DRAFT ORDERS
+//  DRAFT ORDERS (part of the ORDERS module — shares the "orders" quota)
 //  Recreates open draft orders with their line items (as titled custom items),
 //  addresses, note and tags. Customer email/address still fall under Protected
 //  Customer Data, so the source query is skipped (logged) until access is live.
@@ -838,6 +842,7 @@ const M_DRAFT_ORDER_CREATE = `#graphql
 
 async function migrateDraftOrders(ctx) {
   const { source, target, onLog, counters, consume } = ctx;
+  onLog("Draft orders…");
   const drafts = await fetchAll(source, Q_DRAFT_ORDERS, "draftOrders", {}, (n) =>
     onLog(`Fetched ${n} draft orders…`),
   );
@@ -1561,7 +1566,6 @@ const RUNNERS = {
   blogPosts: migrateBlogPosts,
   metafields: migrateMetafields,
   orders: migrateOrders,
-  draftOrders: migrateDraftOrders,
   customers: migrateCustomers,
 };
 
@@ -1580,7 +1584,6 @@ const RUN_ORDER = [
   // menus link to collections/pages/blogs by handle — run after them
   "menus",
   "orders",
-  "draftOrders",
   "customers",
 ];
 
