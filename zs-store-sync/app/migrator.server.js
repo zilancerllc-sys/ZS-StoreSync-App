@@ -560,19 +560,237 @@ async function migrateMetafields(ctx) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  ORDERS (read-only copy as draft is complex; we copy basic order data)
-//  NOTE: requires Protected Customer Data approval from Shopify.
+//  CUSTOMERS
+//  NOTE: requires Shopify Protected Customer Data approval + read_customers /
+//  write_customers scopes. Until approval is granted the source query throws and
+//  the module is skipped (logged), but the code below runs once access is live.
 // ═════════════════════════════════════════════════════════════════════════════
-async function migrateOrders(ctx) {
-  ctx.onLog(
-    "Orders require Shopify Protected Customer Data approval. Configure approval, then enable this module.",
-  );
+const Q_CUSTOMERS = `#graphql
+  query Customers($cursor: String) {
+    customers(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id firstName lastName email phone note tags
+        addresses {
+          address1 address2 city provinceCode countryCodeV2 zip phone
+          firstName lastName company
+        }
+      } }
+    }
+  }`;
+
+const Q_TARGET_CUSTOMER_BY_EMAIL = `#graphql
+  query CustomerByEmail($q: String!) {
+    customers(first: 1, query: $q) { edges { node { id } } }
+  }`;
+
+const M_CUSTOMER_CREATE = `#graphql
+  mutation CustomerCreate($input: CustomerInput!) {
+    customerCreate(input: $input) {
+      customer { id }
+      userErrors { field message }
+    }
+  }`;
+
+// map a source address to a MailingAddressInput
+function mapAddress(a) {
+  if (!a) return null;
+  return {
+    address1: a.address1 || undefined,
+    address2: a.address2 || undefined,
+    city: a.city || undefined,
+    provinceCode: a.provinceCode || undefined,
+    countryCode: a.countryCodeV2 || undefined,
+    zip: a.zip || undefined,
+    phone: a.phone || undefined,
+    firstName: a.firstName || undefined,
+    lastName: a.lastName || undefined,
+    company: a.company || undefined,
+  };
 }
 
 async function migrateCustomers(ctx) {
-  ctx.onLog(
-    "Customers require Shopify Protected Customer Data approval. Configure approval, then enable this module.",
+  const { source, target, onLog, counters, consume } = ctx;
+  const customers = await fetchAll(source, Q_CUSTOMERS, "customers", {}, (n) =>
+    onLog(`Fetched ${n} customers…`),
   );
+  onLog(`Total ${customers.length} customers found. Importing…`);
+
+  for (const c of customers) {
+    if (!consume()) {
+      onLog("Quota reached — stopping customers.");
+      break;
+    }
+    // duplicate detection by email
+    if (c.email) {
+      try {
+        const r = await gql(target, Q_TARGET_CUSTOMER_BY_EMAIL, {
+          q: `email:${c.email}`,
+        });
+        if (r?.customers?.edges?.length) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped (exists): ${c.email}`);
+          continue;
+        }
+      } catch { /* ignore lookup errors, attempt create */ }
+    }
+
+    const input = {
+      firstName: c.firstName || undefined,
+      lastName: c.lastName || undefined,
+      email: c.email || undefined,
+      phone: c.phone || undefined,
+      note: c.note || undefined,
+      tags: c.tags || [],
+    };
+    const addresses = (c.addresses || []).map(mapAddress).filter(Boolean);
+    if (addresses.length) input.addresses = addresses;
+
+    try {
+      const data = await gql(target, M_CUSTOMER_CREATE, { input });
+      const errs = data?.customerCreate?.userErrors;
+      if (errs?.length) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped: ${c.email || c.id} — ${errs[0].message}`);
+      } else {
+        counters.created++;
+        onLog(`✓ Customer: ${c.email || `${c.firstName} ${c.lastName}`}`);
+      }
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ Customer error: ${c.email || c.id} — ${String(err.message).slice(0, 120)}`);
+    }
+    await sleep(200);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  ORDERS
+//  NOTE: requires Protected Customer Data approval + read_orders / write_orders.
+//  read_orders only exposes the last 60 days; full history needs the separately
+//  approved read_all_orders scope. Best-effort: recreates
+//  orders with their line items (as titled custom items), addresses, note, tags
+//  and financial status. Inventory is bypassed and no emails are sent.
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_ORDERS = `#graphql
+  query Orders($cursor: String) {
+    orders(first: 25, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id name email note tags currencyCode displayFinancialStatus
+        lineItems(first: 50) {
+          edges { node {
+            title quantity sku
+            originalUnitPriceSet { shopMoney { amount currencyCode } }
+          } }
+        }
+        shippingAddress {
+          address1 address2 city provinceCode countryCodeV2 zip phone
+          firstName lastName company
+        }
+        billingAddress {
+          address1 address2 city provinceCode countryCodeV2 zip phone
+          firstName lastName company
+        }
+      } }
+    }
+  }`;
+
+const Q_TARGET_ORDER_BY_NAME = `#graphql
+  query OrderByName($q: String!) {
+    orders(first: 1, query: $q) { edges { node { id name } } }
+  }`;
+
+const M_ORDER_CREATE = `#graphql
+  mutation OrderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
+    orderCreate(order: $order, options: $options) {
+      order { id name }
+      userErrors { field message }
+    }
+  }`;
+
+// financial statuses accepted by OrderCreateOrderInput
+const ORDER_FIN_STATUS = new Set([
+  "PENDING", "AUTHORIZED", "PARTIALLY_PAID", "PAID",
+  "PARTIALLY_REFUNDED", "REFUNDED", "VOIDED",
+]);
+
+async function migrateOrders(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+  const orders = await fetchAll(source, Q_ORDERS, "orders", {}, (n) =>
+    onLog(`Fetched ${n} orders…`),
+  );
+  onLog(`Total ${orders.length} orders found. Importing…`);
+
+  for (const o of orders) {
+    if (!consume()) {
+      onLog("Quota reached — stopping orders.");
+      break;
+    }
+    // duplicate detection by order name (e.g. "#1001")
+    try {
+      const r = await gql(target, Q_TARGET_ORDER_BY_NAME, {
+        q: `name:${o.name}`,
+      });
+      if (r?.orders?.edges?.length) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (exists): ${o.name}`);
+        continue;
+      }
+    } catch { /* ignore lookup errors, attempt create */ }
+
+    const lineItems = (o.lineItems?.edges || []).map((e) => {
+      const li = e.node;
+      const item = { title: li.title || "Item", quantity: li.quantity || 1 };
+      const money = li.originalUnitPriceSet?.shopMoney;
+      if (money?.amount) {
+        item.priceSet = {
+          shopMoney: { amount: money.amount, currencyCode: money.currencyCode || o.currencyCode },
+        };
+      }
+      return item;
+    });
+
+    if (lineItems.length === 0) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (no line items): ${o.name}`);
+      continue;
+    }
+
+    const order = {
+      email: o.email || undefined,
+      note: o.note || undefined,
+      tags: o.tags || [],
+      currency: o.currencyCode || undefined,
+      lineItems,
+    };
+    if (ORDER_FIN_STATUS.has(o.displayFinancialStatus)) {
+      order.financialStatus = o.displayFinancialStatus;
+    }
+    const ship = mapAddress(o.shippingAddress);
+    const bill = mapAddress(o.billingAddress);
+    if (ship) order.shippingAddress = ship;
+    if (bill) order.billingAddress = bill;
+
+    try {
+      const data = await gql(target, M_ORDER_CREATE, {
+        order,
+        options: { sendReceipt: false, sendFulfillmentReceipt: false, inventoryBehaviour: "BYPASS" },
+      });
+      const errs = data?.orderCreate?.userErrors;
+      if (errs?.length) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped: ${o.name} — ${errs[0].message}`);
+      } else {
+        counters.created++;
+        onLog(`✓ Order: ${o.name}`);
+      }
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ Order error: ${o.name} — ${String(err.message).slice(0, 120)}`);
+    }
+    await sleep(250);
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

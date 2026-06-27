@@ -202,6 +202,8 @@ export const action = async ({ request }) => {
       logs.push(`[${new Date().toISOString().slice(11, 19)}] ${msg}`);
 
     let result;
+    let overageCost = 0;
+    let overageByType = {};
     try {
       result = await runMigration({
         source, target, types: allowed, limits: migrateLimits, onLog,
@@ -209,8 +211,6 @@ export const action = async ({ request }) => {
       await consumeQuota(shop, result.consumedByType);
 
       // Compute overage cost for Pro plans
-      let overageCost = 0;
-      let overageByType = {};
       if (allowsOverage) {
         for (const t of allowed) {
           const used = (usedSoFar[t] || 0) + (result.consumedByType[t] || 0);
