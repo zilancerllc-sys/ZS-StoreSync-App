@@ -266,7 +266,7 @@ const pageStyles = `
     --zs-shadow-clay:0 10px 30px rgba(169,139,118,.28);
     font-family:var(--zs-font-body); -webkit-font-smoothing:antialiased; color:var(--zs-dark); }
   .zs-section-wrap{width:100vw;position:relative;left:50%;right:50%;margin-left:-50vw;margin-right:-50vw;padding:1.5rem;box-sizing:border-box;}
-  .zs-wrap{max-width:1080px;margin:0 auto;width:100%;}
+  .zs-wrap{max-width:1400px;margin:0 auto;width:100%;}
   .zs-stack>*+*{margin-top:24px;}
   @keyframes zsFadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
   .zs-reveal{opacity:0;animation:zsFadeUp .55s cubic-bezier(.2,.7,.2,1) forwards;}

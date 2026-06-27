@@ -2,7 +2,7 @@ import { Link as RouterLink, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { getUsage, PLAN_LIMITS, PLAN_LABEL } from "../credits.server";
+import { getUsage, PLAN_LABEL } from "../credits.server";
 import { brandStyles } from "./zs-styles.js";
 import {
   ArrowLeftRight, Package, Layers, FileText, Image, Users,
@@ -77,7 +77,7 @@ const pageStyles = `
     --zs-shadow-clay:0 10px 30px rgba(169,139,118,.28);
     font-family:var(--zs-font-body); -webkit-font-smoothing:antialiased; color:var(--zs-dark); }
   .zs-section-wrap{width:100vw;position:relative;left:50%;right:50%;margin-left:-50vw;margin-right:-50vw;padding:1.5rem;box-sizing:border-box;}
-  .zs-wrap{max-width:1280px;margin:0 auto;width:100%;}
+  .zs-wrap{max-width:1400px;margin:0 auto;width:100%;}
   .zs-stack>*+*{margin-top:30px;}
   @keyframes zsFadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
   .zs-reveal{opacity:0;animation:zsFadeUp .6s cubic-bezier(.2,.7,.2,1) forwards;}
@@ -87,7 +87,7 @@ const pageStyles = `
   .zs-sec-title{font-family:var(--zs-font-display);font-size:22px;font-weight:600;color:var(--zs-dark);line-height:1.1;letter-spacing:-.01em;margin:0;}
   .zs-sec-link{font-size:12px;font-weight:600;color:var(--zs-clay);text-decoration:none;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;transition:gap .18s,opacity .18s;}
   .zs-sec-link:hover{gap:8px;opacity:.85;}
-  .zs-hero{background:var(--zs-dark);border-radius:var(--zs-r-lg);padding:3rem 3.25rem;position:relative;overflow:hidden;display:grid;grid-template-columns:1.4fr .9fr;align-items:center;gap:2.5rem;box-shadow:var(--zs-shadow-md);}
+  .zs-hero{background:var(--zs-dark);border-radius:var(--zs-r-lg);padding:3rem 3.25rem;position:relative;overflow:hidden;box-shadow:var(--zs-shadow-md);}
   .zs-hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 88% 18%,rgba(169,139,118,.40) 0%,transparent 50%),radial-gradient(circle at 4% 92%,rgba(186,191,148,.22) 0%,transparent 48%);pointer-events:none;}
   .zs-hero::after{content:"";position:absolute;inset:0;opacity:.5;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(circle at 72% 50%,#000 0%,transparent 75%);}
   .zs-hero-left{position:relative;z-index:2;}
@@ -171,7 +171,7 @@ const pageStyles = `
   .zs-plan-meter-value{font-size:12px;font-weight:600;color:#fff;}
   .zs-plan-meter-bar{height:5px;border-radius:20px;background:rgba(255,255,255,.1);overflow:hidden;}
   .zs-plan-meter-fill{height:100%;border-radius:20px;background:var(--zs-grad);}
-  .zs-plan-upgrade-btn{width:100%;background:var(--zs-clay);color:#fff;border:none;padding:13px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:transform .18s,box-shadow .18s,background .18s;box-shadow:var(--zs-shadow-clay);text-align:center;text-decoration:none;display:block;}
+  .zs-plan-upgrade-btn{width:100%;box-sizing:border-box;background:var(--zs-clay);color:#fff;border:none;padding:13px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:transform .18s,box-shadow .18s,background .18s;box-shadow:var(--zs-shadow-clay);text-align:center;text-decoration:none;display:block;}
   .zs-plan-upgrade-btn:hover{transform:translateY(-2px);background:var(--zs-clay-deep);box-shadow:0 14px 36px rgba(169,139,118,.4);}
   .zs-plan-upgrade-note{font-size:11px;color:rgba(255,255,255,.35);text-align:center;margin-top:10px;}
   .zs-resources-grid{display:grid;grid-template-columns:1.7fr 1fr 1fr;gap:16px;}
@@ -195,7 +195,8 @@ const pageStyles = `
   .zs-empty-icon{color:var(--zs-camel);margin-bottom:12px;display:flex;justify-content:center;}
   .zs-empty-title{font-family:var(--zs-font-display);font-size:17px;font-weight:600;color:var(--zs-dark);margin-bottom:6px;}
   .zs-empty-sub{font-size:13px;color:var(--zs-muted);}
-  @media(max-width:1100px){.zs-hero{grid-template-columns:1fr;}.zs-hero-right{display:none;}.zs-stats-grid{grid-template-columns:repeat(2,1fr);}.zs-types-grid{grid-template-columns:repeat(2,1fr);}.zs-nav-grid{grid-template-columns:1fr;}.zs-split{grid-template-columns:1fr;}.zs-resources-grid{grid-template-columns:1fr;}}
+  @media(max-width:1100px){.zs-stats-grid{grid-template-columns:repeat(2,1fr);}.zs-types-grid{grid-template-columns:repeat(2,1fr);}.zs-nav-grid{grid-template-columns:1fr;}.zs-resources-grid{grid-template-columns:1fr;}}
+  @media(max-width:720px){.zs-split{grid-template-columns:1fr;}}
   @media(max-width:600px){.zs-hero{padding:2rem 1.5rem;}.zs-hero h1{font-size:32px;}.zs-stats-grid{grid-template-columns:1fr;}.zs-types-grid{grid-template-columns:1fr;}}
 `;
 
@@ -255,17 +256,6 @@ export default function Index() {
                 <div className="zs-hero-btns">
                   <RouterLink to="/app/migrate" className="zs-btn-primary">Start a Migration <span>→</span></RouterLink>
                   <RouterLink to="/app/preview" className="zs-btn-ghost-white">Preview First</RouterLink>
-                </div>
-              </div>
-              <div className="zs-hero-right">
-                <div className="zs-sync">
-                  <svg viewBox="0 0 240 240" fill="none">
-                    <path className="zs-sync-flow" d="M58 120 H182" stroke="var(--zs-camel)" strokeWidth="2.5" strokeLinecap="round" />
-                    <ellipse cx="120" cy="120" rx="110" ry="56" stroke="rgba(255,255,255,.12)" strokeWidth="1" />
-                  </svg>
-                  <div className="zs-sync-node src"><Package size={26} /></div>
-                  <div className="zs-sync-mid"><ArrowLeftRight size={20} /></div>
-                  <div className="zs-sync-node dst"><ShoppingCart size={26} /></div>
                 </div>
               </div>
             </div>

@@ -47,7 +47,7 @@ const pageStyles = `
     --zs-shadow-sm:0 1px 2px rgba(58,49,40,.04),0 2px 8px rgba(58,49,40,.05);
     font-family:var(--zs-font-body);-webkit-font-smoothing:antialiased;color:var(--zs-dark);}
   .zs-section-wrap{width:100vw;position:relative;left:50%;right:50%;margin-left:-50vw;margin-right:-50vw;padding:1.5rem;box-sizing:border-box;}
-  .zs-wrap{max-width:1080px;margin:0 auto;width:100%;}
+  .zs-wrap{max-width:1400px;margin:0 auto;width:100%;}
   .zs-sec-eyebrow{font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--zs-clay);margin-bottom:6px;}
   .zs-sec-title{font-family:var(--zs-font-display);font-size:22px;font-weight:600;margin:0 0 16px;letter-spacing:-.01em;}
   @keyframes zsFadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}

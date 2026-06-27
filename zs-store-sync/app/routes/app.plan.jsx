@@ -80,7 +80,7 @@ const pageStyles = `
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
   .zs-root{--zs-font-display:"Fraunces",serif;--zs-font-body:"Hanken Grotesk",sans-serif;--zs-r-sm:10px;--zs-r-md:14px;--zs-r-lg:20px;--zs-shadow-sm:0 1px 2px rgba(58,49,40,.04),0 2px 8px rgba(58,49,40,.05);--zs-shadow-md:0 4px 14px rgba(58,49,40,.06),0 18px 40px rgba(58,49,40,.06);--zs-shadow-clay:0 10px 30px rgba(169,139,118,.28);font-family:var(--zs-font-body);color:var(--zs-dark);}
   .zs-section-wrap{width:100vw;position:relative;left:50%;right:50%;margin-left:-50vw;margin-right:-50vw;padding:1.5rem;box-sizing:border-box;}
-  .zs-wrap{max-width:1080px;margin:0 auto;}
+  .zs-wrap{max-width:1400px;margin:0 auto;}
   .zs-head{text-align:center;margin-bottom:28px;}
   .zs-eyebrow{font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--zs-clay);margin-bottom:8px;}
   .zs-title{font-family:var(--zs-font-display);font-size:30px;font-weight:600;margin:0 0 8px;letter-spacing:-.02em;}
@@ -99,7 +99,7 @@ const pageStyles = `
   .zs-feats{list-style:none;padding:0;margin:0 0 22px;flex:1;}
   .zs-feats li{display:flex;align-items:flex-start;gap:9px;font-size:13px;color:var(--zs-dark);padding:7px 0;}
   .zs-feats li svg{color:var(--zs-sage-deep);flex-shrink:0;margin-top:2px;}
-  .zs-cta{width:100%;padding:13px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;border:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .15s,background .15s;}
+  .zs-cta{width:100%;box-sizing:border-box;padding:13px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;border:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .15s,background .15s;}
   .zs-cta.primary{background:var(--zs-clay);color:#fff;box-shadow:var(--zs-shadow-clay);}
   .zs-cta.primary:hover{transform:translateY(-2px);background:var(--zs-clay-deep);}
   .zs-cta.ghost{background:var(--zs-cream-soft);color:var(--zs-clay-deep);border:1px solid var(--zs-border);}
@@ -153,10 +153,10 @@ export default function Plan() {
             </div>
 
             <div className="zs-grid">
-              {Object.keys(PLAN_PRICE).map((planId) => {
+              {Object.keys(planPrice).map((planId) => {
                 const isCurrent = current === planId;
                 const featured = planId === "starter";
-                const limits = PLAN_LIMITS[planId];
+                const limits = planLimits[planId];
                 return (
                   <div
                     key={planId}
@@ -222,7 +222,7 @@ export default function Plan() {
                 </div>
                 {DISPLAY_TYPES.map((t) => {
                   const used = usage[t] || 0;
-                  const lim = PLAN_LIMITS[current]?.[t] || 0;
+                  const lim = planLimits[current]?.[t] || 0;
                   if (lim === 0 && used === 0) return null;
                   return (
                     <div key={t} style={{ fontSize: 13, marginBottom: 4 }}>
