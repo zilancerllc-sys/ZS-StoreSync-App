@@ -359,7 +359,7 @@ export default function Index() {
             <div className="zs-reveal zs-d6">
               <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">Learn</div><h2 className="zs-sec-title">Resources &amp; Support</h2></div></div>
               <div className="zs-resources-grid">
-                <a href="https://zs-storesync.zilancer.com/tutorial" target="_blank" rel="noreferrer" className="zs-video-card">
+                <a href="https://zs-storesync.zilancer.com/tutorials" target="_blank" rel="noreferrer" className="zs-video-card">
                   <div className="zs-video-play"><PlayCircle size={26} /></div>
                   <div className="zs-video-info">
                     <span className="zs-video-tag">Quick Start</span>
@@ -371,7 +371,7 @@ export default function Index() {
                   <div className="zs-link-card-title"><BookOpen size={14} /> Documentation</div>
                   {[
                     { icon:<HelpCircle size={13}/>, label:"Setup Guide", href:"https://zs-storesync.zilancer.com/documentation" },
-                    { icon:<HelpCircle size={13}/>, label:"How Sync Works", href:"https://zs-storesync.zilancer.com/sync" },
+                    { icon:<HelpCircle size={13}/>, label:"How Sync Works", href:"https://zs-storesync.zilancer.com/documentation" },
                     { icon:<HelpCircle size={13}/>, label:"FAQ", href:"https://zs-storesync.zilancer.com/faq" },
                   ].map(({ icon, label, href }) => (
                     <a key={label} href={href} target="_blank" rel="noreferrer" className="zs-res-link">
