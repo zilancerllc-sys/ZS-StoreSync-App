@@ -47,6 +47,8 @@ model StoreConnection {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  codeVerified  Boolean  @default(false)
+
   @@unique([ownerShop, sourceShop])
   @@index([ownerShop])
 }
@@ -105,4 +107,17 @@ model Subscription {
   updatedAt     DateTime @updatedAt
 
   @@index([shop])
+}
+
+
+// Stores a unique, shareable connection code for each shop. A shop's owner
+
+model ShopSecret {
+  id             String   @id @default(cuid())
+  shop           String   @unique
+  connectionCode String   @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([connectionCode])
 }

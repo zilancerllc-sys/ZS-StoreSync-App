@@ -1,86 +1,34 @@
-import { useState } from "react";
-import { useLoaderData, useFetcher } from "react-router";
+import { useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
+import { useState } from "react";
 import {
-  getUsage, setPlan,
-  PLAN_PRICE, PLAN_PRICE_ANNUAL, PLAN_ANNUAL_SAVINGS, PLAN_LIMITS,
+  getUsage,
+  PLAN_PRICE,
+  PLAN_PRICE_ANNUAL,
+  PLAN_ANNUAL_SAVINGS,
+  PLAN_LIMITS,
 } from "../credits.server";
 import { brandStyles } from "./zs-styles.js";
-import { Check, Loader2 } from "lucide-react";
+import { Check, ExternalLink } from "lucide-react";
+
+// App handle used to build the Shopify Managed Pricing URL.
+const APP_HANDLE = "zs-storesync";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const usage = await getUsage(session.shop);
   return {
+    shop: session.shop,
     current: usage.plan,
-    usage: usage.usage,            // { products: 10, ... }
-    limits: usage.limits,          // { products: 20, ... }
+    usage: usage.usage,
+    limits: usage.limits,
     planPrice: PLAN_PRICE,
     planPriceAnnual: PLAN_PRICE_ANNUAL,
     planSavings: PLAN_ANNUAL_SAVINGS,
-    planLimits: PLAN_LIMITS,       // { free: { products: 30, ... }, ... }
+    planLimits: PLAN_LIMITS,
   };
-};
-
-// ─── Action: create a Shopify recurring subscription ─────────────────────────
-export const action = async ({ request }) => {
-  const { admin, session, billing } = await authenticate.admin(request);
-  const shop = session.shop;
-  const form = await request.formData();
-  const plan = String(form.get("plan") || "");
-  const interval = String(form.get("interval") || "monthly"); // "monthly" | "annual"
-
-  // Free → just downgrade locally
-  if (plan === "free") {
-    await setPlan(shop, "free");
-    return { ok: true, downgraded: true };
-  }
-
-  const annual = interval === "annual";
-  const price = annual ? PLAN_PRICE_ANNUAL[plan] : PLAN_PRICE[plan];
-  if (!price) return { ok: false, error: "Unknown plan." };
-
-  const appUrl = process.env.SHOPIFY_APP_URL || "";
-  const returnUrl = `${appUrl}/app/plan?upgraded=${plan}`;
-
-  // Create the recurring charge via GraphQL Billing API
-  const resp = await admin.graphql(
-    `#graphql
-    mutation CreateSub($name:String!,$price:Decimal!,$returnUrl:URL!,$test:Boolean!,$interval:AppPricingInterval!){
-      appSubscriptionCreate(
-        name:$name
-        returnUrl:$returnUrl
-        test:$test
-        lineItems:[{
-          plan:{ appRecurringPricingDetails:{ price:{ amount:$price, currencyCode:USD }, interval:$interval } }
-        }]
-      ){
-        confirmationUrl
-        appSubscription { id }
-        userErrors { field message }
-      }
-    }`,
-    {
-      variables: {
-        name: `ZS StoreSync — ${plan[0].toUpperCase() + plan.slice(1)} (${annual ? "Annual" : "Monthly"})`,
-        price: price.toFixed(2),
-        returnUrl,
-        test: process.env.NODE_ENV !== "production",
-        interval: annual ? "ANNUAL" : "EVERY_30_DAYS",
-      },
-    },
-  );
-  const json = await resp.json();
-  const node = json?.data?.appSubscriptionCreate;
-  const errs = node?.userErrors;
-  if (errs?.length) return { ok: false, error: errs[0].message };
-
-  // store intended plan; confirm on return (or via webhook)
-  await setPlan(shop, plan, node?.appSubscription?.id);
-
-  return { ok: true, confirmationUrl: node.confirmationUrl };
 };
 
 const pageStyles = `
@@ -114,19 +62,18 @@ const pageStyles = `
   .zs-feats{list-style:none;padding:0;margin:0 0 20px;flex:1;}
   .zs-feats li{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--zs-dark);padding:6px 0;}
   .zs-feats li svg{color:var(--zs-sage-deep);flex-shrink:0;margin-top:2px;}
-  .zs-cta{width:100%;box-sizing:border-box;padding:12px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;border:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .15s,background .15s;}
+  .zs-cta{width:100%;box-sizing:border-box;padding:12px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;border:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .15s,background .15s;text-decoration:none;}
   .zs-cta.primary{background:var(--zs-clay);color:#fff;box-shadow:var(--zs-shadow-clay);}
   .zs-cta.primary:hover{transform:translateY(-2px);background:var(--zs-clay-deep);}
   .zs-cta.ghost{background:var(--zs-cream-soft);color:var(--zs-clay-deep);border:1px solid var(--zs-border);}
   .zs-cta.ghost:hover{background:var(--zs-clay-soft);}
-  .zs-cta:disabled{opacity:.6;cursor:default;}
+  .zs-cta.disabled{opacity:.6;cursor:default;pointer-events:none;}
   .zs-foot{text-align:center;margin-top:22px;font-size:12px;color:var(--zs-muted);}
   .zs-usage{margin-top:30px;max-width:680px;margin-left:auto;margin-right:auto;background:var(--zs-white);border:1px solid var(--zs-border);border-radius:var(--zs-r-lg);padding:1.4rem 1.6rem;box-shadow:var(--zs-shadow-sm);}
   .zs-usage-head{font-size:13px;font-weight:700;color:var(--zs-dark);margin-bottom:12px;}
   .zs-usage-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 24px;}
   .zs-usage-row{display:flex;justify-content:space-between;font-size:13px;color:var(--zs-muted);padding:3px 0;}
   .zs-usage-row b{color:var(--zs-dark);}
-  .zs-spin{animation:zsRot 1s linear infinite;}@keyframes zsRot{to{transform:rotate(360deg);}}
   @media(max-width:1100px){.zs-grid{grid-template-columns:repeat(2,1fr);}}
   @media(max-width:620px){.zs-grid{grid-template-columns:1fr;}.zs-usage-grid{grid-template-columns:1fr;}}
 `;
@@ -154,15 +101,22 @@ const TYPE_LABEL = {
 };
 
 const DISPLAY_TYPES = [
-  "products", "collections", "pages", "discounts",
-  "files", "menus", "redirects", "metaobjects",
-  "blogPosts", "metafields", "orders", "customers",
+  "products",
+  "collections",
+  "pages",
+  "discounts",
+  "files",
+  "menus",
+  "redirects",
+  "metaobjects",
+  "blogPosts",
+  "metafields",
+  "orders",
+  "customers",
 ];
 
-// Format a limit for the feature list (e.g. 5000 → "5k", 100000 → "100k")
 const fmt = (n) => (n >= 5000 || n === 1000 ? `${n / 1000}k` : `${n}`);
 
-// Grouped feature lines, mirroring the published pricing layout
 function featureLines(L) {
   return [
     `${fmt(L.products)} Products`,
@@ -176,20 +130,34 @@ function featureLines(L) {
   ];
 }
 
+// Build the Shopify Managed Pricing page URL for this app + store.
+// e.g. https://admin.shopify.com/store/zs-storesync/charges/zs-storesync/pricing_plans
+function managedPricingUrl(shop) {
+  const storeHandle = String(shop || "").replace(".myshopify.com", "");
+  return `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
+}
+
 export default function Plan() {
   const {
-    current, usage, planPrice, planPriceAnnual, planSavings, planLimits,
+    shop,
+    current,
+    usage,
+    planPrice,
+    planPriceAnnual,
+    planSavings,
+    planLimits,
   } = useLoaderData();
-  const fetcher = useFetcher();
-  const busy = fetcher.state !== "idle";
   const [annual, setAnnual] = useState(false);
 
-  // redirect to Shopify confirmation when returned
-  if (fetcher.data?.confirmationUrl && typeof window !== "undefined") {
-    window.top.location.href = fetcher.data.confirmationUrl;
-  }
-
   const maxSavings = Math.max(...Object.values(planSavings));
+  const pricingUrl = managedPricingUrl(shop);
+
+  // Managed Pricing: send the merchant to Shopify's pricing page (top-level).
+  const goToPricing = () => {
+    if (typeof window !== "undefined") {
+      open(pricingUrl, "_top");
+    }
+  };
 
   return (
     <s-page heading="Plans">
@@ -200,7 +168,10 @@ export default function Plan() {
             <div className="zs-head">
               <div className="zs-eyebrow">Pricing</div>
               <h1 className="zs-title">Pick your plan</h1>
-              <p className="zs-sub">Monthly item quota per data type. Upgrade or cancel anytime — billed securely through Shopify.</p>
+              <p className="zs-sub">
+                Monthly item quota per data type. Upgrade or cancel anytime —
+                billed securely through Shopify.
+              </p>
             </div>
 
             <div className="zs-toggle-wrap">
@@ -217,7 +188,8 @@ export default function Plan() {
                   onClick={() => setAnnual(true)}
                   type="button"
                 >
-                  Annual <span className="zs-save-pill">save up to {maxSavings}%</span>
+                  Annual{" "}
+                  <span className="zs-save-pill">save up to {maxSavings}%</span>
                 </button>
               </div>
             </div>
@@ -253,13 +225,23 @@ export default function Plan() {
                       </>
                     ) : annual ? (
                       <>
-                        <div className="zs-price">${yearly}<small>/yr</small></div>
-                        <div className="zs-price-sub">save {savings}% vs monthly</div>
+                        <div className="zs-price">
+                          ${yearly}
+                          <small>/yr</small>
+                        </div>
+                        <div className="zs-price-sub">
+                          save {savings}% vs monthly
+                        </div>
                       </>
                     ) : (
                       <>
-                        <div className="zs-price">${monthly}<small>/mo</small></div>
-                        <div className="zs-price-sub muted">or ${yearly}/yr · save {savings}%</div>
+                        <div className="zs-price">
+                          ${monthly}
+                          <small>/mo</small>
+                        </div>
+                        <div className="zs-price-sub muted">
+                          or ${yearly}/yr · save {savings}%
+                        </div>
                       </>
                     )}
 
@@ -267,34 +249,42 @@ export default function Plan() {
 
                     <ul className="zs-feats">
                       {featureLines(planLimits[planId]).map((line) => (
-                        <li key={line}><Check size={15} /> {line}</li>
+                        <li key={line}>
+                          <Check size={15} /> {line}
+                        </li>
                       ))}
                     </ul>
 
-                    <fetcher.Form method="post">
-                      <input type="hidden" name="plan" value={planId} />
-                      <input type="hidden" name="interval" value={annual ? "annual" : "monthly"} />
+                    {isCurrent ? (
+                      <span className={`zs-cta ghost disabled`}>
+                        Current Plan
+                      </span>
+                    ) : (
                       <button
+                        type="button"
                         className={`zs-cta ${featured ? "primary" : "ghost"}`}
-                        disabled={isCurrent || busy}
+                        onClick={goToPricing}
                       >
-                        {busy ? (
-                          <><Loader2 size={15} className="zs-spin" /> Redirecting…</>
-                        ) : isCurrent ? (
-                          "Current Plan"
-                        ) : isFree ? (
-                          "Downgrade to Free"
+                        {isFree ? (
+                          "Switch to Free"
                         ) : (
-                          `Choose ${planId[0].toUpperCase() + planId.slice(1)}`
+                          <>
+                            Choose {planId[0].toUpperCase() + planId.slice(1)}{" "}
+                            <ExternalLink size={14} />
+                          </>
                         )}
                       </button>
-                    </fetcher.Form>
+                    )}
                   </div>
                 );
               })}
             </div>
 
-            <div className="zs-foot">All charges are billed in USD. Recurring charges renew every 30 days (monthly) or every year (annual).</div>
+            <div className="zs-foot">
+              Plans are managed and billed securely by Shopify. Choosing a plan
+              opens Shopify's secure checkout. Charges are billed in USD and
+              renew every 30 days (monthly) or every year (annual).
+            </div>
 
             {DISPLAY_TYPES.some((t) => (usage[t] || 0) > 0) && (
               <div className="zs-usage">
@@ -309,7 +299,9 @@ export default function Plan() {
                     return (
                       <div key={t} className="zs-usage-row">
                         <span>{TYPE_LABEL[t]}</span>
-                        <span><b>{used}</b> / {lim}</span>
+                        <span>
+                          <b>{used}</b> / {lim}
+                        </span>
                       </div>
                     );
                   })}

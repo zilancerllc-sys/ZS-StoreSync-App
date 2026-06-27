@@ -222,8 +222,8 @@ export default function Index() {
     { icon: <Boxes size={18} />, name: "Metaobjects", sub: "Definitions & entries" },
     { icon: <Newspaper size={18} />, name: "Blog Posts", sub: "Blogs & articles" },
     { icon: <Tag size={18} />, name: "Metafields", sub: "On products & more" },
-    { icon: <ShoppingCart size={18} />, name: "Orders", sub: "Incl. drafts · Protected data", lock: "Approval" },
-    { icon: <Users size={18} />, name: "Customers", sub: "Protected data", lock: "Approval" },
+    { icon: <ShoppingCart size={18} />, name: "Orders", sub: "Incl. drafts · Protected data" },
+    { icon: <Users size={18} />, name: "Customers", sub: "Protected data" },
   ];
 
   const featureCards = [
@@ -289,7 +289,6 @@ export default function Index() {
                   <div key={name} className="zs-type">
                     <div className="zs-type-icon">{icon}</div>
                     <div><div className="zs-type-name">{name}</div><div className="zs-type-sub">{sub}</div></div>
-                    {lock && <span className="zs-type-lock">{lock}</span>}
                   </div>
                 ))}
               </div>

@@ -17,8 +17,7 @@
     "prisma": "prisma",
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
-    "typecheck": "react-router typegen && tsc --noEmit",
-    "postinstall": "chmod +x node_modules/.bin/*"
+    "typecheck": "react-router typegen && tsc --noEmit"
   },
   "type": "module",
   "engines": {

@@ -7,7 +7,7 @@ embedded = true
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_products,write_products,read_content,write_content,read_files,write_files,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_discounts,write_discounts,read_online_store_navigation,write_online_store_navigation,read_customers,write_customers,read_orders,write_orders"
+scopes = "read_products,write_products,read_content,write_content,read_files,write_files,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_discounts,write_discounts,read_online_store_navigation,write_online_store_navigation,read_customers,write_customers,read_orders,write_orders,read_draft_orders,write_draft_orders"
 
 [product.metafields.app.demo_info]
 type = "single_line_text_field"

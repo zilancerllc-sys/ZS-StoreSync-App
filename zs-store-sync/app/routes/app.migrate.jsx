@@ -14,12 +14,31 @@ import {
   consumeQuota,
   estimateOverageCost,
 } from "../credits.server";
+import { verifyConnectionCode } from "../connection.server";
 import { runMigration } from "../migrator.server";
 import { brandStyles } from "./zs-styles.js";
 import {
-  ArrowLeftRight, Package, Layers, FileText, Image, Users,
-  ShoppingCart, Boxes, Tag, Link2, CheckCircle2, AlertCircle,
-  Loader2, RotateCw, Percent, Menu, Shuffle, Newspaper,
+  ArrowLeftRight,
+  Package,
+  Layers,
+  FileText,
+  Image,
+  Users,
+  ShoppingCart,
+  Boxes,
+  Tag,
+  Link2,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  RotateCw,
+  Percent,
+  Menu,
+  Shuffle,
+  Newspaper,
+  KeyRound,
+  Trash2,
+  Check,
 } from "lucide-react";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
@@ -27,8 +46,6 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  // Re-sync the `authorized` flag against actual Session rows every load, so a
-  // store that was just installed flips to "Authorized" without manual steps.
   const connections = await db.storeConnection.findMany({
     where: { ownerShop: shop },
     orderBy: { createdAt: "desc" },
@@ -57,12 +74,13 @@ export const loader = async ({ request }) => {
       sourceShop: c.sourceShop,
       label: c.label,
       authorized: c.authorized,
+      codeVerified: c.codeVerified,
       lastUsedAt: c.lastUsedAt,
     })),
     plan: usage.plan,
     allowedTypes: usage.allowedTypes,
-    limits: usage.limits,         // { products: 500, ... }
-    remaining: usage.remaining,   // { products: 480, ... }
+    limits: usage.limits,
+    remaining: usage.remaining,
     allowsOverage: usage.allowsOverage,
   };
 };
@@ -74,20 +92,42 @@ export const action = async ({ request }) => {
   const form = await request.formData();
   const intent = form.get("intent");
 
-  // ── Connect / verify a source store ───────────────────────────────────────
+  // ── Connect / verify a source store (requires connection code) ─────────────
   if (intent === "connect") {
     let sourceShop = String(form.get("sourceShop") || "")
       .trim()
       .toLowerCase()
       .replace(/^https?:\/\//, "")
       .replace(/\/.*$/, "");
+    const code = String(form.get("code") || "").trim();
 
-    if (!sourceShop) return { ok: false, error: "Please enter a store domain." };
+    if (!sourceShop)
+      return { ok: false, error: "Please enter a store domain." };
     if (!sourceShop.includes(".")) {
-      return { ok: false, error: "Enter a full domain like store.myshopify.com" };
+      return {
+        ok: false,
+        error: "Enter a full domain like store.myshopify.com",
+      };
     }
     if (sourceShop === shop) {
-      return { ok: false, error: "Source and target cannot be the same store." };
+      return {
+        ok: false,
+        error: "Source and target cannot be the same store.",
+      };
+    }
+    if (!code) {
+      return { ok: false, error: "Enter the source store's connection code." };
+    }
+
+    // SECURITY: the source store's owner must share its connection code. This
+    // prevents anyone who merely knows a domain from pulling that store's data.
+    const codeOk = await verifyConnectionCode(sourceShop, code);
+    if (!codeOk) {
+      return {
+        ok: false,
+        error:
+          "That connection code doesn't match this store. Ask the source store's owner for the code in ZS StoreSync → Settings on that store.",
+      };
     }
 
     const existingSession = await db.session.findFirst({
@@ -97,8 +137,8 @@ export const action = async ({ request }) => {
 
     await db.storeConnection.upsert({
       where: { ownerShop_sourceShop: { ownerShop: shop, sourceShop } },
-      update: { authorized },
-      create: { ownerShop: shop, sourceShop, authorized },
+      update: { authorized, codeVerified: true },
+      create: { ownerShop: shop, sourceShop, authorized, codeVerified: true },
     });
 
     if (!authorized) {
@@ -126,6 +166,30 @@ export const action = async ({ request }) => {
     return { ok: true, needsAuth: false, authorized: true, sourceShop };
   }
 
+  // ── Disconnect a source store (full: removes connection + token) ──────────
+  if (intent === "disconnect") {
+    const sourceShop = String(form.get("sourceShop") || "").trim();
+    if (!sourceShop) return { ok: false, error: "No store specified." };
+
+    // remove the connection row for this owner
+    await db.storeConnection.deleteMany({
+      where: { ownerShop: shop, sourceShop },
+    });
+
+    // full disconnect: revoke our stored token for that source store, but only
+    // if no OTHER owner still has it connected (a source could be shared).
+    const stillUsed = await db.storeConnection.findFirst({
+      where: { sourceShop },
+    });
+    if (!stillUsed) {
+      await db.session.deleteMany({
+        where: { shop: sourceShop, isOnline: false },
+      });
+    }
+
+    return { ok: true, disconnected: true, sourceShop };
+  }
+
   // ── Run a migration ───────────────────────────────────────────────────────
   if (intent === "migrate") {
     const sourceShop = String(form.get("sourceShop") || "").trim();
@@ -135,7 +199,22 @@ export const action = async ({ request }) => {
       .filter(Boolean);
 
     if (!sourceShop || types.length === 0) {
-      return { ok: false, error: "Pick a source store and at least one data type." };
+      return {
+        ok: false,
+        error: "Pick a source store and at least one data type.",
+      };
+    }
+
+    // SECURITY: only migrate from a source that was paired with a valid code.
+    const conn = await db.storeConnection.findUnique({
+      where: { ownerShop_sourceShop: { ownerShop: shop, sourceShop } },
+    });
+    if (!conn?.codeVerified) {
+      return {
+        ok: false,
+        error:
+          "This source store hasn't been verified with a connection code. Reconnect it above using its code.",
+      };
     }
 
     const { allowed, blocked } = await filterAllowedTypes(shop, types);
@@ -146,24 +225,19 @@ export const action = async ({ request }) => {
       };
     }
 
-    // Per-type limits for this shop's plan + remaining within the window.
     const usage = await getUsage(shop);
     const planLimits = usage.limits;
     const usedSoFar = usage.usage;
     const allowsOverage = usage.allowsOverage;
 
-    // Hard limit per type = remaining in window. Pro overage = Infinity (billed).
     const migrateLimits = {};
     const exhaustedTypes = [];
     for (const t of allowed) {
       const remaining = Math.max((planLimits[t] || 0) - (usedSoFar[t] || 0), 0);
       if (allowsOverage) {
-        // Pro: allow past the limit, overage is billed afterwards
         migrateLimits[t] = Infinity;
       } else {
-        if (remaining <= 0) {
-          exhaustedTypes.push(t);
-        }
+        if (remaining <= 0) exhaustedTypes.push(t);
         migrateLimits[t] = remaining;
       }
     }
@@ -192,8 +266,13 @@ export const action = async ({ request }) => {
 
     const job = await db.migrationJob.create({
       data: {
-        shop, sourceShop, targetShop: shop, mode: "migrate",
-        dataTypes: allowed.join(","), status: "running", startedAt: new Date(),
+        shop,
+        sourceShop,
+        targetShop: shop,
+        mode: "migrate",
+        dataTypes: allowed.join(","),
+        status: "running",
+        startedAt: new Date(),
       },
     });
 
@@ -206,11 +285,14 @@ export const action = async ({ request }) => {
     let overageByType = {};
     try {
       result = await runMigration({
-        source, target, types: allowed, limits: migrateLimits, onLog,
+        source,
+        target,
+        types: allowed,
+        limits: migrateLimits,
+        onLog,
       });
       await consumeQuota(shop, result.consumedByType);
 
-      // Compute overage cost for Pro plans
       if (allowsOverage) {
         for (const t of allowed) {
           const used = (usedSoFar[t] || 0) + (result.consumedByType[t] || 0);
@@ -224,9 +306,12 @@ export const action = async ({ request }) => {
         where: { id: job.id },
         data: {
           status: result.failed > 0 ? "partial" : "completed",
-          itemCount: result.total, createdCount: result.created,
-          updatedCount: result.updated, skippedCount: result.skipped,
-          failedCount: result.failed, summary: result.summary,
+          itemCount: result.total,
+          createdCount: result.created,
+          updatedCount: result.updated,
+          skippedCount: result.skipped,
+          failedCount: result.failed,
+          summary: result.summary,
           logJson: JSON.stringify(logs).slice(0, 100000),
           finishedAt: new Date(),
         },
@@ -239,16 +324,27 @@ export const action = async ({ request }) => {
       await db.migrationJob.update({
         where: { id: job.id },
         data: {
-          status: "failed", error: String(err.message).slice(0, 500),
-          logJson: JSON.stringify(logs).slice(0, 100000), finishedAt: new Date(),
+          status: "failed",
+          error: String(err.message).slice(0, 500),
+          logJson: JSON.stringify(logs).slice(0, 100000),
+          finishedAt: new Date(),
         },
       });
-      return { ok: false, error: String(err.message).slice(0, 300), jobId: job.id };
+      return {
+        ok: false,
+        error: String(err.message).slice(0, 300),
+        jobId: job.id,
+      };
     }
 
     return {
-      ok: true, done: true, jobId: job.id, result, blocked,
-      overageCost, overageByType,
+      ok: true,
+      done: true,
+      jobId: job.id,
+      result,
+      blocked,
+      overageCost,
+      overageByType,
       logs: logs.slice(-40),
     };
   }
@@ -279,27 +375,39 @@ const pageStyles = `
   .zs-card-head h3{font-family:var(--zs-font-display);font-size:17px;font-weight:600;margin:0;color:var(--zs-dark);}
   .zs-step-num{width:26px;height:26px;border-radius:50%;background:var(--zs-clay);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;}
   .zs-connect-row{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;}
-  .zs-input{flex:1;min-width:240px;padding:12px 14px;border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);font-size:14px;font-family:inherit;color:var(--zs-dark);background:var(--zs-cream-soft);outline:none;transition:border-color .15s;}
+  .zs-input{flex:1;min-width:220px;padding:12px 14px;border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);font-size:14px;font-family:inherit;color:var(--zs-dark);background:var(--zs-cream-soft);outline:none;transition:border-color .15s;}
   .zs-input:focus{border-color:var(--zs-clay);}
+  .zs-input.code{max-width:240px;text-transform:uppercase;letter-spacing:1px;font-weight:600;}
   .zs-btn{background:var(--zs-clay);color:#fff;border:none;padding:12px 22px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px;box-shadow:var(--zs-shadow-clay);transition:transform .15s,background .15s;text-decoration:none;}
   .zs-btn:hover{transform:translateY(-2px);background:var(--zs-clay-deep);}
   .zs-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;}
   .zs-btn-ghost{background:var(--zs-cream-soft);color:var(--zs-clay-deep);border:1px solid var(--zs-border);box-shadow:none;}
   .zs-btn-ghost:hover{background:var(--zs-clay-soft);}
-  .zs-conn-list{display:flex;flex-direction:column;gap:8px;margin-top:14px;}
-  .zs-conn{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);cursor:pointer;transition:border-color .15s,background .15s;}
+  .zs-code-hint{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:12px;color:var(--zs-muted);}
+  .zs-code-hint svg{color:var(--zs-camel);flex-shrink:0;}
+  .zs-conn-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--zs-muted);margin:18px 0 10px;}
+  .zs-conn-list{display:flex;flex-direction:column;gap:8px;}
+  .zs-conn{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1.5px solid var(--zs-border);border-radius:var(--zs-r-sm);cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s;position:relative;}
   .zs-conn:hover{border-color:var(--zs-camel);background:var(--zs-cream-soft);}
-  .zs-conn.sel{border-color:var(--zs-clay);background:var(--zs-clay-soft);}
+  .zs-conn.sel{border-color:var(--zs-clay);background:var(--zs-clay-soft);box-shadow:0 0 0 3px rgba(169,139,118,.12);}
   .zs-conn.unauth{cursor:default;}
-  .zs-conn-left{display:flex;align-items:center;gap:11px;}
-  .zs-conn-ico{width:36px;height:36px;border-radius:10px;background:var(--zs-sage-soft);color:var(--zs-sage-deep);display:flex;align-items:center;justify-content:center;}
-  .zs-conn-name{font-size:14px;font-weight:600;color:var(--zs-dark);}
+  .zs-conn-left{display:flex;align-items:center;gap:11px;min-width:0;}
+  .zs-conn-ico{width:36px;height:36px;border-radius:10px;background:var(--zs-sage-soft);color:var(--zs-sage-deep);display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative;}
+  .zs-conn.sel .zs-conn-ico{background:var(--zs-clay);color:#fff;}
+  .zs-conn-name{font-size:14px;font-weight:600;color:var(--zs-dark);display:flex;align-items:center;gap:8px;}
   .zs-conn-sub{font-size:11px;color:var(--zs-muted);margin-top:2px;}
-  .zs-conn-right{display:flex;align-items:center;gap:8px;}
+  .zs-conn-right{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+  .zs-sel-tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--zs-clay-deep);background:#fff;border:1px solid var(--zs-clay);padding:3px 9px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;}
   .zs-pill{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:4px 10px;border-radius:20px;border:none;font-family:inherit;cursor:default;display:inline-flex;align-items:center;gap:5px;}
   .zs-pill.ok{background:var(--zs-sage-soft);color:var(--zs-sage-deep);}
   .zs-pill.no{background:var(--zs-cream-tint);color:var(--zs-clay-deep);cursor:pointer;transition:background .15s;}
   .zs-pill.no:hover{background:var(--zs-clay-soft);}
+  .zs-remove{width:30px;height:30px;border-radius:8px;border:1px solid var(--zs-border);background:#fff;color:var(--zs-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;flex-shrink:0;}
+  .zs-remove:hover{border-color:#e0a0a0;background:#fbeaea;color:#9a3412;}
+  .zs-confirm{display:flex;align-items:center;gap:8px;}
+  .zs-confirm-txt{font-size:11px;color:#9a3412;font-weight:600;}
+  .zs-confirm-yes{background:#9a3412;color:#fff;border:none;padding:5px 11px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;}
+  .zs-confirm-no{background:#fff;color:var(--zs-muted);border:1px solid var(--zs-border);padding:5px 11px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;}
   .zs-types{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px;}
   .zs-type-chk{display:flex;align-items:center;gap:9px;padding:12px;border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);cursor:pointer;transition:all .15s;user-select:none;}
   .zs-type-chk:hover{border-color:var(--zs-camel);}
@@ -321,7 +429,7 @@ const pageStyles = `
   .zs-result .l{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--zs-muted);margin-top:4px;}
   .zs-spin{animation:zsRot 1s linear infinite;}
   @keyframes zsRot{to{transform:rotate(360deg);}}
-  @media(max-width:780px){.zs-types{grid-template-columns:repeat(2,1fr);}.zs-result{grid-template-columns:repeat(2,1fr);}}
+  @media(max-width:780px){.zs-types{grid-template-columns:repeat(2,1fr);}.zs-result{grid-template-columns:repeat(2,1fr);}.zs-input.code{max-width:none;}}
 `;
 
 const ALL_TYPES = [
@@ -340,9 +448,11 @@ const ALL_TYPES = [
 ];
 
 export default function Migrate() {
-  const { connections, allowedTypes, remaining, limits, plan, allowsOverage } = useLoaderData();
+  const { connections, allowedTypes, remaining, limits, plan, allowsOverage } =
+    useLoaderData();
   const connectFetcher = useFetcher();
   const recheckFetcher = useFetcher();
+  const disconnectFetcher = useFetcher();
   const runFetcher = useFetcher();
   const revalidator = useRevalidator();
 
@@ -350,21 +460,21 @@ export default function Migrate() {
     connections.find((c) => c.authorized)?.sourceShop || "",
   );
   const [domain, setDomain] = useState("");
+  const [code, setCode] = useState("");
   const [picked, setPicked] = useState(["products", "collections", "pages"]);
   const [authOpenedFor, setAuthOpenedFor] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(null);
 
   const connecting = connectFetcher.state !== "idle";
   const rechecking = recheckFetcher.state !== "idle";
   const running = runFetcher.state !== "idle";
 
-  // open auth in a NEW tab so the current (target) store stays put
   const openAuth = (url, shopName) => {
     const full = `${window.location.origin}${url}`;
     window.open(full, "_blank", "noopener,noreferrer");
     setAuthOpenedFor(shopName);
   };
 
-  // react to connect result
   useEffect(() => {
     const d = connectFetcher.data;
     if (d?.needsAuth && d?.installUrl) {
@@ -376,7 +486,6 @@ export default function Migrate() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectFetcher.data]);
 
-  // react to recheck result
   useEffect(() => {
     const d = recheckFetcher.data;
     if (d?.authorized) {
@@ -389,13 +498,32 @@ export default function Migrate() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recheckFetcher.data]);
 
+  // after disconnect, clear selection if it was the removed one + refresh
+  useEffect(() => {
+    const d = disconnectFetcher.data;
+    if (d?.disconnected) {
+      if (selectedSource === d.sourceShop) setSelectedSource("");
+      setConfirmRemove(null);
+      revalidator.revalidate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disconnectFetcher.data]);
+
   const toggleType = (id) => {
     if (!allowedTypes.includes(id)) return;
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   };
 
+  const doDisconnect = (sourceShop) => {
+    const fd = new FormData();
+    fd.append("intent", "disconnect");
+    fd.append("sourceShop", sourceShop);
+    disconnectFetcher.submit(fd, { method: "post" });
+  };
+
   const cData = connectFetcher.data;
   const result = runFetcher.data;
+  const authedConns = connections.filter((c) => c.authorized);
 
   return (
     <s-page heading="New Migration">
@@ -403,14 +531,14 @@ export default function Migrate() {
       <div className="zs-section-wrap">
         <div className="zs-root">
           <div className="zs-wrap zs-stack">
-
             <div className="zs-reveal zs-d1">
               <div className="zs-sec-eyebrow">Store → Store</div>
               <h2 className="zs-sec-title">Start a Migration</h2>
               <p className="zs-sec-sub">
-                Connect the store you want to copy <em>from</em>, choose what to move,
-                and run it into this store. Duplicates are skipped automatically ·
-                {" "}<b>{plan.toUpperCase()}</b> plan{allowsOverage ? " · overage billed per item" : ""}.
+                Connect the store you want to copy <em>from</em>, choose what to
+                move, and run it into this store. Duplicates are skipped
+                automatically · <b>{plan.toUpperCase()}</b> plan
+                {allowsOverage ? " · overage billed per item" : ""}.
               </p>
             </div>
 
@@ -421,7 +549,9 @@ export default function Migrate() {
                 <h3>Connect a source store</h3>
               </div>
               <p className="zs-sec-sub" style={{ margin: 0 }}>
-                Enter the Shopify domain of the store you want to pull data from.
+                Enter the Shopify domain of the store you want to pull data
+                from, plus its connection code. You can connect several and pick
+                one each time.
               </p>
 
               <connectFetcher.Form method="post">
@@ -434,15 +564,34 @@ export default function Migrate() {
                     value={domain}
                     onChange={(e) => setDomain(e.target.value)}
                   />
+                  <input
+                    className="zs-input code"
+                    name="code"
+                    placeholder="Code · ZS7K-92QT"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                  />
                   <button className="zs-btn" disabled={connecting}>
                     {connecting ? (
-                      <><Loader2 size={15} className="zs-spin" /> Connecting…</>
+                      <>
+                        <Loader2 size={15} className="zs-spin" /> Connecting…
+                      </>
                     ) : (
-                      <><Link2 size={15} /> Connect</>
+                      <>
+                        <Link2 size={15} /> Connect
+                      </>
                     )}
                   </button>
                 </div>
               </connectFetcher.Form>
+
+              <div className="zs-code-hint">
+                <KeyRound size={14} />
+                <span>
+                  The source store's owner finds its connection code in ZS
+                  StoreSync → Settings on that store.
+                </span>
+              </div>
 
               {cData?.error && (
                 <div className="zs-banner err">
@@ -467,58 +616,122 @@ export default function Migrate() {
                     }}
                   >
                     {rechecking ? (
-                      <><Loader2 size={13} className="zs-spin" /> Checking…</>
+                      <>
+                        <Loader2 size={13} className="zs-spin" /> Checking…
+                      </>
                     ) : (
-                      <><RotateCw size={13} /> I’ve authorized</>
+                      <>
+                        <RotateCw size={13} /> I’ve authorized
+                      </>
                     )}
                   </button>
                 </div>
               )}
 
               {connections.length > 0 && (
-                <div className="zs-conn-list">
-                  {connections.map((c) => (
-                    <div
-                      key={c.id}
-                      className={`zs-conn ${selectedSource === c.sourceShop ? "sel" : ""} ${c.authorized ? "" : "unauth"}`}
-                      onClick={() =>
-                        c.authorized && setSelectedSource(c.sourceShop)
-                      }
-                    >
-                      <div className="zs-conn-left">
-                        <div className="zs-conn-ico"><Package size={17} /></div>
-                        <div>
-                          <div className="zs-conn-name">{c.sourceShop}</div>
-                          <div className="zs-conn-sub">
-                            {c.lastUsedAt
-                              ? `Last used ${new Date(c.lastUsedAt).toLocaleDateString()}`
-                              : "Never used"}
+                <>
+                  <div className="zs-conn-label">
+                    Connected stores — click one to select it as the source
+                  </div>
+                  <div className="zs-conn-list">
+                    {connections.map((c) => {
+                      const isSel = selectedSource === c.sourceShop;
+                      const isConfirming = confirmRemove === c.sourceShop;
+                      return (
+                        <div
+                          key={c.id}
+                          className={`zs-conn ${isSel ? "sel" : ""} ${c.authorized ? "" : "unauth"}`}
+                          onClick={() =>
+                            c.authorized &&
+                            !isConfirming &&
+                            setSelectedSource(c.sourceShop)
+                          }
+                        >
+                          <div className="zs-conn-left">
+                            <div className="zs-conn-ico">
+                              {isSel ? (
+                                <Check size={17} />
+                              ) : (
+                                <Package size={17} />
+                              )}
+                            </div>
+                            <div>
+                              <div className="zs-conn-name">
+                                {c.sourceShop}
+                                {isSel && (
+                                  <span className="zs-sel-tag">
+                                    <Check size={10} /> Selected
+                                  </span>
+                                )}
+                              </div>
+                              <div className="zs-conn-sub">
+                                {c.lastUsedAt
+                                  ? `Last used ${new Date(c.lastUsedAt).toLocaleDateString()}`
+                                  : "Never used"}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div
+                            className="zs-conn-right"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {isConfirming ? (
+                              <div className="zs-confirm">
+                                <span className="zs-confirm-txt">
+                                  Disconnect?
+                                </span>
+                                <button
+                                  className="zs-confirm-yes"
+                                  onClick={() => doDisconnect(c.sourceShop)}
+                                >
+                                  {disconnectFetcher.state !== "idle"
+                                    ? "…"
+                                    : "Yes, remove"}
+                                </button>
+                                <button
+                                  className="zs-confirm-no"
+                                  onClick={() => setConfirmRemove(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                {c.authorized ? (
+                                  <span className="zs-pill ok">
+                                    <CheckCircle2 size={12} /> Authorized
+                                  </span>
+                                ) : (
+                                  <button
+                                    className="zs-pill no"
+                                    onClick={() => {
+                                      const fd = new FormData();
+                                      fd.append("intent", "recheck");
+                                      fd.append("sourceShop", c.sourceShop);
+                                      recheckFetcher.submit(fd, {
+                                        method: "post",
+                                      });
+                                    }}
+                                  >
+                                    <Link2 size={11} /> Needs auth — authorize
+                                  </button>
+                                )}
+                                <button
+                                  className="zs-remove"
+                                  title="Disconnect this store"
+                                  onClick={() => setConfirmRemove(c.sourceShop)}
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
-                      </div>
-                      <div className="zs-conn-right">
-                        {c.authorized ? (
-                          <span className="zs-pill ok">
-                            <CheckCircle2 size={12} /> Authorized
-                          </span>
-                        ) : (
-                          <button
-                            className="zs-pill no"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const fd = new FormData();
-                              fd.append("intent", "recheck");
-                              fd.append("sourceShop", c.sourceShop);
-                              recheckFetcher.submit(fd, { method: "post" });
-                            }}
-                          >
-                            <Link2 size={11} /> Needs auth — authorize
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
 
@@ -546,9 +759,19 @@ export default function Migrate() {
                         {locked ? (
                           <div className="lk">Upgrade</div>
                         ) : allowsOverage ? (
-                          <div className="lk" style={{ color: "var(--zs-sage-deep)" }}>{lim} /mo · +overage</div>
+                          <div
+                            className="lk"
+                            style={{ color: "var(--zs-sage-deep)" }}
+                          >
+                            {lim} /mo · +overage
+                          </div>
                         ) : (
-                          <div className="lk" style={{ color: "var(--zs-muted)" }}>{left}/{lim} left</div>
+                          <div
+                            className="lk"
+                            style={{ color: "var(--zs-muted)" }}
+                          >
+                            {left}/{lim} left
+                          </div>
                         )}
                       </div>
                     </div>
@@ -566,7 +789,9 @@ export default function Migrate() {
               <p className="zs-sec-sub" style={{ margin: "0 0 4px" }}>
                 {selectedSource
                   ? `Copying from ${selectedSource} → this store.`
-                  : "Select an authorized source store above first."}
+                  : authedConns.length > 0
+                    ? "Select a source store above first."
+                    : "Connect and authorize a source store above first."}
               </p>
 
               <runFetcher.Form method="post">
@@ -579,9 +804,14 @@ export default function Migrate() {
                   style={{ marginTop: 12 }}
                 >
                   {running ? (
-                    <><Loader2 size={15} className="zs-spin" /> Migrating… (keep tab open)</>
+                    <>
+                      <Loader2 size={15} className="zs-spin" /> Migrating… (keep
+                      tab open)
+                    </>
                   ) : (
-                    <><ArrowLeftRight size={15} /> Run Migration</>
+                    <>
+                      <ArrowLeftRight size={15} /> Run Migration
+                    </>
                   )}
                 </button>
               </runFetcher.Form>
@@ -606,30 +836,47 @@ export default function Migrate() {
                         {Object.entries(result.overageByType)
                           .map(([t, n]) => `${n} ${t}`)
                           .join(", ")}{" "}
-                        — usage charge <b>${result.overageCost.toFixed(2)}</b> added to your Shopify invoice.
+                        — usage charge <b>${result.overageCost.toFixed(2)}</b>{" "}
+                        added to your Shopify invoice.
                       </span>
                     </div>
                   )}
                   <div className="zs-result">
-                    <div className="box"><div className="v">{result.result.created}</div><div className="l">Created</div></div>
-                    <div className="box"><div className="v">{result.result.skipped}</div><div className="l">Skipped</div></div>
-                    <div className="box"><div className="v">{result.result.failed}</div><div className="l">Failed</div></div>
-                    <div className="box"><div className="v">{result.result.total}</div><div className="l">Total</div></div>
+                    <div className="box">
+                      <div className="v">{result.result.created}</div>
+                      <div className="l">Created</div>
+                    </div>
+                    <div className="box">
+                      <div className="v">{result.result.skipped}</div>
+                      <div className="l">Skipped</div>
+                    </div>
+                    <div className="box">
+                      <div className="v">{result.result.failed}</div>
+                      <div className="l">Failed</div>
+                    </div>
+                    <div className="box">
+                      <div className="v">{result.result.total}</div>
+                      <div className="l">Total</div>
+                    </div>
                   </div>
                   {result.logs && (
                     <div className="zs-log">
-                      {result.logs.map((l, i) => <div key={i}>{l}</div>)}
+                      {result.logs.map((l, i) => (
+                        <div key={i}>{l}</div>
+                      ))}
                     </div>
                   )}
                   <div style={{ marginTop: 14 }}>
-                    <RouterLink to="/app/history" className="zs-btn zs-btn-ghost">
+                    <RouterLink
+                      to="/app/history"
+                      className="zs-btn zs-btn-ghost"
+                    >
                       View migration history →
                     </RouterLink>
                   </div>
                 </>
               )}
             </div>
-
           </div>
         </div>
       </div>
