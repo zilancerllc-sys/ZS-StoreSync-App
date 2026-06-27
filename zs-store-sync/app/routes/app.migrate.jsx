@@ -19,7 +19,7 @@ import { brandStyles } from "./zs-styles.js";
 import {
   ArrowLeftRight, Package, Layers, FileText, Image, Users,
   ShoppingCart, Boxes, Tag, Link2, CheckCircle2, AlertCircle,
-  Loader2, RotateCw, Percent, Menu, Shuffle, Newspaper,
+  Loader2, RotateCw, Percent, Menu, Shuffle, Newspaper, ClipboardList,
 } from "lucide-react";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
@@ -336,6 +336,7 @@ const ALL_TYPES = [
   { id: "blogPosts", name: "Blog Posts", icon: <Newspaper size={16} /> },
   { id: "metafields", name: "Metafields", icon: <Tag size={16} /> },
   { id: "orders", name: "Orders", icon: <ShoppingCart size={16} /> },
+  { id: "draftOrders", name: "Draft Orders", icon: <ClipboardList size={16} /> },
   { id: "customers", name: "Customers", icon: <Users size={16} /> },
 ];
 

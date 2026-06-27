@@ -794,6 +794,123 @@ async function migrateOrders(ctx) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  DRAFT ORDERS
+//  Recreates open draft orders with their line items (as titled custom items),
+//  addresses, note and tags. Customer email/address still fall under Protected
+//  Customer Data, so the source query is skipped (logged) until access is live.
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_DRAFT_ORDERS = `#graphql
+  query DraftOrders($cursor: String) {
+    draftOrders(first: 25, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id name email note2 tags
+        lineItems(first: 50) {
+          edges { node {
+            title quantity sku
+            originalUnitPriceSet { shopMoney { amount currencyCode } }
+          } }
+        }
+        shippingAddress {
+          address1 address2 city provinceCode countryCodeV2 zip phone
+          firstName lastName company
+        }
+        billingAddress {
+          address1 address2 city provinceCode countryCodeV2 zip phone
+          firstName lastName company
+        }
+      } }
+    }
+  }`;
+
+const Q_TARGET_DRAFT_BY_NAME = `#graphql
+  query DraftByName($q: String!) {
+    draftOrders(first: 1, query: $q) { edges { node { id name } } }
+  }`;
+
+const M_DRAFT_ORDER_CREATE = `#graphql
+  mutation DraftOrderCreate($input: DraftOrderInput!) {
+    draftOrderCreate(input: $input) {
+      draftOrder { id name }
+      userErrors { field message }
+    }
+  }`;
+
+async function migrateDraftOrders(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+  const drafts = await fetchAll(source, Q_DRAFT_ORDERS, "draftOrders", {}, (n) =>
+    onLog(`Fetched ${n} draft orders…`),
+  );
+  onLog(`Total ${drafts.length} draft orders found. Importing…`);
+
+  for (const o of drafts) {
+    if (!consume()) {
+      onLog("Quota reached — stopping draft orders.");
+      break;
+    }
+    // duplicate detection by draft order name (e.g. "#D1")
+    if (o.name) {
+      try {
+        const r = await gql(target, Q_TARGET_DRAFT_BY_NAME, {
+          q: `name:${o.name}`,
+        });
+        if (r?.draftOrders?.edges?.length) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped (exists): ${o.name}`);
+          continue;
+        }
+      } catch { /* ignore lookup errors, attempt create */ }
+    }
+
+    const lineItems = (o.lineItems?.edges || []).map((e) => {
+      const li = e.node;
+      const item = { title: li.title || "Item", quantity: li.quantity || 1 };
+      const money = li.originalUnitPriceSet?.shopMoney;
+      if (money?.amount != null) {
+        item.originalUnitPriceWithCurrency = {
+          amount: String(money.amount),
+          currencyCode: money.currencyCode,
+        };
+      }
+      return item;
+    });
+
+    if (lineItems.length === 0) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (no line items): ${o.name}`);
+      continue;
+    }
+
+    const input = {
+      email: o.email || undefined,
+      note: o.note2 || undefined,
+      tags: o.tags || [],
+      lineItems,
+    };
+    const ship = mapAddress(o.shippingAddress);
+    const bill = mapAddress(o.billingAddress);
+    if (ship) input.shippingAddress = ship;
+    if (bill) input.billingAddress = bill;
+
+    try {
+      const data = await gql(target, M_DRAFT_ORDER_CREATE, { input });
+      const errs = data?.draftOrderCreate?.userErrors;
+      if (errs?.length) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped: ${o.name} — ${errs[0].message}`);
+      } else {
+        counters.created++;
+        onLog(`✓ Draft order: ${o.name}`);
+      }
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ Draft order error: ${o.name} — ${String(err.message).slice(0, 120)}`);
+    }
+    await sleep(250);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  URL REDIRECTS
 // ═════════════════════════════════════════════════════════════════════════════
 const Q_REDIRECTS = `#graphql
@@ -1093,6 +1210,60 @@ const Q_DISCOUNTS = `#graphql
               }
             }
           }
+          ... on DiscountCodeFreeShipping {
+            title status startsAt endsAt appliesOncePerCustomer
+            codes(first: 1) { edges { node { code } } }
+          }
+          ... on DiscountAutomaticFreeShipping {
+            title status startsAt endsAt
+          }
+          ... on DiscountCodeBxgy {
+            title status startsAt endsAt usesPerOrderLimit appliesOncePerCustomer
+            codes(first: 1) { edges { node { code } } }
+            customerBuys {
+              value {
+                __typename
+                ... on DiscountQuantity { quantity }
+                ... on DiscountPurchaseAmount { amount }
+              }
+            }
+            customerGets {
+              value {
+                __typename
+                ... on DiscountOnQuantity {
+                  quantity { quantity }
+                  effect {
+                    __typename
+                    ... on DiscountPercentage { percentage }
+                  }
+                }
+                ... on DiscountPercentage { percentage }
+              }
+            }
+          }
+          ... on DiscountAutomaticBxgy {
+            title status startsAt endsAt
+            customerBuys {
+              value {
+                __typename
+                ... on DiscountQuantity { quantity }
+                ... on DiscountPurchaseAmount { amount }
+              }
+            }
+            customerGets {
+              value {
+                __typename
+                ... on DiscountOnQuantity {
+                  quantity { quantity }
+                  effect {
+                    __typename
+                    ... on DiscountPercentage { percentage }
+                  }
+                }
+                ... on DiscountPercentage { percentage }
+              }
+            }
+          }
         }
       } }
     }
@@ -1113,6 +1284,77 @@ const M_DISCOUNT_AUTO_BASIC_CREATE = `#graphql
       userErrors { field message }
     }
   }`;
+
+const M_DISCOUNT_CODE_FREE_SHIPPING_CREATE = `#graphql
+  mutation CreateCodeFreeShipping($freeShippingCodeDiscount: DiscountCodeFreeShippingInput!) {
+    discountCodeFreeShippingCreate(freeShippingCodeDiscount: $freeShippingCodeDiscount) {
+      codeDiscountNode { id }
+      userErrors { field message }
+    }
+  }`;
+
+const M_DISCOUNT_AUTO_FREE_SHIPPING_CREATE = `#graphql
+  mutation CreateAutoFreeShipping($freeShippingAutomaticDiscount: DiscountAutomaticFreeShippingInput!) {
+    discountAutomaticFreeShippingCreate(freeShippingAutomaticDiscount: $freeShippingAutomaticDiscount) {
+      automaticDiscountNode { id }
+      userErrors { field message }
+    }
+  }`;
+
+const M_DISCOUNT_CODE_BXGY_CREATE = `#graphql
+  mutation CreateCodeBxgy($bxgyCodeDiscount: DiscountCodeBxgyInput!) {
+    discountCodeBxgyCreate(bxgyCodeDiscount: $bxgyCodeDiscount) {
+      codeDiscountNode { id }
+      userErrors { field message }
+    }
+  }`;
+
+const M_DISCOUNT_AUTO_BXGY_CREATE = `#graphql
+  mutation CreateAutoBxgy($automaticBxgyDiscount: DiscountAutomaticBxgyInput!) {
+    discountAutomaticBxgyCreate(automaticBxgyDiscount: $automaticBxgyDiscount) {
+      automaticDiscountNode { id }
+      userErrors { field message }
+    }
+  }`;
+
+// Build the customerBuys input (the "Buy X" half of a BxGy discount).
+// Items reference product/variant/collection gids that don't map across stores,
+// so the prerequisite is recreated against ALL items — a documented best-effort.
+function bxgyCustomerBuysInput(customerBuys) {
+  const v = customerBuys?.value;
+  if (!v) return null;
+  if (v.__typename === "DiscountQuantity" && v.quantity != null) {
+    return { value: { quantity: String(v.quantity) }, items: { all: true } };
+  }
+  if (v.__typename === "DiscountPurchaseAmount" && v.amount != null) {
+    return { value: { amount: String(v.amount) }, items: { all: true } };
+  }
+  return null;
+}
+
+// Build the customerGets input (the "Get Y" half of a BxGy discount). Only
+// percentage effects (incl. 100% = free) are supported; fixed-amount effects
+// vary by store and are reported as unsupported by the caller.
+function bxgyCustomerGetsInput(customerGets) {
+  const v = customerGets?.value;
+  if (!v) return null;
+  if (v.__typename === "DiscountOnQuantity") {
+    if (v.effect?.__typename !== "DiscountPercentage") return null;
+    return {
+      value: {
+        discountOnQuantity: {
+          quantity: String(v.quantity?.quantity ?? "1"),
+          effect: { percentage: v.effect.percentage ?? 1 },
+        },
+      },
+      items: { all: true },
+    };
+  }
+  if (v.__typename === "DiscountPercentage") {
+    return { value: { percentage: v.percentage ?? 0 }, items: { all: true } };
+  }
+  return null;
+}
 
 // build the customerGets.value input from a source discount value
 function discountValueInput(value) {
@@ -1199,6 +1441,99 @@ async function migrateDiscounts(ctx) {
           counters.created++;
           onLog(`✓ Automatic discount: ${d.title}`);
         }
+      } else if (kind === "DiscountCodeFreeShipping") {
+        const code = d.codes?.edges?.[0]?.node?.code || d.title;
+        const data = await gql(target, M_DISCOUNT_CODE_FREE_SHIPPING_CREATE, {
+          freeShippingCodeDiscount: {
+            title: d.title,
+            code,
+            startsAt: d.startsAt,
+            endsAt: d.endsAt || null,
+            appliesOncePerCustomer: !!d.appliesOncePerCustomer,
+            customerSelection: { all: true },
+            destination: { all: true },
+          },
+        });
+        const errs = data?.discountCodeFreeShippingCreate?.userErrors;
+        if (errs?.length) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
+        } else {
+          counters.created++;
+          onLog(`✓ Free-shipping code discount: ${d.title}`);
+        }
+      } else if (kind === "DiscountAutomaticFreeShipping") {
+        const data = await gql(target, M_DISCOUNT_AUTO_FREE_SHIPPING_CREATE, {
+          freeShippingAutomaticDiscount: {
+            title: d.title,
+            startsAt: d.startsAt,
+            endsAt: d.endsAt || null,
+            destination: { all: true },
+          },
+        });
+        const errs = data?.discountAutomaticFreeShippingCreate?.userErrors;
+        if (errs?.length) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
+        } else {
+          counters.created++;
+          onLog(`✓ Automatic free-shipping discount: ${d.title}`);
+        }
+      } else if (kind === "DiscountCodeBxgy") {
+        const customerBuys = bxgyCustomerBuysInput(d.customerBuys);
+        const customerGets = bxgyCustomerGetsInput(d.customerGets);
+        if (!customerBuys || !customerGets) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped (unsupported Buy X Get Y shape): ${d.title}`);
+          continue;
+        }
+        const code = d.codes?.edges?.[0]?.node?.code || d.title;
+        const data = await gql(target, M_DISCOUNT_CODE_BXGY_CREATE, {
+          bxgyCodeDiscount: {
+            title: d.title,
+            code,
+            startsAt: d.startsAt,
+            endsAt: d.endsAt || null,
+            usesPerOrderLimit: d.usesPerOrderLimit ?? null,
+            appliesOncePerCustomer: !!d.appliesOncePerCustomer,
+            customerSelection: { all: true },
+            customerBuys,
+            customerGets,
+          },
+        });
+        const errs = data?.discountCodeBxgyCreate?.userErrors;
+        if (errs?.length) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
+        } else {
+          counters.created++;
+          onLog(`✓ Buy X Get Y code discount: ${d.title}`);
+        }
+      } else if (kind === "DiscountAutomaticBxgy") {
+        const customerBuys = bxgyCustomerBuysInput(d.customerBuys);
+        const customerGets = bxgyCustomerGetsInput(d.customerGets);
+        if (!customerBuys || !customerGets) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped (unsupported Buy X Get Y shape): ${d.title}`);
+          continue;
+        }
+        const data = await gql(target, M_DISCOUNT_AUTO_BXGY_CREATE, {
+          automaticBxgyDiscount: {
+            title: d.title,
+            startsAt: d.startsAt,
+            endsAt: d.endsAt || null,
+            customerBuys,
+            customerGets,
+          },
+        });
+        const errs = data?.discountAutomaticBxgyCreate?.userErrors;
+        if (errs?.length) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
+        } else {
+          counters.created++;
+          onLog(`✓ Automatic Buy X Get Y discount: ${d.title}`);
+        }
       } else {
         counters.skipped++;
         onLog(`↪︎ Skipped (unsupported type ${kind || "unknown"})`);
@@ -1226,6 +1561,7 @@ const RUNNERS = {
   blogPosts: migrateBlogPosts,
   metafields: migrateMetafields,
   orders: migrateOrders,
+  draftOrders: migrateDraftOrders,
   customers: migrateCustomers,
 };
 
@@ -1244,6 +1580,7 @@ const RUN_ORDER = [
   // menus link to collections/pages/blogs by handle — run after them
   "menus",
   "orders",
+  "draftOrders",
   "customers",
 ];
 
