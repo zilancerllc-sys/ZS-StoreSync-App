@@ -75,7 +75,18 @@ export const loader = async ({ request }) => {
       label: c.label,
       authorized: c.authorized,
       codeVerified: c.codeVerified,
-      lastUsedAt: c.lastUsedAt,
+      // Pre-format on the server so the client renders identical text.
+      // Calling toLocaleDateString() during render causes an SSR/client
+      // hydration mismatch (different timezone/locale) which breaks
+      // interactivity (e.g. clicking a store to select it) on this route.
+      lastUsedLabel: c.lastUsedAt
+        ? new Intl.DateTimeFormat("en-US", {
+            year: "numeric",
+            month: "numeric",
+            day: "numeric",
+            timeZone: "UTC",
+          }).format(c.lastUsedAt)
+        : null,
     })),
     plan: usage.plan,
     allowedTypes: usage.allowedTypes,
@@ -390,7 +401,7 @@ const pageStyles = `
   .zs-conn{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1.5px solid var(--zs-border);border-radius:var(--zs-r-sm);cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s;position:relative;}
   .zs-conn:hover{border-color:var(--zs-camel);background:var(--zs-cream-soft);}
   .zs-conn.sel{border-color:var(--zs-clay);background:var(--zs-clay-soft);box-shadow:0 0 0 3px rgba(169,139,118,.12);}
-  .zs-conn.unauth{cursor:default;}
+  .zs-conn.unauth{opacity:.92;}
   .zs-conn-left{display:flex;align-items:center;gap:11px;min-width:0;}
   .zs-conn-ico{width:36px;height:36px;border-radius:10px;background:var(--zs-sage-soft);color:var(--zs-sage-deep);display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative;}
   .zs-conn.sel .zs-conn-ico{background:var(--zs-clay);color:#fff;}
@@ -642,9 +653,7 @@ export default function Migrate() {
                           key={c.id}
                           className={`zs-conn ${isSel ? "sel" : ""} ${c.authorized ? "" : "unauth"}`}
                           onClick={() =>
-                            c.authorized &&
-                            !isConfirming &&
-                            setSelectedSource(c.sourceShop)
+                            !isConfirming && setSelectedSource(c.sourceShop)
                           }
                         >
                           <div className="zs-conn-left">
@@ -665,8 +674,8 @@ export default function Migrate() {
                                 )}
                               </div>
                               <div className="zs-conn-sub">
-                                {c.lastUsedAt
-                                  ? `Last used ${new Date(c.lastUsedAt).toLocaleDateString()}`
+                                {c.lastUsedLabel
+                                  ? `Last used ${c.lastUsedLabel}`
                                   : "Never used"}
                               </div>
                             </div>
