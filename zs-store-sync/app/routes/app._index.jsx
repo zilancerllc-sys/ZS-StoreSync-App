@@ -88,20 +88,20 @@ const pageStyles = `
   .zs-sec-title{font-family:var(--zs-font-display);font-size:22px;font-weight:600;color:var(--zs-dark);line-height:1.1;letter-spacing:-.01em;margin:0;}
   .zs-sec-link{font-size:12px;font-weight:600;color:var(--zs-clay);text-decoration:none;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;transition:gap .18s,opacity .18s;}
   .zs-sec-link:hover{gap:8px;opacity:.85;}
-  .zs-hero{background:var(--zs-dark);border-radius:var(--zs-r-lg);padding:3rem 3.25rem;position:relative;overflow:hidden;box-shadow:var(--zs-shadow-md);}
-  .zs-hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 88% 18%,rgba(169,139,118,.40) 0%,transparent 50%),radial-gradient(circle at 4% 92%,rgba(186,191,148,.22) 0%,transparent 48%);pointer-events:none;}
-  .zs-hero::after{content:"";position:absolute;inset:0;opacity:.5;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(circle at 72% 50%,#000 0%,transparent 75%);}
-  .zs-hero-wave{position:absolute;top:0;right:0;bottom:0;width:66%;z-index:1;pointer-events:none;-webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 34%,#000 100%);mask-image:linear-gradient(90deg,transparent 0%,#000 34%,#000 100%);}
+  .zs-hero{background:linear-gradient(112deg,#221d18 0%,var(--zs-dark) 43%,#4a2f1b 100%);border-radius:var(--zs-r-lg);padding:2.35rem 3rem;position:relative;overflow:hidden;box-shadow:var(--zs-shadow-md);min-height:330px;display:flex;align-items:center;}
+  .zs-hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 90% 18%,rgba(226,158,73,.62) 0%,rgba(169,139,118,.32) 19%,transparent 45%),radial-gradient(circle at 3% 94%,rgba(186,191,148,.18) 0%,transparent 48%);pointer-events:none;}
+  .zs-hero::after{content:"";position:absolute;inset:0;opacity:.38;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(circle at 78% 54%,#000 0%,transparent 72%);}
+  .zs-hero-wave{position:absolute;top:-8%;right:-2%;bottom:-8%;width:72%;z-index:1;pointer-events:none;-webkit-mask-image:linear-gradient(90deg,transparent 0%,rgba(0,0,0,.12) 13%,#000 35%,#000 100%);mask-image:linear-gradient(90deg,transparent 0%,rgba(0,0,0,.12) 13%,#000 35%,#000 100%);}
   .zs-hero-wave svg{display:block;width:100%;height:100%;}
   @keyframes zsWaveFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-10px);}}
   .zs-hero-wave svg{animation:zsWaveFloat 9s ease-in-out infinite;}
   .zs-hero-left{position:relative;z-index:2;}
   .zs-hero-right{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;}
-  .zs-hero-chip{display:inline-flex;align-items:center;gap:7px;background:rgba(186,191,148,.16);color:var(--zs-cream);border:1px solid rgba(186,191,148,.34);font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:6px 14px;border-radius:30px;margin-bottom:22px;}
+  .zs-hero-chip{display:inline-flex;align-items:center;gap:7px;background:rgba(186,191,148,.16);color:var(--zs-cream);border:1px solid rgba(186,191,148,.34);font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:6px 14px;border-radius:30px;margin-bottom:18px;}
   .zs-hero-chip-dot{width:6px;height:6px;border-radius:50%;background:var(--zs-sage);box-shadow:0 0 0 4px rgba(186,191,148,.22);}
-  .zs-hero h1{font-family:var(--zs-font-display);font-size:44px;font-weight:600;color:#fff;margin:0 0 16px;line-height:1.05;letter-spacing:-.02em;}
+  .zs-hero h1{font-family:var(--zs-font-display);font-size:42px;font-weight:600;color:#fff;margin:0 0 14px;line-height:1.04;letter-spacing:-.02em;}
   .zs-hero h1 em{font-style:italic;font-weight:500;color:var(--zs-camel);}
-  .zs-hero-lead{color:rgba(255,255,255,.62);font-size:15px;line-height:1.7;max-width:460px;margin:0 0 28px;}
+  .zs-hero-lead{color:rgba(255,255,255,.62);font-size:15px;line-height:1.62;max-width:460px;margin:0 0 22px;}
   .zs-hero-btns{display:flex;gap:12px;flex-wrap:wrap;align-items:center;}
   .zs-btn-primary{background:var(--zs-clay);color:#fff;border:none;padding:13px 26px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:8px;box-shadow:var(--zs-shadow-clay);transition:transform .18s,box-shadow .18s,background .18s;}
   .zs-btn-primary:hover{transform:translateY(-2px);background:var(--zs-clay-deep);box-shadow:0 14px 36px rgba(169,139,118,.40);}
@@ -202,34 +202,38 @@ const pageStyles = `
   .zs-empty-sub{font-size:13px;color:var(--zs-muted);}
   @media(max-width:1100px){.zs-stats-grid{grid-template-columns:repeat(2,1fr);}.zs-types-grid{grid-template-columns:repeat(2,1fr);}.zs-nav-grid{grid-template-columns:1fr;}.zs-resources-grid{grid-template-columns:1fr;}}
   @media(max-width:720px){.zs-split{grid-template-columns:1fr;}}
-  @media(max-width:600px){.zs-hero{padding:2rem 1.5rem;}.zs-hero h1{font-size:32px;}.zs-stats-grid{grid-template-columns:1fr;}.zs-types-grid{grid-template-columns:1fr;}}
+  @media(max-width:600px){.zs-hero{padding:1.8rem 1.35rem;min-height:0;}.zs-hero-wave{width:120%;opacity:.45;}.zs-hero h1{font-size:32px;}.zs-stats-grid{grid-template-columns:1fr;}.zs-types-grid{grid-template-columns:1fr;}}
 `;
 
 // ─── Decorative flowing dot-wave for the hero (right side) ────────────────────
-const HERO_WAVE_W = 1000;
-const HERO_WAVE_H = 560;
+const HERO_WAVE_W = 1100;
+const HERO_WAVE_H = 430;
 const heroWaveDots = (() => {
   const dots = [];
-  const strands = 30;   // flow lines top → bottom
-  const cols = 78;      // dots per line left → right
+  const strands = 38;   // flow lines top → bottom
+  const cols = 92;      // dots per line left → right
   for (let s = 0; s < strands; s++) {
     const t = s / (strands - 1);               // 0 (top) → 1 (bottom)
-    const baseY = 30 + t * (HERO_WAVE_H - 60);
+    const baseY = 12 + t * (HERO_WAVE_H - 24);
     for (let c = 0; c < cols; c++) {
       const tx = c / (cols - 1);               // 0 (left) → 1 (right)
       const x = tx * HERO_WAVE_W;
-      const amp = 16 + tx * 64;
+      const ridge = Math.exp(-Math.pow((tx - 0.72) / 0.18, 2)) * 54;
+      const trough = Math.exp(-Math.pow((tx - 0.9) / 0.16, 2)) * 44;
+      const amp = 12 + tx * 46 + ridge;
       const y =
         baseY +
-        Math.sin(tx * Math.PI * 2.2 + s * 0.55) * amp +
-        Math.sin(tx * Math.PI * 5 + s * 0.32) * amp * 0.25;
-      // brightest toward the upper-right, fading into the dark elsewhere
-      const glow = Math.pow(tx, 1.4) * (1 - t * 0.5);
+        Math.sin(tx * Math.PI * 2.55 + s * 0.4) * amp +
+        Math.sin(tx * Math.PI * 5.8 + s * 0.23) * amp * 0.22 -
+        ridge * (0.8 - t) +
+        trough * t;
+      const focus = Math.exp(-Math.pow((tx - 0.86) / 0.22, 2)) * (0.95 - t * 0.34);
+      const glow = Math.pow(tx, 1.25) * (0.32 + focus);
       dots.push({
         x: +x.toFixed(1),
         y: +y.toFixed(1),
-        r: +(0.9 + glow * 1.7).toFixed(2),
-        o: +(0.05 + glow * 0.85).toFixed(3),
+        r: +(0.62 + glow * 1.2).toFixed(2),
+        o: +(0.045 + glow * 0.72).toFixed(3),
       });
     }
   }
@@ -306,7 +310,7 @@ export default function Index() {
               <HeroWave />
               <div className="zs-hero-left">
                 <span className="zs-hero-chip"><span className="zs-hero-chip-dot" />Store → Store · Nothing stored on our servers</span>
-                <h1>Move your store's <em>content</em>,<br />store to store.</h1>
+                <h1>Move your store&apos;s <em>content</em>,<br />store to store.</h1>
                 <p className="zs-hero-lead">Copy products, collections, pages, discounts, files, menus, redirects, blog posts, metaobjects & metafields from one Shopify store into another — duplicates skipped, changes synced, no spreadsheets, no developer.</p>
                 <div className="zs-hero-btns">
                   <RouterLink to="/app/migrate" className="zs-btn-primary">Start a Migration <span>→</span></RouterLink>
@@ -333,7 +337,7 @@ export default function Index() {
                 <RouterLink to="/app/plan" className="zs-sec-link">See plans →</RouterLink>
               </div>
               <div className="zs-types-grid">
-                {dataTypes.map(({ icon, name, sub, lock }) => (
+                {dataTypes.map(({ icon, name, sub }) => (
                   <div key={name} className="zs-type">
                     <div className="zs-type-icon">{icon}</div>
                     <div><div className="zs-type-name">{name}</div><div className="zs-type-sub">{sub}</div></div>
