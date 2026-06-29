@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useFetcher, useLoaderData, useNavigation } from "react-router";
+import { useFetcher, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import {
@@ -69,7 +69,11 @@ export const action = async ({ request }) => {
   const plan = String(form.get("plan") || "");
   const interval = String(form.get("interval") || "monthly");
   const shop = session.shop;
-  const isTest = process.env.NODE_ENV !== "production";
+  // Test charges (no real money) when not in production, OR when BILLING_TEST is
+  // explicitly set — lets us exercise the billing flow on prod without charging.
+  const isTest =
+    process.env.BILLING_TEST === "true" ||
+    process.env.NODE_ENV !== "production";
 
   // ── Downgrade to Free: cancel any active paid subscription ──
   // (billing.request only handles paid plans; there is no "free" charge to
@@ -402,17 +406,19 @@ export default function Plan() {
     cleanBillingParams,
   } = useLoaderData();
 
-  const nav = useNavigation();
-  // Fetcher submit: cancels the subscription without a navigation, so the page
-  // stays in the authenticated embedded context (no reload, no login bounce)
-  // and the loader revalidates in place once it finishes.
-  const downgradeFetcher = useFetcher();
+  // Submit every plan change through one App Bridge fetcher. A native <form>
+  // POST doesn't carry the embedded session token, so authenticate.admin fails
+  // and renders the login screen — the fetcher uses App Bridge's fetch (token
+  // attached), keeping us authenticated for both billing redirects and the
+  // in-place free downgrade.
+  const planFetcher = useFetcher();
   const [annual, setAnnual] = useState(false);
 
-  const downgrading = downgradeFetcher.state !== "idle";
+  const submittingPlan =
+    planFetcher.state !== "idle" ? planFetcher.formData?.get("plan") : null;
   // Just dropped to Free. Takes priority over any stale ?activated=<paid> param
   // left in the URL from an earlier upgrade.
-  const justFree = downgradeFetcher.data?.downgradedToFree;
+  const justFree = planFetcher.data?.downgradedToFree;
   const bannerPlan = justFree ? "free" : activated;
 
   // After a paid plan activates, drop the one-time billing params (charge_id,
@@ -437,9 +443,6 @@ export default function Plan() {
       window.history.replaceState(null, "", u.pathname + u.search);
     }
   }, [justFree]);
-
-  const submittingPlan =
-    nav.state === "submitting" ? nav.formData?.get("plan") : null;
 
   const maxSavings = Math.max(...Object.values(planSavings));
 
@@ -570,10 +573,10 @@ export default function Plan() {
                         ✓ Current Plan
                       </button>
                     ) : isFree ? (
-                      // Free has no charge to request — submit via fetcher so it
-                      // cancels in place (no reload, no navigation) and the
-                      // loader revalidates once it finishes.
-                      <downgradeFetcher.Form
+                      // Free has no charge to request — submit via the fetcher so
+                      // it cancels in place (no reload) and the loader
+                      // revalidates once it finishes.
+                      <planFetcher.Form
                         method="post"
                         style={{ marginBottom: 0 }}
                       >
@@ -582,13 +585,18 @@ export default function Plan() {
                         <button
                           type="submit"
                           className="zs-plan-cta"
-                          disabled={downgrading || !!submittingPlan}
+                          disabled={!!submittingPlan}
                         >
-                          {downgrading ? "Downgrading…" : "Downgrade to Free"}
+                          {submittingPlan === "free"
+                            ? "Downgrading…"
+                            : "Downgrade to Free"}
                         </button>
-                      </downgradeFetcher.Form>
+                      </planFetcher.Form>
                     ) : (
-                      <form method="post" style={{ marginBottom: 0 }}>
+                      <planFetcher.Form
+                        method="post"
+                        style={{ marginBottom: 0 }}
+                      >
                         <input type="hidden" name="plan" value={planId} />
                         <input
                           type="hidden"
@@ -602,7 +610,7 @@ export default function Plan() {
                         >
                           {ctaLabel(planId)}
                         </button>
-                      </form>
+                      </planFetcher.Form>
                     )}
 
                     <div className="zs-feat-label">{meta.featureLabel}</div>
