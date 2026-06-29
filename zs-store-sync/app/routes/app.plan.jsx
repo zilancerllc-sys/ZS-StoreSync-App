@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLoaderData, useNavigation } from "react-router";
+import { Form, redirect, useLoaderData, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import {
@@ -33,9 +33,9 @@ export const loader = async ({ request }) => {
     const base = basePlan(activate);
     if (VALID.includes(base)) {
       await setPlan(shop, base, chargeId);
-      const storeName = shop.replace(".myshopify.com", "");
-      const redirectTo = `https://admin.shopify.com/store/${storeName}/apps/${APP_HANDLE}/app/plan?activated=${base}`;
       const usage = await getUsage(shop);
+      // Render the confirmation right away and tell the client to strip the
+      // billing params from the URL in place — no second full-page reload.
       return {
         current: usage.plan,
         usage: usage.usage,
@@ -43,8 +43,8 @@ export const loader = async ({ request }) => {
         planPriceAnnual: PLAN_PRICE_ANNUAL,
         planSavings: PLAN_ANNUAL_SAVINGS,
         planLimits: PLAN_LIMITS,
-        activated: null,
-        redirectTo,
+        activated: base,
+        cleanBillingParams: true,
       };
     }
   }
@@ -58,7 +58,7 @@ export const loader = async ({ request }) => {
     planSavings: PLAN_ANNUAL_SAVINGS,
     planLimits: PLAN_LIMITS,
     activated: url.searchParams.get("activated"),
-    redirectTo: null,
+    cleanBillingParams: false,
   };
 };
 
@@ -68,17 +68,33 @@ export const action = async ({ request }) => {
   const form = await request.formData();
   const plan = String(form.get("plan") || "");
   const interval = String(form.get("interval") || "monthly");
+  const shop = session.shop;
+  const isTest = process.env.NODE_ENV !== "production";
+
+  // ── Downgrade to Free: cancel any active paid subscription ──
+  // (billing.request only handles paid plans; there is no "free" charge to
+  //  request, so we cancel the current subscription and drop back to free.)
+  if (plan === "free") {
+    const { appSubscriptions } = await billing.check();
+    for (const sub of appSubscriptions || []) {
+      await billing.cancel({ subscriptionId: sub.id, isTest, prorate: true });
+    }
+    await setPlan(shop, "free", null);
+    // Redirect to a clean URL so a stale ?activated=<paid> param can't keep
+    // showing the old "plan is now active" banner.
+    return redirect("/app/plan?activated=free");
+  }
 
   const VALID = ["starter", "growth", "pro"];
   if (!VALID.includes(plan)) return { error: "Invalid plan." };
 
   const billingPlan = interval === "annual" ? `${plan}_annual` : plan;
-  const storeName = session.shop.replace(".myshopify.com", "");
+  const storeName = shop.replace(".myshopify.com", "");
   const returnUrl = `https://admin.shopify.com/store/${storeName}/apps/${APP_HANDLE}/app/plan?activate=${billingPlan}`;
 
   await billing.request({
     plan: billingPlan,
-    isTest: process.env.NODE_ENV !== "production",
+    isTest,
     returnUrl,
   });
 
@@ -382,17 +398,24 @@ export default function Plan() {
     planSavings,
     planLimits,
     activated,
-    redirectTo,
+    cleanBillingParams,
   } = useLoaderData();
 
   const nav = useNavigation();
   const [annual, setAnnual] = useState(false);
 
+  // After a paid plan activates, drop the one-time billing params (charge_id,
+  // activate) from the URL in place — keeps host/shop/embedded intact and
+  // avoids a second full-page reload.
   useEffect(() => {
-    if (redirectTo && typeof window !== "undefined") {
-      (window.top ?? window).location.href = redirectTo;
+    if (cleanBillingParams && typeof window !== "undefined") {
+      const u = new URL(window.location.href);
+      u.searchParams.delete("charge_id");
+      u.searchParams.delete("activate");
+      if (activated) u.searchParams.set("activated", activated);
+      window.history.replaceState(null, "", u.pathname + u.search);
     }
-  }, [redirectTo]);
+  }, [cleanBillingParams, activated]);
 
   const submittingPlan =
     nav.state === "submitting" ? nav.formData?.get("plan") : null;
@@ -526,7 +549,9 @@ export default function Plan() {
                         ✓ Current Plan
                       </button>
                     ) : isFree ? (
-                      <form method="post" style={{ marginBottom: 0 }}>
+                      // Free has no charge to request — submit via SPA so the
+                      // page revalidates once instead of doing a hard reload.
+                      <Form method="post" style={{ marginBottom: 0 }}>
                         <input type="hidden" name="plan" value="free" />
                         <input type="hidden" name="interval" value="monthly" />
                         <button
@@ -535,10 +560,10 @@ export default function Plan() {
                           disabled={!!submittingPlan}
                         >
                           {submittingPlan === "free"
-                            ? "Redirecting…"
+                            ? "Downgrading…"
                             : "Downgrade to Free"}
                         </button>
-                      </form>
+                      </Form>
                     ) : (
                       <form method="post" style={{ marginBottom: 0 }}>
                         <input type="hidden" name="plan" value={planId} />
