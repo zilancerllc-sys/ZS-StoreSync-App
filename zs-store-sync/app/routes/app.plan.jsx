@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Form, redirect, useLoaderData, useNavigation } from "react-router";
+import { useFetcher, useLoaderData, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import {
@@ -80,9 +80,10 @@ export const action = async ({ request }) => {
       await billing.cancel({ subscriptionId: sub.id, isTest, prorate: true });
     }
     await setPlan(shop, "free", null);
-    // Redirect to a clean URL so a stale ?activated=<paid> param can't keep
-    // showing the old "plan is now active" banner.
-    return redirect("/app/plan?activated=free");
+    // Return data (no redirect): React Router revalidates the loader in place,
+    // keeping the authenticated embedded context. A bare redirect here can land
+    // on a request without the App Bridge session token → the login screen.
+    return { downgradedToFree: true };
   }
 
   const VALID = ["starter", "growth", "pro"];
@@ -402,7 +403,17 @@ export default function Plan() {
   } = useLoaderData();
 
   const nav = useNavigation();
+  // Fetcher submit: cancels the subscription without a navigation, so the page
+  // stays in the authenticated embedded context (no reload, no login bounce)
+  // and the loader revalidates in place once it finishes.
+  const downgradeFetcher = useFetcher();
   const [annual, setAnnual] = useState(false);
+
+  const downgrading = downgradeFetcher.state !== "idle";
+  // Just dropped to Free. Takes priority over any stale ?activated=<paid> param
+  // left in the URL from an earlier upgrade.
+  const justFree = downgradeFetcher.data?.downgradedToFree;
+  const bannerPlan = justFree ? "free" : activated;
 
   // After a paid plan activates, drop the one-time billing params (charge_id,
   // activate) from the URL in place — keeps host/shop/embedded intact and
@@ -416,6 +427,16 @@ export default function Plan() {
       window.history.replaceState(null, "", u.pathname + u.search);
     }
   }, [cleanBillingParams, activated]);
+
+  // After downgrading to Free, drop the stale ?activated=<paid> param so the old
+  // banner can't reappear on a later load.
+  useEffect(() => {
+    if (justFree && typeof window !== "undefined") {
+      const u = new URL(window.location.href);
+      u.searchParams.delete("activated");
+      window.history.replaceState(null, "", u.pathname + u.search);
+    }
+  }, [justFree]);
 
   const submittingPlan =
     nav.state === "submitting" ? nav.formData?.get("plan") : null;
@@ -463,11 +484,11 @@ export default function Plan() {
         <div className="zs-root">
           <div className="zs-wrap zs-stack">
             {/* Activated banner */}
-            {activated && (
+            {bannerPlan && (
               <div className="zs-activated zs-reveal zs-d1">
                 ✓ Your{" "}
                 <strong>
-                  {activated[0].toUpperCase() + activated.slice(1)}
+                  {bannerPlan[0].toUpperCase() + bannerPlan.slice(1)}
                 </strong>{" "}
                 plan is now active.
               </div>
@@ -549,21 +570,23 @@ export default function Plan() {
                         ✓ Current Plan
                       </button>
                     ) : isFree ? (
-                      // Free has no charge to request — submit via SPA so the
-                      // page revalidates once instead of doing a hard reload.
-                      <Form method="post" style={{ marginBottom: 0 }}>
+                      // Free has no charge to request — submit via fetcher so it
+                      // cancels in place (no reload, no navigation) and the
+                      // loader revalidates once it finishes.
+                      <downgradeFetcher.Form
+                        method="post"
+                        style={{ marginBottom: 0 }}
+                      >
                         <input type="hidden" name="plan" value="free" />
                         <input type="hidden" name="interval" value="monthly" />
                         <button
                           type="submit"
                           className="zs-plan-cta"
-                          disabled={!!submittingPlan}
+                          disabled={downgrading || !!submittingPlan}
                         >
-                          {submittingPlan === "free"
-                            ? "Downgrading…"
-                            : "Downgrade to Free"}
+                          {downgrading ? "Downgrading…" : "Downgrade to Free"}
                         </button>
-                      </Form>
+                      </downgradeFetcher.Form>
                     ) : (
                       <form method="post" style={{ marginBottom: 0 }}>
                         <input type="hidden" name="plan" value={planId} />
