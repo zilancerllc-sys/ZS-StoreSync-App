@@ -1,88 +1,229 @@
-import { useLoaderData } from "react-router";
+import { useEffect, useState } from "react";
+import { useLoaderData, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
-import { useState } from "react";
 import {
   getUsage,
+  setPlan,
   PLAN_PRICE,
   PLAN_PRICE_ANNUAL,
   PLAN_ANNUAL_SAVINGS,
   PLAN_LIMITS,
 } from "../credits.server";
 import { brandStyles } from "./zs-styles.js";
-import { Check, ExternalLink } from "lucide-react";
+import { Lock, Undo, Zap, MessageCircle, Check } from "lucide-react";
 
-// App handle used to build the Shopify Managed Pricing URL.
 const APP_HANDLE = "zs-storesync";
+
+function basePlan(billingPlan) {
+  return String(billingPlan || "").replace("_annual", "");
+}
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  const usage = await getUsage(session.shop);
+  const shop = session.shop;
+  const url = new URL(request.url);
+
+  const chargeId = url.searchParams.get("charge_id");
+  const activate = url.searchParams.get("activate");
+  const VALID = ["free", "starter", "growth", "pro"];
+
+  if (chargeId && activate) {
+    const base = basePlan(activate);
+    if (VALID.includes(base)) {
+      await setPlan(shop, base, chargeId);
+      const storeName = shop.replace(".myshopify.com", "");
+      const redirectTo = `https://admin.shopify.com/store/${storeName}/apps/${APP_HANDLE}/app/plan?activated=${base}`;
+      const usage = await getUsage(shop);
+      return {
+        current: usage.plan,
+        usage: usage.usage,
+        planPrice: PLAN_PRICE,
+        planPriceAnnual: PLAN_PRICE_ANNUAL,
+        planSavings: PLAN_ANNUAL_SAVINGS,
+        planLimits: PLAN_LIMITS,
+        activated: null,
+        redirectTo,
+      };
+    }
+  }
+
+  const usage = await getUsage(shop);
   return {
-    shop: session.shop,
     current: usage.plan,
     usage: usage.usage,
-    limits: usage.limits,
     planPrice: PLAN_PRICE,
     planPriceAnnual: PLAN_PRICE_ANNUAL,
     planSavings: PLAN_ANNUAL_SAVINGS,
     planLimits: PLAN_LIMITS,
+    activated: url.searchParams.get("activated"),
+    redirectTo: null,
   };
 };
 
+// ─── Action ──────────────────────────────────────────────────────────────────
+export const action = async ({ request }) => {
+  const { billing, session } = await authenticate.admin(request);
+  const form = await request.formData();
+  const plan = String(form.get("plan") || "");
+  const interval = String(form.get("interval") || "monthly");
+
+  const VALID = ["starter", "growth", "pro"];
+  if (!VALID.includes(plan)) return { error: "Invalid plan." };
+
+  const billingPlan = interval === "annual" ? `${plan}_annual` : plan;
+  const storeName = session.shop.replace(".myshopify.com", "");
+  const returnUrl = `https://admin.shopify.com/store/${storeName}/apps/${APP_HANDLE}/app/plan?activate=${billingPlan}`;
+
+  await billing.request({
+    plan: billingPlan,
+    isTest: process.env.NODE_ENV !== "production",
+    returnUrl,
+  });
+
+  return null;
+};
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const pageStyles = `
-  @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
-  .zs-root{--zs-font-display:"Fraunces",serif;--zs-font-body:"Hanken Grotesk",sans-serif;--zs-r-sm:10px;--zs-r-md:14px;--zs-r-lg:20px;--zs-shadow-sm:0 1px 2px rgba(58,49,40,.04),0 2px 8px rgba(58,49,40,.05);--zs-shadow-md:0 4px 14px rgba(58,49,40,.06),0 18px 40px rgba(58,49,40,.06);--zs-shadow-clay:0 10px 30px rgba(169,139,118,.28);font-family:var(--zs-font-body);color:var(--zs-dark);}
-  .zs-section-wrap{width:100vw;position:relative;left:50%;right:50%;margin-left:-50vw;margin-right:-50vw;padding:1.5rem;box-sizing:border-box;}
-  .zs-wrap{max-width:1400px;margin:0 auto;}
-  .zs-head{text-align:center;margin-bottom:24px;}
-  .zs-eyebrow{font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--zs-clay);margin-bottom:8px;}
-  .zs-title{font-family:var(--zs-font-display);font-size:30px;font-weight:600;margin:0 0 8px;letter-spacing:-.02em;}
-  .zs-sub{font-size:14px;color:var(--zs-muted);}
-  .zs-toggle-wrap{display:flex;justify-content:center;margin:18px 0 30px;}
-  .zs-toggle{display:inline-flex;background:var(--zs-cream-soft);border:1px solid var(--zs-border);border-radius:30px;padding:4px;gap:4px;}
-  .zs-toggle button{border:none;background:transparent;font-family:inherit;font-size:13px;font-weight:600;color:var(--zs-muted);padding:8px 18px;border-radius:24px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:background .15s,color .15s;}
-  .zs-toggle button.active{background:var(--zs-clay);color:#fff;box-shadow:var(--zs-shadow-clay);}
-  .zs-toggle .zs-save-pill{font-size:10px;font-weight:700;background:var(--zs-sage-soft);color:var(--zs-sage-deep);padding:2px 7px;border-radius:20px;}
-  .zs-toggle button.active .zs-save-pill{background:rgba(255,255,255,.22);color:#fff;}
-  .zs-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
-  .zs-plan{background:var(--zs-white);border:1px solid var(--zs-border);border-radius:var(--zs-r-lg);padding:1.6rem;position:relative;box-shadow:var(--zs-shadow-sm);display:flex;flex-direction:column;transition:transform .2s,box-shadow .2s;}
-  .zs-plan:hover{transform:translateY(-4px);box-shadow:var(--zs-shadow-md);}
-  .zs-plan.featured{border-color:var(--zs-clay);box-shadow:var(--zs-shadow-clay);}
-  .zs-plan.current{border-color:var(--zs-sage-deep);}
-  .zs-tag{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--zs-clay);color:#fff;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;padding:4px 14px;border-radius:20px;white-space:nowrap;}
-  .zs-tag.cur{background:var(--zs-sage-deep);}
-  .zs-pname{font-family:var(--zs-font-display);font-size:20px;font-weight:600;margin-bottom:6px;}
-  .zs-price{font-family:var(--zs-font-display);font-size:34px;font-weight:600;letter-spacing:-.02em;line-height:1.1;}
-  .zs-price small{font-size:13px;color:var(--zs-muted);font-weight:500;}
-  .zs-price-sub{font-size:12px;color:var(--zs-sage-deep);font-weight:600;margin-top:4px;min-height:16px;}
-  .zs-price-sub.muted{color:var(--zs-muted);font-weight:500;}
-  .zs-pdesc{font-size:13px;color:var(--zs-muted);margin:10px 0 16px;line-height:1.5;}
-  .zs-feats{list-style:none;padding:0;margin:0 0 20px;flex:1;}
-  .zs-feats li{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--zs-dark);padding:6px 0;}
-  .zs-feats li svg{color:var(--zs-sage-deep);flex-shrink:0;margin-top:2px;}
-  .zs-cta{width:100%;box-sizing:border-box;padding:12px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;border:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .15s,background .15s;text-decoration:none;}
-  .zs-cta.primary{background:var(--zs-clay);color:#fff;box-shadow:var(--zs-shadow-clay);}
-  .zs-cta.primary:hover{transform:translateY(-2px);background:var(--zs-clay-deep);}
-  .zs-cta.ghost{background:var(--zs-cream-soft);color:var(--zs-clay-deep);border:1px solid var(--zs-border);}
-  .zs-cta.ghost:hover{background:var(--zs-clay-soft);}
-  .zs-cta.disabled{opacity:.6;cursor:default;pointer-events:none;}
-  .zs-foot{text-align:center;margin-top:22px;font-size:12px;color:var(--zs-muted);}
-  .zs-usage{margin-top:30px;max-width:680px;margin-left:auto;margin-right:auto;background:var(--zs-white);border:1px solid var(--zs-border);border-radius:var(--zs-r-lg);padding:1.4rem 1.6rem;box-shadow:var(--zs-shadow-sm);}
-  .zs-usage-head{font-size:13px;font-weight:700;color:var(--zs-dark);margin-bottom:12px;}
-  .zs-usage-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 24px;}
-  .zs-usage-row{display:flex;justify-content:space-between;font-size:13px;color:var(--zs-muted);padding:3px 0;}
-  .zs-usage-row b{color:var(--zs-dark);}
-  @media(max-width:1100px){.zs-grid{grid-template-columns:repeat(2,1fr);}}
-  @media(max-width:620px){.zs-grid{grid-template-columns:1fr;}.zs-usage-grid{grid-template-columns:1fr;}}
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
+
+  .zs-root {
+    --zs-font-display: "Fraunces", Georgia, serif;
+    --zs-font-body: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, sans-serif;
+    --zs-r-sm: 10px; --zs-r-md: 14px; --zs-r-lg: 20px;
+    --zs-shadow-sm: 0 1px 2px rgba(58,49,40,.04), 0 2px 8px rgba(58,49,40,.05);
+    --zs-shadow-md: 0 4px 14px rgba(58,49,40,.06), 0 18px 40px rgba(58,49,40,.06);
+    --zs-shadow-clay: 0 10px 30px rgba(169,139,118,.28);
+    font-family: var(--zs-font-body);
+    -webkit-font-smoothing: antialiased;
+    color: var(--zs-dark);
+  }
+  .zs-section-wrap { width: 100vw; position: relative; left: 50%; right: 50%; margin-left: -50vw; margin-right: -50vw; padding: 1.5rem; box-sizing: border-box; }
+  .zs-wrap { max-width: 1280px; margin: 0 auto; width: 100%; }
+  .zs-stack > * + * { margin-top: 26px; }
+
+  @keyframes zsFadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  .zs-reveal { opacity: 0; animation: zsFadeUp .55s cubic-bezier(.2,.7,.2,1) forwards; }
+  .zs-d1 { animation-delay: .04s; } .zs-d2 { animation-delay: .14s; } .zs-d3 { animation-delay: .24s; }
+
+  /* ── Activated banner ── */
+  .zs-activated { background: #eaf4e3; border: 1px solid #cfe6c0; color: #2e6b1a; border-radius: var(--zs-r-md); padding: 13px 20px; font-size: 14px; font-weight: 600; text-align: center; }
+
+  /* ── Header ── */
+  .zs-pricing-head { text-align: center; max-width: 620px; margin: 0 auto; }
+  .zs-pricing-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: var(--zs-clay); margin-bottom: 14px; }
+  .zs-pricing-title { font-family: var(--zs-font-display); font-size: 38px; font-weight: 600; color: var(--zs-dark); line-height: 1.08; letter-spacing: -.02em; margin: 0 0 14px; }
+  .zs-pricing-title em { font-style: italic; color: var(--zs-clay); }
+  .zs-pricing-sub { font-size: 15px; color: #948d86; line-height: 1.65; margin: 0; }
+
+  /* ── Toggle ── */
+  .zs-toggle-wrap { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 26px; flex-wrap: wrap; }
+  .zs-toggle-label { font-size: 13px; font-weight: 600; color: #b4ada5; transition: color .15s; cursor: pointer; user-select: none; }
+  .zs-toggle-label.active { color: var(--zs-dark); }
+  .zs-toggle-cb { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+  .zs-toggle-track { width: 52px; height: 28px; border-radius: 20px; background: var(--zs-clay); cursor: pointer; position: relative; flex-shrink: 0; display: inline-block; transition: background .2s; }
+  .zs-toggle-knob { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .22s cubic-bezier(.2,.7,.2,1); box-shadow: 0 2px 4px rgba(0,0,0,.2); pointer-events: none; }
+  .zs-toggle-track.annual .zs-toggle-knob { transform: translateX(24px); }
+  .zs-save-badge { font-size: 11px; font-weight: 700; color: #3a7020; background: #eaf4e3; padding: 4px 10px; border-radius: 20px; }
+
+  /* ── Grid ── */
+  .zs-plan-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; align-items: stretch; }
+
+  /* ── Card ── */
+  .zs-plan { background: var(--zs-white); border: 1px solid var(--zs-border); border-radius: var(--zs-r-lg); padding: 2rem 1.75rem; box-shadow: var(--zs-shadow-sm); display: flex; flex-direction: column; position: relative; transition: transform .2s, box-shadow .2s, border-color .2s; }
+  .zs-plan:hover { transform: translateY(-4px); box-shadow: var(--zs-shadow-md); }
+  .zs-plan.featured { background: var(--zs-dark); border-color: transparent; box-shadow: var(--zs-shadow-md); }
+  .zs-plan.featured::before { content: ""; position: absolute; inset: 0; border-radius: var(--zs-r-lg); pointer-events: none; background: radial-gradient(circle at 85% 8%, rgba(169,139,118,.35) 0%, transparent 52%); }
+  .zs-plan.current-plan { border-color: var(--zs-clay); box-shadow: 0 0 0 2px rgba(169,139,118,.25); }
+  .zs-plan-badge { position: absolute; top: -13px; left: 50%; transform: translateX(-50%); background: var(--zs-clay); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; padding: 6px 16px; border-radius: 20px; box-shadow: var(--zs-shadow-clay); white-space: nowrap; z-index: 2; }
+  .zs-plan-badge.cur { background: var(--zs-sage-deep, #4a7c59); }
+
+  .zs-plan-name { font-family: var(--zs-font-display); font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 6px; position: relative; z-index: 1; }
+  .zs-plan-tagline { font-size: 13px; color: #948d86; line-height: 1.5; margin-bottom: 22px; min-height: 38px; position: relative; z-index: 1; }
+  .zs-plan.featured .zs-plan-name { color: #fff; }
+  .zs-plan.featured .zs-plan-tagline { color: rgba(255,255,255,.6); }
+
+  .zs-plan-price-row { display: flex; align-items: baseline; gap: 4px; margin-bottom: 4px; position: relative; z-index: 1; }
+  .zs-plan-price { font-family: var(--zs-font-display); font-size: 44px; font-weight: 600; color: var(--zs-dark); line-height: 1; letter-spacing: -.02em; }
+  .zs-plan.featured .zs-plan-price { color: #fff; }
+  .zs-plan-period { font-size: 14px; color: #b4ada5; font-weight: 500; }
+  .zs-plan.featured .zs-plan-period { color: rgba(255,255,255,.5); }
+  .zs-plan-billed { font-size: 12px; color: #b4ada5; margin-bottom: 22px; min-height: 18px; position: relative; z-index: 1; }
+  .zs-plan.featured .zs-plan-billed { color: rgba(255,255,255,.45); }
+
+  .zs-plan-cta { width: 100%; padding: 13px; border-radius: var(--zs-r-sm); font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit; transition: transform .16s, box-shadow .16s, opacity .16s; margin-bottom: 26px; position: relative; z-index: 1; border: 1px solid var(--zs-border); background: var(--zs-white); color: var(--zs-dark); display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; box-sizing: border-box; }
+  .zs-plan-cta:hover { border-color: var(--zs-clay); color: var(--zs-clay); }
+  .zs-plan-cta.primary { background: var(--zs-clay); border-color: var(--zs-clay); color: #fff; box-shadow: var(--zs-shadow-clay); }
+  .zs-plan-cta.primary:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(169,139,118,.4); color: #fff; }
+  .zs-plan-cta.current { background: var(--zs-bg, #f7f4f1); border-color: var(--zs-border); color: #b4ada5; cursor: default; }
+  .zs-plan-cta.current:hover { transform: none; border-color: var(--zs-border); color: #b4ada5; }
+  .zs-plan-cta:disabled { opacity: .6; cursor: default; }
+  .zs-spin { animation: zsRot 1s linear infinite; } @keyframes zsRot { to { transform: rotate(360deg); } }
+
+  .zs-feat-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: #b4ada5; margin-bottom: 14px; position: relative; z-index: 1; }
+  .zs-plan.featured .zs-feat-label { color: rgba(255,220,130,.8); }
+  .zs-feat-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; flex: 1; position: relative; z-index: 1; }
+  .zs-feat { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; color: var(--zs-dark); line-height: 1.45; }
+  .zs-plan.featured .zs-feat { color: rgba(255,255,255,.82); }
+  .zs-feat-check { width: 17px; height: 17px; border-radius: 50%; background: #e8f0e3; color: #3a7020; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+  .zs-plan.featured .zs-feat-check { background: rgba(255,255,255,.15); color: rgba(255,220,130,.9); }
+  .zs-feat strong { font-weight: 700; }
+
+  /* ── Usage ── */
+  .zs-usage { background: var(--zs-white); border: 1px solid var(--zs-border); border-radius: var(--zs-r-lg); padding: 1.4rem 1.75rem; box-shadow: var(--zs-shadow-sm); }
+  .zs-usage-title { font-family: var(--zs-font-display); font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+  .zs-usage-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 24px; }
+  .zs-usage-row { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; }
+  .zs-usage-label { display: flex; justify-content: space-between; font-size: 13px; color: #948d86; }
+  .zs-usage-label b { color: var(--zs-dark); }
+  .zs-bar-wrap { height: 4px; background: var(--zs-border); border-radius: 4px; overflow: hidden; }
+  .zs-bar { height: 100%; border-radius: 4px; background: var(--zs-clay); transition: width .4s; }
+  .zs-bar.warn { background: #e8a838; }
+  .zs-bar.full { background: #d94f4f; }
+
+  /* ── Trust strip ── */
+  .zs-trust { display: flex; align-items: center; justify-content: center; gap: 32px; flex-wrap: wrap; padding: 1rem; }
+  .zs-trust-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #948d86; font-weight: 500; }
+
+  /* ── FAQ ── */
+  .zs-faq-title { font-family: var(--zs-font-display); font-size: 24px; font-weight: 600; color: var(--zs-dark); text-align: center; letter-spacing: -.01em; margin-bottom: 20px; }
+  .zs-faq-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .zs-faq-card { background: var(--zs-white); border: 1px solid var(--zs-border); border-radius: var(--zs-r-md); padding: 1.3rem 1.5rem; box-shadow: var(--zs-shadow-sm); }
+  .zs-faq-q { font-size: 14px; font-weight: 700; color: var(--zs-dark); margin-bottom: 7px; }
+  .zs-faq-a { font-size: 13px; color: #948d86; line-height: 1.6; }
+
+  @media (max-width: 1100px) { .zs-plan-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 640px) { .zs-plan-grid { grid-template-columns: 1fr; } .zs-faq-grid { grid-template-columns: 1fr; } .zs-usage-grid { grid-template-columns: 1fr 1fr; } .zs-pricing-title { font-size: 30px; } }
 `;
 
-const PLAN_DESC = {
-  free: "Try it out — core content types with a generous monthly quota.",
-  starter: "For active store moves — adds files, discounts, menus & more.",
-  growth: "Higher limits across every data type for larger catalogs.",
-  pro: "Maximum limits for big migrations and ongoing syncs.",
+// ─── Plan data ────────────────────────────────────────────────────────────────
+const PLAN_META = {
+  free: {
+    tagline: "Try it out — core content types with a generous monthly quota.",
+    featureLabel: "Includes",
+    featured: false,
+    badge: null,
+  },
+  starter: {
+    tagline: "For active store moves — adds files, discounts, menus & more.",
+    featureLabel: "Everything in Free, plus",
+    featured: false,
+    badge: null,
+  },
+  growth: {
+    tagline: "Higher limits across every data type for larger catalogs.",
+    featureLabel: "Everything in Starter, plus",
+    featured: true,
+    badge: "★ Most Popular",
+  },
+  pro: {
+    tagline: "Maximum limits for big migrations and ongoing syncs.",
+    featureLabel: "Everything in Growth, plus",
+    featured: false,
+    badge: null,
+  },
 };
 
 const TYPE_LABEL = {
@@ -115,199 +256,392 @@ const DISPLAY_TYPES = [
   "customers",
 ];
 
-const fmt = (n) => (n >= 5000 || n === 1000 ? `${n / 1000}k` : `${n}`);
+const faqs = [
+  {
+    q: "What counts toward my monthly quota?",
+    a: "Each item synced or migrated (product, page, file, etc.) counts once per billing cycle. The counter resets every 30 days with your Shopify billing date.",
+  },
+  {
+    q: "What happens if I hit my limit?",
+    a: "Syncs for that data type pause until your quota resets or you upgrade. Existing data in both stores is never deleted.",
+  },
+  {
+    q: "Can I change plans later?",
+    a: "Yes — upgrade or downgrade anytime. Changes apply immediately and billing is prorated automatically through Shopify.",
+  },
+  {
+    q: "Is there a free trial?",
+    a: "The Free plan is yours forever with no credit card required. Paid plans include a 3-day free trial before the first charge.",
+  },
+];
 
-function featureLines(L) {
-  return [
-    `${fmt(L.products)} Products`,
-    `${fmt(L.collections)} Collections`,
-    `${fmt(L.pages)} Pages, ${fmt(L.discounts)} Discounts`,
-    `${fmt(L.files)} Files, ${fmt(L.menus)} Menus, ${fmt(L.redirects)} Redirects`,
-    `${fmt(L.metaobjects)} Metaobjects`,
-    `${fmt(L.blogPosts)} Blog Posts`,
-    `${fmt(L.metafields)} Metafields`,
-    `${fmt(L.orders)} Orders, ${fmt(L.customers)} Customers`,
-  ];
+// Plan order for upgrade/downgrade comparison
+const PLAN_ORDER = ["free", "starter", "growth", "pro"];
+
+const fmt = (n) => {
+  if (!n || n === 0) return "0";
+  if (n >= 1000) return `${n / 1000}k`;
+  return `${n}`;
+};
+
+function buildFeatures(planId, L) {
+  if (planId === "free")
+    return [
+      { text: `${fmt(L.products)} Products`, ok: true },
+      { text: `${fmt(L.collections)} Collections`, ok: true },
+      {
+        text: `${fmt(L.pages)} Pages, ${fmt(L.discounts)} Discounts`,
+        ok: true,
+      },
+      {
+        text: `${fmt(L.files)} Files, ${fmt(L.menus)} Menus, ${fmt(L.redirects)} Redirects`,
+        ok: true,
+      },
+      { text: `${fmt(L.metaobjects)} Metaobjects`, ok: true },
+      { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
+      { text: `${fmt(L.metafields)} Metafields`, ok: true },
+      {
+        text: `${fmt(L.orders)} Orders, ${fmt(L.customers)} Customers`,
+        ok: true,
+      },
+    ];
+
+  if (planId === "starter")
+    return [
+      { text: `${fmt(L.products)} Products`, ok: true },
+      { text: `${fmt(L.collections)} Collections`, ok: true },
+      {
+        text: `${fmt(L.pages)} Pages, ${fmt(L.discounts)} Discounts`,
+        ok: true,
+      },
+      {
+        text: `${fmt(L.files)} Files, ${fmt(L.menus)} Menus, ${fmt(L.redirects)} Redirects`,
+        ok: true,
+      },
+      { text: `${fmt(L.metaobjects)} Metaobjects`, ok: true },
+      { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
+      { text: `${fmt(L.metafields)} Metafields`, ok: true },
+      {
+        text: `${fmt(L.orders)} Orders, ${fmt(L.customers)} Customers`,
+        ok: true,
+      },
+    ];
+
+  if (planId === "growth")
+    return [
+      { text: `${fmt(L.products)} Products`, ok: true },
+      { text: `${fmt(L.collections)} Collections`, ok: true },
+      {
+        text: `${fmt(L.pages)} Pages, ${fmt(L.discounts)} Discounts`,
+        ok: true,
+      },
+      {
+        text: `${fmt(L.files)} Files, ${fmt(L.menus)} Menus, ${fmt(L.redirects)} Redirects`,
+        ok: true,
+      },
+      { text: `${fmt(L.metaobjects)} Metaobjects`, ok: true },
+      { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
+      { text: `${fmt(L.metafields)} Metafields`, ok: true },
+      {
+        text: `${fmt(L.orders)} Orders, ${fmt(L.customers)} Customers`,
+        ok: true,
+      },
+    ];
+
+  if (planId === "pro")
+    return [
+      { text: `${fmt(L.products)} Products`, ok: true },
+      { text: `${fmt(L.collections)} Collections`, ok: true },
+      {
+        text: `${fmt(L.pages)} Pages, ${fmt(L.discounts)} Discounts`,
+        ok: true,
+      },
+      {
+        text: `${fmt(L.files)} Files, ${fmt(L.menus)} Menus, ${fmt(L.redirects)} Redirects`,
+        ok: true,
+      },
+      { text: `${fmt(L.metaobjects)} Metaobjects`, ok: true },
+      { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
+      { text: `${fmt(L.metafields)} Metafields`, ok: true },
+      {
+        text: `${fmt(L.orders)} Orders, ${fmt(L.customers)} Customers`,
+        ok: true,
+      },
+    ];
+
+  return [];
 }
 
-// Build the Shopify Managed Pricing page URL for this app + store.
-// e.g. https://admin.shopify.com/store/zs-storesync/charges/zs-storesync/pricing_plans
-function managedPricingUrl(shop) {
-  const storeHandle = String(shop || "").replace(".myshopify.com", "");
-  return `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
-}
-
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function Plan() {
   const {
-    shop,
     current,
     usage,
     planPrice,
     planPriceAnnual,
     planSavings,
     planLimits,
+    activated,
+    redirectTo,
   } = useLoaderData();
+
+  const nav = useNavigation();
   const [annual, setAnnual] = useState(false);
 
-  const maxSavings = Math.max(...Object.values(planSavings));
-  const pricingUrl = managedPricingUrl(shop);
-
-  // Managed Pricing: send the merchant to Shopify's pricing page (top-level).
-  const goToPricing = () => {
-    if (typeof window !== "undefined") {
-      open(pricingUrl, "_top");
+  useEffect(() => {
+    if (redirectTo && typeof window !== "undefined") {
+      (window.top ?? window).location.href = redirectTo;
     }
+  }, [redirectTo]);
+
+  const submittingPlan =
+    nav.state === "submitting" ? nav.formData?.get("plan") : null;
+
+  const maxSavings = Math.max(...Object.values(planSavings));
+
+  const priceLabel = (planId) => {
+    const monthly = planPrice[planId];
+    const yearly = planPriceAnnual[planId];
+    const savings = planSavings[planId];
+    if (monthly === 0)
+      return { price: "$0", period: "/mo", billed: "Free forever" };
+    if (annual) {
+      const perMo = (yearly / 12).toFixed(0);
+      return {
+        price: `$${perMo}`,
+        period: "/mo",
+        billed: `$${yearly}/yr · save ${savings}%`,
+      };
+    }
+    return {
+      price: `$${monthly}`,
+      period: "/mo",
+      billed: `or $${yearly}/yr · save ${savings}%`,
+    };
+  };
+
+  const isUpgrade = (planId) => {
+    const currentIdx = PLAN_ORDER.indexOf(current);
+    const targetIdx = PLAN_ORDER.indexOf(planId);
+    return targetIdx > currentIdx;
+  };
+
+  const ctaLabel = (planId) => {
+    if (submittingPlan === planId) return "Redirecting to Shopify…";
+    const name = planId[0].toUpperCase() + planId.slice(1);
+    return isUpgrade(planId) ? `Upgrade to ${name}` : `Downgrade to ${name}`;
   };
 
   return (
-    <s-page heading="Plans">
+    <s-page heading="Pricing Plans">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
+
       <div className="zs-section-wrap">
         <div className="zs-root">
-          <div className="zs-wrap">
-            <div className="zs-head">
-              <div className="zs-eyebrow">Pricing</div>
-              <h1 className="zs-title">Pick your plan</h1>
-              <p className="zs-sub">
-                Monthly item quota per data type. Upgrade or cancel anytime —
-                billed securely through Shopify.
-              </p>
-            </div>
+          <div className="zs-wrap zs-stack">
+            {/* Activated banner */}
+            {activated && (
+              <div className="zs-activated zs-reveal zs-d1">
+                ✓ Your{" "}
+                <strong>
+                  {activated[0].toUpperCase() + activated.slice(1)}
+                </strong>{" "}
+                plan is now active.
+              </div>
+            )}
 
-            <div className="zs-toggle-wrap">
-              <div className="zs-toggle">
-                <button
-                  className={!annual ? "active" : ""}
+            {/* Header */}
+            <div className="zs-pricing-head zs-reveal zs-d1">
+              <div className="zs-pricing-eyebrow">Pricing</div>
+              <h1 className="zs-pricing-title">
+                Plans that grow <em>with your store</em>
+              </h1>
+              <p className="zs-pricing-sub">
+                Start free, upgrade when you're ready. Migrate and sync
+                products, collections, pages, files, and more — billed securely
+                through Shopify.
+              </p>
+
+              <div className="zs-toggle-wrap">
+                <label
+                  className={`zs-toggle-label ${!annual ? "active" : ""}`}
                   onClick={() => setAnnual(false)}
-                  type="button"
                 >
                   Monthly
-                </button>
-                <button
-                  className={annual ? "active" : ""}
-                  onClick={() => setAnnual(true)}
-                  type="button"
+                </label>
+                <label
+                  className={`zs-toggle-track ${annual ? "annual" : ""}`}
+                  onClick={() => setAnnual((v) => !v)}
                 >
-                  Annual{" "}
-                  <span className="zs-save-pill">save up to {maxSavings}%</span>
-                </button>
+                  <span className="zs-toggle-knob" />
+                </label>
+                <label
+                  className={`zs-toggle-label ${annual ? "active" : ""}`}
+                  onClick={() => setAnnual(true)}
+                >
+                  Annual
+                </label>
+                <span className="zs-save-badge">Save up to {maxSavings}%</span>
               </div>
             </div>
 
-            <div className="zs-grid">
+            {/* Plan cards */}
+            <div className="zs-plan-grid zs-reveal zs-d2">
               {Object.keys(planPrice).map((planId) => {
                 const isCurrent = current === planId;
-                const featured = planId === "growth";
                 const isFree = planPrice[planId] === 0;
-                const monthly = planPrice[planId];
-                const yearly = planPriceAnnual[planId];
-                const savings = planSavings[planId];
+                const meta = PLAN_META[planId] || {};
+                const { price, period, billed } = priceLabel(planId);
+                const submitting = submittingPlan === planId;
 
                 return (
                   <div
                     key={planId}
-                    className={`zs-plan ${featured ? "featured" : ""} ${isCurrent ? "current" : ""}`}
+                    className={`zs-plan${meta.featured ? " featured" : ""}${isCurrent ? " current-plan" : ""}`}
                   >
                     {isCurrent ? (
-                      <span className="zs-tag cur">Current</span>
-                    ) : featured ? (
-                      <span className="zs-tag">Most Popular</span>
+                      <div className="zs-plan-badge cur">✓ Current</div>
+                    ) : meta.badge ? (
+                      <div className="zs-plan-badge">{meta.badge}</div>
                     ) : null}
 
-                    <div className="zs-pname">
+                    <div className="zs-plan-name">
                       {planId[0].toUpperCase() + planId.slice(1)}
                     </div>
+                    <div className="zs-plan-tagline">{meta.tagline}</div>
 
-                    {isFree ? (
-                      <>
-                        <div className="zs-price">Free</div>
-                        <div className="zs-price-sub muted">Forever</div>
-                      </>
-                    ) : annual ? (
-                      <>
-                        <div className="zs-price">
-                          ${yearly}
-                          <small>/yr</small>
-                        </div>
-                        <div className="zs-price-sub">
-                          save {savings}% vs monthly
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="zs-price">
-                          ${monthly}
-                          <small>/mo</small>
-                        </div>
-                        <div className="zs-price-sub muted">
-                          or ${yearly}/yr · save {savings}%
-                        </div>
-                      </>
-                    )}
+                    <div className="zs-plan-price-row">
+                      <span className="zs-plan-price">{price}</span>
+                      <span className="zs-plan-period">{period}</span>
+                    </div>
+                    <div className="zs-plan-billed">{billed}</div>
 
-                    <p className="zs-pdesc">{PLAN_DESC[planId]}</p>
-
-                    <ul className="zs-feats">
-                      {featureLines(planLimits[planId]).map((line) => (
-                        <li key={line}>
-                          <Check size={15} /> {line}
-                        </li>
-                      ))}
-                    </ul>
-
+                    {/* CTA */}
                     {isCurrent ? (
-                      <span className={`zs-cta ghost disabled`}>
-                        Current Plan
-                      </span>
-                    ) : (
                       <button
                         type="button"
-                        className={`zs-cta ${featured ? "primary" : "ghost"}`}
-                        onClick={goToPricing}
+                        className="zs-plan-cta current"
+                        disabled
                       >
-                        {isFree ? (
-                          "Switch to Free"
-                        ) : (
-                          <>
-                            Choose {planId[0].toUpperCase() + planId.slice(1)}{" "}
-                            <ExternalLink size={14} />
-                          </>
-                        )}
+                        ✓ Current Plan
                       </button>
+                    ) : isFree ? (
+                      <form method="post" style={{ marginBottom: 0 }}>
+                        <input type="hidden" name="plan" value="free" />
+                        <input type="hidden" name="interval" value="monthly" />
+                        <button
+                          type="submit"
+                          className="zs-plan-cta"
+                          disabled={!!submittingPlan}
+                        >
+                          {submittingPlan === "free"
+                            ? "Redirecting…"
+                            : "Downgrade to Free"}
+                        </button>
+                      </form>
+                    ) : (
+                      <form method="post" style={{ marginBottom: 0 }}>
+                        <input type="hidden" name="plan" value={planId} />
+                        <input
+                          type="hidden"
+                          name="interval"
+                          value={annual ? "annual" : "monthly"}
+                        />
+                        <button
+                          type="submit"
+                          className={`zs-plan-cta ${isUpgrade(planId) && meta.featured ? "primary" : ""}`}
+                          disabled={!!submittingPlan}
+                        >
+                          {ctaLabel(planId)}
+                        </button>
+                      </form>
                     )}
+
+                    <div className="zs-feat-label">{meta.featureLabel}</div>
+                    <ul className="zs-feat-list">
+                      {buildFeatures(planId, planLimits[planId] || {}).map(
+                        (f, i) => (
+                          <li key={i} className="zs-feat">
+                            <span className="zs-feat-check">
+                              {f.ok ? (
+                                <Check size={10} strokeWidth={3} />
+                              ) : (
+                                <span style={{ fontSize: 11 }}>—</span>
+                              )}
+                            </span>
+                            <span style={f.ok ? {} : { color: "#c7c0b8" }}>
+                              {f.text}
+                            </span>
+                          </li>
+                        ),
+                      )}
+                    </ul>
                   </div>
                 );
               })}
             </div>
 
-            <div className="zs-foot">
-              Plans are managed and billed securely by Shopify. Choosing a plan
-              opens Shopify's secure checkout. Charges are billed in USD and
-              renew every 30 days (monthly) or every year (annual).
+            {/* Trust strip */}
+            <div className="zs-trust zs-reveal zs-d3">
+              <div className="zs-trust-item">
+                <Lock size={15} /> Secure Shopify billing
+              </div>
+              <div className="zs-trust-item">
+                <Undo size={15} /> Cancel anytime
+              </div>
+              <div className="zs-trust-item">
+                <Zap size={15} /> Instant activation
+              </div>
+              <div className="zs-trust-item">
+                <MessageCircle size={15} /> Human support
+              </div>
             </div>
 
+            {/* Usage */}
             {DISPLAY_TYPES.some((t) => (usage[t] || 0) > 0) && (
-              <div className="zs-usage">
-                <div className="zs-usage-head">
-                  Usage this billing period ({current} plan)
-                </div>
+              <div className="zs-usage zs-reveal zs-d3">
+                <div className="zs-usage-title">Usage this billing period</div>
                 <div className="zs-usage-grid">
                   {DISPLAY_TYPES.map((t) => {
                     const used = usage[t] || 0;
                     const lim = planLimits[current]?.[t] || 0;
                     if (lim === 0 && used === 0) return null;
+                    const pct = lim > 0 ? Math.min((used / lim) * 100, 100) : 0;
+                    const barClass =
+                      pct >= 100 ? "full" : pct >= 80 ? "warn" : "";
                     return (
                       <div key={t} className="zs-usage-row">
-                        <span>{TYPE_LABEL[t]}</span>
-                        <span>
-                          <b>{used}</b> / {lim}
-                        </span>
+                        <div className="zs-usage-label">
+                          <span>{TYPE_LABEL[t]}</span>
+                          <span>
+                            <b>{used}</b> / {lim}
+                          </span>
+                        </div>
+                        <div className="zs-bar-wrap">
+                          <div
+                            className={`zs-bar ${barClass}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
                       </div>
                     );
                   })}
                 </div>
               </div>
             )}
+
+            {/* FAQ */}
+            <div className="zs-reveal zs-d3">
+              <div className="zs-faq-title">Frequently asked questions</div>
+              <div className="zs-faq-grid">
+                {faqs.map((f, i) => (
+                  <div key={i} className="zs-faq-card">
+                    <div className="zs-faq-q">{f.q}</div>
+                    <div className="zs-faq-a">{f.a}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>
