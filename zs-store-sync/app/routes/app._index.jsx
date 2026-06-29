@@ -91,6 +91,10 @@ const pageStyles = `
   .zs-hero{background:var(--zs-dark);border-radius:var(--zs-r-lg);padding:3rem 3.25rem;position:relative;overflow:hidden;box-shadow:var(--zs-shadow-md);}
   .zs-hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 88% 18%,rgba(169,139,118,.40) 0%,transparent 50%),radial-gradient(circle at 4% 92%,rgba(186,191,148,.22) 0%,transparent 48%);pointer-events:none;}
   .zs-hero::after{content:"";position:absolute;inset:0;opacity:.5;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(circle at 72% 50%,#000 0%,transparent 75%);}
+  .zs-hero-wave{position:absolute;top:0;right:0;bottom:0;width:66%;z-index:1;pointer-events:none;-webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 34%,#000 100%);mask-image:linear-gradient(90deg,transparent 0%,#000 34%,#000 100%);}
+  .zs-hero-wave svg{display:block;width:100%;height:100%;}
+  @keyframes zsWaveFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-10px);}}
+  .zs-hero-wave svg{animation:zsWaveFloat 9s ease-in-out infinite;}
   .zs-hero-left{position:relative;z-index:2;}
   .zs-hero-right{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;}
   .zs-hero-chip{display:inline-flex;align-items:center;gap:7px;background:rgba(186,191,148,.16);color:var(--zs-cream);border:1px solid rgba(186,191,148,.34);font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:6px 14px;border-radius:30px;margin-bottom:22px;}
@@ -201,6 +205,49 @@ const pageStyles = `
   @media(max-width:600px){.zs-hero{padding:2rem 1.5rem;}.zs-hero h1{font-size:32px;}.zs-stats-grid{grid-template-columns:1fr;}.zs-types-grid{grid-template-columns:1fr;}}
 `;
 
+// ─── Decorative flowing dot-wave for the hero (right side) ────────────────────
+const HERO_WAVE_W = 1000;
+const HERO_WAVE_H = 560;
+const heroWaveDots = (() => {
+  const dots = [];
+  const strands = 30;   // flow lines top → bottom
+  const cols = 78;      // dots per line left → right
+  for (let s = 0; s < strands; s++) {
+    const t = s / (strands - 1);               // 0 (top) → 1 (bottom)
+    const baseY = 30 + t * (HERO_WAVE_H - 60);
+    for (let c = 0; c < cols; c++) {
+      const tx = c / (cols - 1);               // 0 (left) → 1 (right)
+      const x = tx * HERO_WAVE_W;
+      const amp = 16 + tx * 64;
+      const y =
+        baseY +
+        Math.sin(tx * Math.PI * 2.2 + s * 0.55) * amp +
+        Math.sin(tx * Math.PI * 5 + s * 0.32) * amp * 0.25;
+      // brightest toward the upper-right, fading into the dark elsewhere
+      const glow = Math.pow(tx, 1.4) * (1 - t * 0.5);
+      dots.push({
+        x: +x.toFixed(1),
+        y: +y.toFixed(1),
+        r: +(0.9 + glow * 1.7).toFixed(2),
+        o: +(0.05 + glow * 0.85).toFixed(3),
+      });
+    }
+  }
+  return dots;
+})();
+
+function HeroWave() {
+  return (
+    <div className="zs-hero-wave" aria-hidden="true">
+      <svg viewBox={`0 0 ${HERO_WAVE_W} ${HERO_WAVE_H}`} preserveAspectRatio="xMidYMid slice">
+        {heroWaveDots.map((d, i) => (
+          <circle key={i} cx={d.x} cy={d.y} r={d.r} fill="#E9C896" opacity={d.o} />
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 export default function Index() {
   const { stats, plan, jobs } = useLoaderData();
 
@@ -256,6 +303,7 @@ export default function Index() {
           <div className="zs-wrap zs-stack">
 
             <div className="zs-hero zs-reveal zs-d1">
+              <HeroWave />
               <div className="zs-hero-left">
                 <span className="zs-hero-chip"><span className="zs-hero-chip-dot" />Store → Store · Nothing stored on our servers</span>
                 <h1>Move your store's <em>content</em>,<br />store to store.</h1>
