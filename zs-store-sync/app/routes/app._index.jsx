@@ -1,3 +1,4 @@
+import { useRef, useState, useEffect } from "react";
 import { Link as RouterLink, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
@@ -76,6 +77,8 @@ const pageStyles = `
     --zs-shadow-sm:0 1px 2px rgba(58,49,40,.04),0 2px 8px rgba(58,49,40,.05);
     --zs-shadow-md:0 4px 14px rgba(58,49,40,.06),0 18px 40px rgba(58,49,40,.06);
     --zs-shadow-clay:0 10px 30px rgba(169,139,118,.28);
+    --rose:var(--zs-clay); --rose-soft:var(--zs-clay-soft);
+    --shadow-rose:0 8px 24px rgba(169,139,118,0.18);
     font-family:var(--zs-font-body); -webkit-font-smoothing:antialiased; color:var(--zs-dark); }
   .zs-section-wrap{width:100vw;position:relative;left:50%;right:50%;margin-left:-50vw;margin-right:-50vw;padding:1.5rem;box-sizing:border-box;}
   .zs-wrap{max-width:1400px;margin:0 auto;width:100%;}
@@ -203,6 +206,46 @@ const pageStyles = `
   @media(max-width:1100px){.zs-stats-grid{grid-template-columns:repeat(2,1fr);}.zs-types-grid{grid-template-columns:repeat(2,1fr);}.zs-nav-grid{grid-template-columns:1fr;}.zs-resources-grid{grid-template-columns:1fr;}}
   @media(max-width:720px){.zs-split{grid-template-columns:1fr;}}
   @media(max-width:600px){.zs-hero{padding:1.8rem 1.35rem;min-height:0;}.zs-hero-wave{width:120%;opacity:.45;}.zs-hero h1{font-size:32px;}.zs-stats-grid{grid-template-columns:1fr;}.zs-types-grid{grid-template-columns:1fr;}}
+
+  /* More Apps Recommendation section */
+  .more-apps{background:var(--zs-white);border:1px solid var(--zs-border);border-radius:18px;padding:1.4rem 1.6rem 1.5rem;box-shadow:var(--zs-shadow-sm);position:relative;overflow:hidden;}
+  .more-apps::before{content:"";position:absolute;top:0;right:0;width:300px;height:160px;background:radial-gradient(circle at 90% 0%,rgba(169,139,118,.07) 0%,transparent 60%);pointer-events:none;}
+  .ma-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1.1rem;position:relative;z-index:1;}
+  .ma-eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--rose);margin-bottom:5px;}
+  .ma-eyebrow::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--rose);box-shadow:0 0 0 3px var(--rose-soft);}
+  .ma-title{font-family:var(--zs-font-display);font-size:20px;font-weight:600;color:var(--zs-dark);letter-spacing:-.015em;line-height:1.1;margin:0;}
+  .ma-title em{font-style:italic;color:var(--rose);font-weight:500;}
+  .ma-arrows{display:flex;gap:8px;flex-shrink:0;}
+  .ma-arr{width:32px;height:32px;border-radius:9px;border:1px solid var(--zs-border);background:var(--zs-white);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--zs-dark);font-size:14px;transition:all .15s;font-family:inherit;}
+  .ma-arr:hover:not(:disabled){border-color:var(--rose);color:var(--rose);transform:translateY(-1px);}
+  .ma-arr:disabled{opacity:.35;cursor:not-allowed;}
+  .ma-slider{overflow-x:auto;position:relative;z-index:1;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:12px 4px;margin:-12px -4px;}
+  .ma-slider::-webkit-scrollbar {display:none;}
+  .ma-track{display:flex;gap:12px;}
+  .ma-card{flex:0 0 calc((100% - 24px) / 3);background:var(--zs-white);border:1px solid var(--zs-border);border-radius:12px;padding:.95rem 1rem 1rem;transition:transform .18s,box-shadow .18s,border-color .18s;position:relative;overflow:hidden;display:flex;flex-direction:column;}
+  .ma-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--rose);transform:scaleY(0);transform-origin:bottom;transition:transform .22s;}
+  .ma-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-rose);border-color:transparent;}
+  .ma-card:hover::before{transform:scaleY(1);}
+  .ma-card-top{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+  .ma-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;color:#fff;overflow:hidden;}
+  .ma-icon.rose{background:linear-gradient(145deg,#c2426a,#8e3a52);box-shadow:0 3px 10px rgba(185,55,94,.24);}
+  .ma-icon.gold{background:linear-gradient(145deg,#c8a86e,#9a7840);box-shadow:0 3px 10px rgba(190,154,96,.24);}
+  .ma-icon.sage{background:linear-gradient(145deg,#8aa86a,#5f7e42);box-shadow:0 3px 10px rgba(127,160,90,.24);}
+  .ma-icon.dark{background:linear-gradient(145deg,#4a4441,#2a2422);}
+  .ma-icon.plum{background:linear-gradient(145deg,#7a5a8a,#4f3a5e);box-shadow:0 3px 10px rgba(120,90,140,.24);}
+  .ma-icon img{width:100%;height:100%;object-fit:cover;border-radius:inherit;}
+  .ma-name-wrap{flex:1;min-width:0;}
+  .ma-name{font-family:var(--zs-font-display);font-size:14px;font-weight:600;color:var(--zs-dark);line-height:1.2;letter-spacing:-.005em;}
+  .ma-cat{font-size:10px;color:var(--zs-muted);font-weight:600;margin-top:2px;text-transform:uppercase;letter-spacing:.5px;}
+  .ma-desc{font-size:12.5px;color:var(--zs-muted);line-height:1.5;margin-bottom:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .ma-card-bottom{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:10px;border-top:1px solid var(--zs-border);}
+  .ma-pill{font-size:10.5px;font-weight:700;color:#3a4a28;background:var(--zs-sage-soft);padding:4px 10px;border-radius:20px;letter-spacing:.2px;white-space:nowrap;}
+  .ma-cta{font-size:12px;font-weight:600;color:var(--rose);text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:5px 11px;border:1px solid var(--rose-soft);border-radius:18px;background:var(--zs-white);transition:all .15s;white-space:nowrap;}
+  .ma-cta:hover{background:var(--rose);color:#fff;border-color:var(--rose);}
+  .ma-cta-arr{font-size:13px;line-height:1;transition:transform .15s;}
+  .ma-cta:hover .ma-cta-arr{transform:translateX(2px);}
+  @media(max-width:860px){.ma-card{flex:0 0 calc((100% - 12px) / 2);}}
+  @media(max-width:560px){.ma-card{flex:0 0 100%;}}
 `;
 
 // ─── Decorative flowing dot-wave for the hero (right side) ────────────────────
@@ -252,8 +295,108 @@ function HeroWave() {
   );
 }
 
+const RECOMMENDED_APPS = [
+  {
+    name: "ZS Smart Content AI",
+    category: "Marketing",
+    description: "Generate high-quality product descriptions, SEO copy, and ad texts with AI straight from your Shopify admin.",
+    link: "https://apps.shopify.com/zs-smart-content-ai",
+    icon: "https://cdn.shopify.com/s/files/1/1013/3821/8865/files/ZS_Smart_Content_Logo.png?v=1780889058",
+    colorClass: "rose",
+    badge: "Free plan available",
+  },
+  {
+    name: "ZS Sections: Theme Sections",
+    category: "Store Design",
+    description: "Drag and drop professionally designed, high-converting theme sections onto your store without any coding.",
+    link: "https://apps.shopify.com/zs-sections",
+    icon: "https://cdn.shopify.com/s/files/1/0639/6657/6725/files/ZS_sections_app_icon_5.png?v=1778330085",
+    colorClass: "gold",
+    badge: "Free plan available",
+  },
+  {
+    name: "ZS Bundles App & Upsells",
+    category: "Upsell & AOV",
+    description: "Increase average order value with product bundles, volume discounts, and smart cart upsell recommendations.",
+    link: "https://apps.shopify.com/zs-bundles",
+    icon: "https://cdn.shopify.com/s/files/1/0813/8879/8190/files/favicon_84dd8a2f-dd90-4da4-8e40-4c9302f68cc5.png?v=1781849995",
+    colorClass: "sage",
+    badge: "Free plan available",
+  },
+  {
+    name: "ZS B2B Gateway",
+    category: "B2B & Wholesale",
+    description: "Build professional wholesale signup forms and restrict access to specific pages or products based on tags.",
+    link: "https://apps.shopify.com/zs-b2b-gateway",
+    icon: "https://cdn.shopify.com/s/files/1/0827/7481/9064/files/b2b_1.png?v=1779244866",
+    colorClass: "dark",
+    badge: "Free trial available",
+  },
+  {
+    name: "ZS Wishlist",
+    category: "Conversion",
+    description: "Enable guest and customer wishlists, sending automated reminders for price drops and back-in-stock items.",
+    link: "https://apps.shopify.com/zs-wishlist",
+    icon: "https://cdn.shopify.com/s/files/1/0768/2369/1419/files/imgi_1_favicon.png?v=1781845297",
+    colorClass: "rose",
+    badge: "Free plan available",
+  },
+  {
+    name: "ZS Spin View",
+    category: "Product 3D & 360",
+    description: "Convert more visitors with interactive 360-degree product spins generated automatically using AI.",
+    link: "https://apps.shopify.com/zs-spin-view",
+    icon: "https://cdn.shopify.com/app-store/listing_images/9a4e12c15d721c7f7a030cf4b67e5756/icon/CK7TjLuH1pQDEAE=.png",
+    colorClass: "plum",
+    badge: "Free plan available",
+  },
+];
+
 export default function Index() {
   const { stats, plan, jobs } = useLoaderData();
+
+  const sliderRef = useRef(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
+
+  const checkScrollLimits = () => {
+    if (sliderRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = sliderRef.current;
+      setCanScrollLeft(scrollLeft > 1);
+      setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 1);
+    }
+  };
+
+  useEffect(() => {
+    const container = sliderRef.current;
+    if (container) {
+      container.addEventListener("scroll", checkScrollLimits);
+      checkScrollLimits();
+      window.addEventListener("resize", checkScrollLimits);
+    }
+    return () => {
+      if (container) {
+        container.removeEventListener("scroll", checkScrollLimits);
+      }
+      window.removeEventListener("resize", checkScrollLimits);
+    };
+  }, []);
+
+  const handleSliderScroll = (direction) => {
+    if (sliderRef.current) {
+      const container = sliderRef.current;
+      const card = container.querySelector(".ma-card");
+      if (card) {
+        const cardWidth = card.getBoundingClientRect().width;
+        const gap = 12;
+        const scrollAmount = cardWidth + gap;
+        container.scrollBy({
+          left: direction === "left" ? -scrollAmount : scrollAmount,
+          behavior: "smooth"
+        });
+      }
+    }
+  };
 
   const statCards = [
     { icon: <ArrowLeftRight size={18} />, cls: "clay", label: "Total Migrations", value: stats.totalJobs },
@@ -448,6 +591,65 @@ export default function Index() {
                   )}
                 </div>
               </div>
+            </div>
+
+            <div className="zs-reveal zs-d7">
+              <section className="more-apps">
+                <div className="ma-head">
+                  <div>
+                    <div className="ma-eyebrow">From the Zilancer Studio</div>
+                    <h2 className="ma-title">More apps to <em>grow your store</em></h2>
+                  </div>
+                  <div className="ma-arrows">
+                    <button
+                      className="ma-arr"
+                      onClick={() => handleSliderScroll("left")}
+                      disabled={!canScrollLeft}
+                      aria-label="Previous"
+                    >
+                      ‹
+                    </button>
+                    <button
+                      className="ma-arr"
+                      onClick={() => handleSliderScroll("right")}
+                      disabled={!canScrollRight}
+                      aria-label="Next"
+                    >
+                      ›
+                    </button>
+                  </div>
+                </div>
+
+                <div className="ma-slider" ref={sliderRef}>
+                  <div className="ma-track">
+                    {RECOMMENDED_APPS.map((app) => (
+                      <div key={app.name} className="ma-card">
+                        <div className="ma-card-top">
+                          <div className={`ma-icon ${app.colorClass}`}>
+                            <img src={app.icon} alt={app.name} />
+                          </div>
+                          <div className="ma-name-wrap">
+                            <div className="ma-name">{app.name}</div>
+                            <div className="ma-cat">{app.category}</div>
+                          </div>
+                        </div>
+                        <p className="ma-desc">{app.description}</p>
+                        <div className="ma-card-bottom">
+                          <span className="ma-pill">{app.badge}</span>
+                          <a
+                            href={app.link}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="ma-cta"
+                          >
+                            Learn more <span className="ma-cta-arr">&rarr;</span>
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
             </div>
 
           </div>
