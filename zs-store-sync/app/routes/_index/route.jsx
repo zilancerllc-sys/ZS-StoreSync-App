@@ -1,11 +1,18 @@
-import { redirect, Form, useLoaderData } from "react-router";
+import { useEffect, useState } from "react";
+import { redirect, Form, useLoaderData, useNavigate } from "react-router";
 import { login } from "../../shopify.server";
 import styles from "./styles.module.css";
 
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
 
-  if (url.searchParams.get("shop")) {
+  const isEmbedded =
+    url.searchParams.get("shop") ||
+    url.searchParams.get("host") ||
+    url.searchParams.get("embedded") ||
+    url.searchParams.get("id_token");
+
+  if (isEmbedded) {
     throw redirect(`/app?${url.searchParams.toString()}`);
   }
 
@@ -14,6 +21,19 @@ export const loader = async ({ request }) => {
 
 export default function App() {
   const { showForm } = useLoaderData();
+  const navigate = useNavigate();
+
+  const [external, setExternal] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.top !== window.self) {
+      navigate("/app", { replace: true });
+    } else {
+      setExternal(true);
+    }
+  }, []);
+
+  if (!external) return null;
 
   return (
     <div className={styles.index}>
