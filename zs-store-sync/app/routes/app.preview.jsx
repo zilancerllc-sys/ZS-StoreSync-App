@@ -4,6 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate, unauthenticated } from "../shopify.server";
 import db from "../db.server";
 import { getUsage } from "../credits.server";
+import { getVerifiedConnection } from "../connection.server";
 import { previewCounts } from "../migrator.server";
 import { brandStyles } from "./zs-styles.js";
 import { Eye, Loader2, AlertCircle, Package, Layers } from "lucide-react";
@@ -12,7 +13,8 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const connections = await db.storeConnection.findMany({
-    where: { ownerShop: shop, authorized: true },
+    // only code-verified pairings can be previewed
+    where: { ownerShop: shop, authorized: true, codeVerified: true },
     orderBy: { createdAt: "desc" },
   });
   const usage = await getUsage(shop);
@@ -34,6 +36,16 @@ export const action = async ({ request }) => {
 
   if (!sourceShop || types.length === 0) {
     return { ok: false, error: "Select a source store and data types." };
+  }
+
+  // SECURITY: only code-verified pairings may read the source store's counts.
+  const conn = await getVerifiedConnection(shop, sourceShop);
+  if (!conn) {
+    return {
+      ok: false,
+      error:
+        "This source store isn't verified for your store. Connect it with its connection code on the Migrate page first.",
+    };
   }
 
   const srcSession = await db.session.findFirst({

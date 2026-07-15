@@ -6,16 +6,14 @@ import {
   Link as RouterLink,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { authenticate, unauthenticated } from "../shopify.server";
+import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { getUsage, filterAllowedTypes } from "../credits.server";
 import {
-  getUsage,
-  filterAllowedTypes,
-  consumeQuota,
-  estimateOverageCost,
-} from "../credits.server";
-import { verifyConnectionCode } from "../connection.server";
-import { runMigration } from "../migrator.server";
+  verifyConnectionCode,
+  getVerifiedConnection,
+} from "../connection.server";
+import { startMigrationJob, getActiveJob } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import {
   ArrowLeftRight,
@@ -177,31 +175,23 @@ export const action = async ({ request }) => {
     return { ok: true, needsAuth: false, authorized: true, sourceShop };
   }
 
-  // ── Disconnect a source store (full: removes connection + token) ──────────
+  // ── Disconnect a source store ──────────────────────────────────────────────
   if (intent === "disconnect") {
     const sourceShop = String(form.get("sourceShop") || "").trim();
     if (!sourceShop) return { ok: false, error: "No store specified." };
 
-    // remove the connection row for this owner
+    // Remove the pairing for this owner only. The source store's session is
+    // its own app install — deleting it would log that store out of the app,
+    // so we never touch it here. (Sessions are cleaned up by the uninstall
+    // and shop/redact webhooks on the source store itself.)
     await db.storeConnection.deleteMany({
       where: { ownerShop: shop, sourceShop },
     });
 
-    // full disconnect: revoke our stored token for that source store, but only
-    // if no OTHER owner still has it connected (a source could be shared).
-    const stillUsed = await db.storeConnection.findFirst({
-      where: { sourceShop },
-    });
-    if (!stillUsed) {
-      await db.session.deleteMany({
-        where: { shop: sourceShop, isOnline: false },
-      });
-    }
-
     return { ok: true, disconnected: true, sourceShop };
   }
 
-  // ── Run a migration ───────────────────────────────────────────────────────
+  // ── Run a migration (background job — the client polls for status) ─────────
   if (intent === "migrate") {
     const sourceShop = String(form.get("sourceShop") || "").trim();
     const types = String(form.get("types") || "")
@@ -217,10 +207,8 @@ export const action = async ({ request }) => {
     }
 
     // SECURITY: only migrate from a source that was paired with a valid code.
-    const conn = await db.storeConnection.findUnique({
-      where: { ownerShop_sourceShop: { ownerShop: shop, sourceShop } },
-    });
-    if (!conn?.codeVerified) {
+    const conn = await getVerifiedConnection(shop, sourceShop);
+    if (!conn) {
       return {
         ok: false,
         error:
@@ -272,92 +260,25 @@ export const action = async ({ request }) => {
       };
     }
 
-    const { admin: source } = await unauthenticated.admin(sourceShop);
-    const { admin: target } = await unauthenticated.admin(shop);
-
-    const job = await db.migrationJob.create({
-      data: {
-        shop,
-        sourceShop,
-        targetShop: shop,
-        mode: "migrate",
-        dataTypes: allowed.join(","),
-        status: "running",
-        startedAt: new Date(),
-      },
-    });
-
-    const logs = [];
-    const onLog = (msg) =>
-      logs.push(`[${new Date().toISOString().slice(11, 19)}] ${msg}`);
-
-    let result;
-    let overageCost = 0;
-    let overageByType = {};
-    try {
-      result = await runMigration({
-        source,
-        target,
-        types: allowed,
-        limits: migrateLimits,
-        onLog,
-      });
-      await consumeQuota(shop, result.consumedByType);
-
-      if (allowsOverage) {
-        for (const t of allowed) {
-          const used = (usedSoFar[t] || 0) + (result.consumedByType[t] || 0);
-          const over = Math.max(used - (planLimits[t] || 0), 0);
-          if (over > 0) overageByType[t] = over;
-        }
-        overageCost = estimateOverageCost(overageByType);
-      }
-
-      await db.migrationJob.update({
-        where: { id: job.id },
-        data: {
-          status: result.failed > 0 ? "partial" : "completed",
-          itemCount: result.total,
-          createdCount: result.created,
-          updatedCount: result.updated,
-          skippedCount: result.skipped,
-          failedCount: result.failed,
-          summary: result.summary,
-          logJson: JSON.stringify(logs).slice(0, 100000),
-          finishedAt: new Date(),
-        },
-      });
-      await db.storeConnection.updateMany({
-        where: { ownerShop: shop, sourceShop },
-        data: { lastUsedAt: new Date() },
-      });
-    } catch (err) {
-      await db.migrationJob.update({
-        where: { id: job.id },
-        data: {
-          status: "failed",
-          error: String(err.message).slice(0, 500),
-          logJson: JSON.stringify(logs).slice(0, 100000),
-          finishedAt: new Date(),
-        },
-      });
+    // one job at a time per shop
+    const active = await getActiveJob(shop);
+    if (active) {
       return {
         ok: false,
-        error: String(err.message).slice(0, 300),
-        jobId: job.id,
+        error:
+          "A migration or sync is already running for this store. Wait for it to finish (see History).",
       };
     }
 
-    return {
-      ok: true,
-      done: true,
-      jobId: job.id,
-      result,
-      blocked,
-      overageCost,
-      overageByType,
-      logs: logs.slice(-40),
-    };
+    const jobId = await startMigrationJob({
+      shop,
+      sourceShop,
+      mode: "migrate",
+      types: allowed,
+      limits: migrateLimits,
+    });
+
+    return { ok: true, started: true, jobId, blocked };
   }
 
   return { ok: false, error: "Unknown action." };
@@ -465,7 +386,9 @@ export default function Migrate() {
   const recheckFetcher = useFetcher();
   const disconnectFetcher = useFetcher();
   const runFetcher = useFetcher();
+  const jobFetcher = useFetcher();
   const revalidator = useRevalidator();
+  const [activeJobId, setActiveJobId] = useState(null);
 
   const [selectedSource, setSelectedSource] = useState(
     connections.find((c) => c.authorized)?.sourceShop || "",
@@ -478,7 +401,35 @@ export default function Migrate() {
 
   const connecting = connectFetcher.state !== "idle";
   const rechecking = recheckFetcher.state !== "idle";
-  const running = runFetcher.state !== "idle";
+
+  const job = jobFetcher.data?.job;
+  const jobRunning =
+    !!activeJobId && (!job || job.id !== activeJobId || !job.finished);
+  const running = runFetcher.state !== "idle" || jobRunning;
+
+  // when the action reports the job started, begin polling it
+  useEffect(() => {
+    if (runFetcher.data?.started && runFetcher.data.jobId) {
+      setActiveJobId(runFetcher.data.jobId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runFetcher.data]);
+
+  // poll the job status every 2.5s until it reaches a terminal state
+  useEffect(() => {
+    if (!activeJobId) return undefined;
+    if (job?.id === activeJobId && job?.finished) {
+      revalidator.revalidate(); // refresh remaining quota numbers
+      return undefined;
+    }
+    const t = setInterval(() => {
+      if (jobFetcher.state === "idle") {
+        jobFetcher.load(`/app/jobs/${activeJobId}`);
+      }
+    }, 2500);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeJobId, job?.id, job?.finished]);
 
   const openAuth = (url, shopName) => {
     const full = `${window.location.origin}${url}`;
@@ -814,8 +765,7 @@ export default function Migrate() {
                 >
                   {running ? (
                     <>
-                      <Loader2 size={15} className="zs-spin" /> Migrating… (keep
-                      tab open)
+                      <Loader2 size={15} className="zs-spin" /> Migrating…
                     </>
                   ) : (
                     <>
@@ -831,46 +781,61 @@ export default function Migrate() {
                 </div>
               )}
 
-              {result?.done && result?.result && (
+              {jobRunning && (
                 <>
-                  <div className="zs-banner ok">
-                    <CheckCircle2 size={16} />
-                    Migration finished — {result.result.summary}
+                  <div className="zs-banner info">
+                    <Loader2 size={16} className="zs-spin" />
+                    <span>
+                      Migration running in the background — live progress below.
+                      You can leave this page; the run continues and appears in{" "}
+                      <b>History</b>.
+                    </span>
                   </div>
-                  {result.overageCost > 0 && (
-                    <div className="zs-banner info">
-                      <AlertCircle size={16} />
-                      <span>
-                        Over plan limit by{" "}
-                        {Object.entries(result.overageByType)
-                          .map(([t, n]) => `${n} ${t}`)
-                          .join(", ")}{" "}
-                        — usage charge <b>${result.overageCost.toFixed(2)}</b>{" "}
-                        added to your Shopify invoice.
-                      </span>
+                  {job?.logs?.length > 0 && (
+                    <div className="zs-log">
+                      {job.logs.map((l, i) => (
+                        <div key={i}>{l}</div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {job?.finished && job.id === activeJobId && (
+                <>
+                  {job.status === "failed" ? (
+                    <div className="zs-banner err">
+                      <AlertCircle size={16} /> Migration failed
+                      {job.error ? ` — ${job.error}` : "."}
+                    </div>
+                  ) : (
+                    <div className="zs-banner ok">
+                      <CheckCircle2 size={16} />
+                      Migration finished — {job.summary}
+                      {job.status === "partial" ? " (some items failed)" : ""}
                     </div>
                   )}
                   <div className="zs-result">
                     <div className="box">
-                      <div className="v">{result.result.created}</div>
+                      <div className="v">{job.created}</div>
                       <div className="l">Created</div>
                     </div>
                     <div className="box">
-                      <div className="v">{result.result.skipped}</div>
+                      <div className="v">{job.skipped}</div>
                       <div className="l">Skipped</div>
                     </div>
                     <div className="box">
-                      <div className="v">{result.result.failed}</div>
+                      <div className="v">{job.failed}</div>
                       <div className="l">Failed</div>
                     </div>
                     <div className="box">
-                      <div className="v">{result.result.total}</div>
+                      <div className="v">{job.total}</div>
                       <div className="l">Total</div>
                     </div>
                   </div>
-                  {result.logs && (
+                  {job.logs?.length > 0 && (
                     <div className="zs-log">
-                      {result.logs.map((l, i) => (
+                      {job.logs.map((l, i) => (
                         <div key={i}>{l}</div>
                       ))}
                     </div>

@@ -96,6 +96,15 @@ model Subscription {
   // Shopify subscription gid (for paid plans)
   shopifyChargeId String?
   status        String   @default("active") // active | cancelled | frozen
+  // "monthly" | "annual" — billing interval of the current paid plan
+  interval      String   @default("monthly")
+  // Paid plans are committed for the full billing period: downgrades and
+  // cancellations only take effect after this date. Null = no lock (free plan).
+  lockedUntil   DateTime?
+  // Scheduled downgrade: the plan to switch to when the current period ends
+  // (applied lazily by getUsage, or by the ACTIVE webhook for deferred paid
+  // subscriptions). Null = no change scheduled.
+  pendingPlan   String?
 
   // rolling monthly usage — legacy total count
   monthlyUsed   Int      @default(0)

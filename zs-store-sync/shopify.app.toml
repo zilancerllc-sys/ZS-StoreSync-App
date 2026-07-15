@@ -9,30 +9,6 @@ embedded = true
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_products,write_products,read_content,write_content,read_files,write_files,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_discounts,write_discounts,read_online_store_navigation,write_online_store_navigation,read_customers,write_customers,read_orders,write_orders,read_draft_orders,write_draft_orders"
 
-[product.metafields.app.demo_info]
-type = "single_line_text_field"
-name = "Demo Source Info"
-description = "Tracks products created by the Shopify app template for development"
-
-  [product.metafields.app.demo_info.access]
-  admin = "merchant_read_write"
-
-[metaobjects.app.example]
-name = "Example"
-description = "An example metaobject definition created by this template"
-
-  [metaobjects.app.example.access]
-  admin = "merchant_read_write"
-
-[metaobjects.app.example.fields.title]
-name = "Title"
-type = "single_line_text_field"
-required = true
-
-[metaobjects.app.example.fields.description]
-name = "Description"
-type = "multi_line_text_field"
-
 [webhooks]
 api_version = "2026-07"
 
@@ -48,6 +24,13 @@ api_version = "2026-07"
   [[webhooks.subscriptions]]
   uri = "/webhooks/app/scopes_update"
   topics = [ "app/scopes_update" ]
+
+  # Billing lifecycle: keeps the stored plan in sync when a subscription is
+  # activated, cancelled, expires, or a payment is declined. Without this
+  # subscription cancellations would never downgrade the plan.
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app-subscriptions-update"
+  topics = [ "app_subscriptions/update" ]
 
 [auth]
 redirect_urls = [

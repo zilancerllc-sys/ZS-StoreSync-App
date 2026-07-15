@@ -1,12 +1,11 @@
-import { useState } from "react";
-import { useLoaderData, useFetcher } from "react-router";
+import { useState, useEffect } from "react";
+import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { authenticate, unauthenticated } from "../shopify.server";
+import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import {
-  getUsage, filterAllowedTypes, consumeQuota,
-} from "../credits.server";
-import { runMigration } from "../migrator.server";
+import { getUsage, filterAllowedTypes } from "../credits.server";
+import { getVerifiedConnection } from "../connection.server";
+import { startMigrationJob, getActiveJob } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import { Zap, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 
@@ -14,7 +13,8 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const connections = await db.storeConnection.findMany({
-    where: { ownerShop: shop, authorized: true },
+    // only code-verified pairings can be used as a sync source
+    where: { ownerShop: shop, authorized: true, codeVerified: true },
     orderBy: { lastUsedAt: "desc" },
   });
   const usage = await getUsage(shop);
@@ -39,6 +39,18 @@ export const action = async ({ request }) => {
 
   if (!sourceShop || types.length === 0)
     return { ok: false, error: "Pick a source and data types." };
+
+  // SECURITY: same rule as Migrate — only sources paired with this store via
+  // a valid connection code can be read. Without this, any merchant could
+  // pull data from any store that has the app installed.
+  const conn = await getVerifiedConnection(shop, sourceShop);
+  if (!conn) {
+    return {
+      ok: false,
+      error:
+        "This source store isn't verified for your store. Connect it with its connection code on the Migrate page first.",
+    };
+  }
 
   const { allowed } = await filterAllowedTypes(shop, types);
   if (allowed.length === 0)
@@ -74,53 +86,28 @@ export const action = async ({ request }) => {
   if (!srcSession?.accessToken)
     return { ok: false, error: "Source not authorized." };
 
-  const { admin: source } = await unauthenticated.admin(sourceShop);
-  const { admin: target } = await unauthenticated.admin(shop);
-
-  const job = await db.migrationJob.create({
-    data: {
-      shop, sourceShop, targetShop: shop, mode: "sync",
-      dataTypes: allowed.join(","), status: "running", startedAt: new Date(),
-    },
-  });
-
-  const logs = [];
-  const onLog = (m) => logs.push(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
-
-  // Sync uses the same engine — because duplicates are detected live against
-  // the target, items that already exist are skipped, so only NEW items get
-  // created. (Updating changed fields can be layered on later.)
-  let result;
-  try {
-    result = await runMigration({
-      source, target, types: allowed, limits: migrateLimits, onLog,
-    });
-    await consumeQuota(shop, result.consumedByType);
-    await db.migrationJob.update({
-      where: { id: job.id },
-      data: {
-        status: result.failed > 0 ? "partial" : "completed",
-        itemCount: result.total, createdCount: result.created,
-        skippedCount: result.skipped, failedCount: result.failed,
-        summary: `${result.created} new · ${result.skipped} unchanged`,
-        logJson: JSON.stringify(logs).slice(0, 100000),
-        finishedAt: new Date(),
-      },
-    });
-    await db.storeConnection.updateMany({
-      where: { ownerShop: shop, sourceShop },
-      data: { lastUsedAt: new Date() },
-    });
-  } catch (err) {
-    await db.migrationJob.update({
-      where: { id: job.id },
-      data: { status: "failed", error: String(err.message).slice(0, 500),
-        logJson: JSON.stringify(logs).slice(0, 100000), finishedAt: new Date() },
-    });
-    return { ok: false, error: String(err.message).slice(0, 300) };
+  // one job at a time per shop
+  const active = await getActiveJob(shop);
+  if (active) {
+    return {
+      ok: false,
+      error:
+        "A migration or sync is already running for this store. Wait for it to finish (see History).",
+    };
   }
 
-  return { ok: true, result, logs: logs.slice(-30) };
+  // Sync uses the same engine — duplicates are detected live against the
+  // target, so items that already exist are skipped and only NEW items get
+  // created. Runs as a background job; the client polls /app/jobs/:id.
+  const jobId = await startMigrationJob({
+    shop,
+    sourceShop,
+    mode: "sync",
+    types: allowed,
+    limits: migrateLimits,
+  });
+
+  return { ok: true, started: true, jobId };
 };
 
 const pageStyles = `
@@ -163,10 +150,39 @@ const TYPES = [
 export default function Sync() {
   const { connections, allowedTypes, remaining, limits, allowsOverage } = useLoaderData();
   const fetcher = useFetcher();
+  const jobFetcher = useFetcher();
+  const revalidator = useRevalidator();
   const [src, setSrc] = useState(connections[0]?.sourceShop || "");
   const [picked, setPicked] = useState(["products"]);
-  const busy = fetcher.state !== "idle";
+  const [activeJobId, setActiveJobId] = useState(null);
   const data = fetcher.data;
+
+  const job = jobFetcher.data?.job;
+  const jobRunning =
+    !!activeJobId && (!job || job.id !== activeJobId || !job.finished);
+  const busy = fetcher.state !== "idle" || jobRunning;
+
+  useEffect(() => {
+    if (fetcher.data?.started && fetcher.data.jobId) {
+      setActiveJobId(fetcher.data.jobId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetcher.data]);
+
+  useEffect(() => {
+    if (!activeJobId) return undefined;
+    if (job?.id === activeJobId && job?.finished) {
+      revalidator.revalidate();
+      return undefined;
+    }
+    const t = setInterval(() => {
+      if (jobFetcher.state === "idle") {
+        jobFetcher.load(`/app/jobs/${activeJobId}`);
+      }
+    }, 2500);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeJobId, job?.id, job?.finished]);
 
   const toggle = (id) => {
     if (!allowedTypes.includes(id)) return;
@@ -231,14 +247,32 @@ export default function Sync() {
               {data?.error && (
                 <div className="zs-banner err"><AlertCircle size={16} /> {data.error}</div>
               )}
-              {data?.ok && data.result && (
+              {jobRunning && (
                 <>
-                  <div className="zs-banner ok">
-                    <CheckCircle2 size={16} /> Synced — {data.result.created} new items added, {data.result.skipped} already up to date.
+                  <div className="zs-banner ok" style={{ background: "var(--zs-cream-tint)", color: "var(--zs-clay-deep)", borderColor: "var(--zs-border)" }}>
+                    <Loader2 size={16} className="zs-spin" /> Sync running in the background — live progress below.
                   </div>
-                  {data.logs && (
+                  {job?.logs?.length > 0 && (
                     <div className="zs-log">
-                      {data.logs.map((l, i) => <div key={i}>{l}</div>)}
+                      {job.logs.map((l, i) => <div key={i}>{l}</div>)}
+                    </div>
+                  )}
+                </>
+              )}
+              {job?.finished && job.id === activeJobId && (
+                <>
+                  {job.status === "failed" ? (
+                    <div className="zs-banner err">
+                      <AlertCircle size={16} /> Sync failed{job.error ? ` — ${job.error}` : "."}
+                    </div>
+                  ) : (
+                    <div className="zs-banner ok">
+                      <CheckCircle2 size={16} /> Synced — {job.created} new items added, {job.skipped} already up to date.
+                    </div>
+                  )}
+                  {job.logs?.length > 0 && (
+                    <div className="zs-log">
+                      {job.logs.map((l, i) => <div key={i}>{l}</div>)}
                     </div>
                   )}
                 </>

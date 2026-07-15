@@ -18,9 +18,11 @@ export default function App() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>A short heading about [your app]</h1>
+        <h1 className={styles.heading}>ZS StoreSync</h1>
         <p className={styles.text}>
-          A tagline about [your app] that describes your value proposition.
+          Move your store&apos;s content, store to store — copy products,
+          collections, pages, files, blogs and more from one Shopify store into
+          another. Duplicates skipped, nothing stored on our servers.
         </p>
         {showForm && (
           <Form className={styles.form} method="post" action="/auth/login">
@@ -36,16 +38,18 @@ export default function App() {
         )}
         <ul className={styles.list}>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Store-to-store migration</strong>. Copy products (with
+            variants and images), collections, pages, discounts, files, menus,
+            redirects, metaobjects, metafields and blog posts in one run.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Smart delta sync</strong>. Re-run anytime — items that
+            already exist in the target store are detected live and skipped, so
+            only new items are created.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Secure pairing</strong>. A source store is only readable
+            after its owner shares that store&apos;s private connection code.
           </li>
         </ul>
       </div>

@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { setPlan } from "../credits.server";
 
 export const action = async ({ request }) => {
   const { shop, session, topic } = await authenticate.webhook(request);
@@ -11,6 +12,16 @@ export const action = async ({ request }) => {
   if (session) {
     await db.session.deleteMany({ where: { shop } });
   }
+
+  // Shopify cancels subscriptions on uninstall — drop the plan now so a
+  // reinstall never resumes a paid plan without an active subscription.
+  await setPlan(shop, "free", null);
+
+  // Other stores can no longer pull from this shop until it re-authorizes.
+  await db.storeConnection.updateMany({
+    where: { sourceShop: shop },
+    data: { authorized: false },
+  });
 
   return new Response();
 };

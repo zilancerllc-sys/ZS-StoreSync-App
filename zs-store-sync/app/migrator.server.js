@@ -22,21 +22,29 @@ async function gql(admin, query, variables = {}) {
     const res = await admin.graphql(query, { variables });
     const json = await res.json();
 
-    const throttled =
-      json?.errors?.some?.(
-        (e) => e?.extensions?.code === "THROTTLED",
-      ) || json?.extensions?.cost?.throttleStatus?.currentlyAvailable < 50;
+    const hasThrottledError = json?.errors?.some?.(
+      (e) => e?.extensions?.code === "THROTTLED",
+    );
+    const lowBudget =
+      json?.extensions?.cost?.throttleStatus?.currentlyAvailable < 50;
 
-    if (json?.errors && !throttled) {
+    if (hasThrottledError || lowBudget) {
+      if (hasThrottledError && attempt >= 6) {
+        // out of retries with no data — surface it instead of returning null
+        throw new Error("GraphQL throttled: rate limit not recovering.");
+      }
+      if (attempt < 6) {
+        // back off proportional to attempt
+        await sleep(800 * attempt);
+        if (hasThrottledError) continue;
+      }
+      // lowBudget with data present: fall through and return what we have
+    }
+
+    if (json?.errors) {
       throw new Error(
         "GraphQL error: " + JSON.stringify(json.errors).slice(0, 500),
       );
-    }
-
-    if (throttled && attempt < 6) {
-      // back off proportional to attempt
-      await sleep(800 * attempt);
-      continue;
     }
 
     return json.data;
@@ -47,13 +55,19 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Quote a value for use in a Shopify search query (`sku:"..."`) so spaces,
+// quotes and backslashes can't break the query or false-match other fields.
+function qv(value) {
+  return `"${String(value).replace(/[\\"]/g, "\\$&")}"`;
+}
+
 // ── Generic paginated fetch over a connection ────────────────────────────────
 async function fetchAll(admin, query, rootKey, variables = {}, onPage) {
   let cursor = null;
   const all = [];
   do {
     const data = await gql(admin, query, { ...variables, cursor });
-    const conn = data[rootKey];
+    const conn = data?.[rootKey];
     const edges = conn?.edges ?? [];
     for (const e of edges) all.push(e.node);
     if (onPage) await onPage(all.length);
@@ -97,15 +111,59 @@ const Q_TARGET_BY_SKU = `#graphql
   }`;
 
 const M_PRODUCT_CREATE = `#graphql
-  mutation CreateProduct($input: ProductInput!, $media: [CreateMediaInput!]) {
-    productCreate(input: $input, media: $media) {
-      product { id handle }
+  mutation CreateProduct($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
+    productCreate(product: $product, media: $media) {
+      product {
+        id handle
+        variants(first: 1) { edges { node { id } } }
+      }
       userErrors { field message }
     }
   }`;
 
+const M_VARIANTS_BULK_CREATE = `#graphql
+  mutation VariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!, $strategy: ProductVariantsBulkCreateStrategy) {
+    productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: $strategy) {
+      productVariants { id }
+      userErrors { field message }
+    }
+  }`;
+
+const M_VARIANTS_BULK_UPDATE = `#graphql
+  mutation VariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+      productVariants { id }
+      userErrors { field message }
+    }
+  }`;
+
+// does the source product have real options (vs the implicit Title/Default)?
+function hasRealOptions(p) {
+  const opts = p.options || [];
+  if (opts.length === 0) return false;
+  if (opts.length === 1 && opts[0]?.name === "Title") return false;
+  return true;
+}
+
+// map a source variant to a ProductVariantsBulkInput
+function variantBulkInput(v, withOptionValues) {
+  const input = {
+    price: v.price ?? undefined,
+    compareAtPrice: v.compareAtPrice ?? undefined,
+    barcode: v.barcode ?? undefined,
+  };
+  if (v.sku) input.inventoryItem = { sku: v.sku };
+  if (withOptionValues) {
+    input.optionValues = (v.selectedOptions || []).map((so) => ({
+      optionName: so.name,
+      name: so.value,
+    }));
+  }
+  return input;
+}
+
 async function migrateProducts(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
 
   const products = await fetchAll(
     source,
@@ -117,7 +175,7 @@ async function migrateProducts(ctx) {
   onLog(`Total ${products.length} products found. Importing…`);
 
   for (const p of products) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping product import.");
       break;
     }
@@ -128,7 +186,7 @@ async function migrateProducts(ctx) {
     let existing = null;
     if (firstSku) {
       const r = await gql(target, Q_TARGET_BY_SKU, {
-        q: `sku:${firstSku}`,
+        q: `sku:${qv(firstSku)}`,
       });
       existing = r?.products?.edges?.[0]?.node ?? null;
     }
@@ -145,7 +203,8 @@ async function migrateProducts(ctx) {
       continue;
     }
 
-    const input = {
+    const realOptions = hasRealOptions(p);
+    const product = {
       title: p.title,
       handle: p.handle,
       descriptionHtml: p.descriptionHtml,
@@ -153,11 +212,13 @@ async function migrateProducts(ctx) {
       productType: p.productType,
       tags: p.tags,
       status: p.status || "ACTIVE",
-      productOptions: (p.options || []).map((o) => ({
+    };
+    if (realOptions) {
+      product.productOptions = (p.options || []).map((o) => ({
         name: o.name,
         values: (o.values || []).map((v) => ({ name: v })),
-      })),
-    };
+      }));
+    }
 
     const media = (p.images?.edges || []).map((e) => ({
       originalSource: e.node.src,
@@ -166,15 +227,60 @@ async function migrateProducts(ctx) {
     }));
 
     try {
-      const data = await gql(target, M_PRODUCT_CREATE, { input, media });
+      const data = await gql(target, M_PRODUCT_CREATE, { product, media });
       const errs = data?.productCreate?.userErrors;
       if (errs && errs.length) {
         counters.failed++;
         onLog(`✕ Failed: ${p.title} — ${errs[0].message}`);
-      } else {
-        counters.created++;
-        onLog(`✓ Created: ${p.title}`);
+        await sleep(200);
+        continue;
       }
+
+      const newProduct = data?.productCreate?.product;
+      const sourceVariants = (p.variants?.edges || []).map((e) => e.node);
+
+      // recreate variants with price / SKU / barcode (inventory levels are
+      // per-location and can't be mapped across stores — logged as skipped)
+      if (newProduct?.id && sourceVariants.length) {
+        try {
+          if (realOptions) {
+            const vdata = await gql(target, M_VARIANTS_BULK_CREATE, {
+              productId: newProduct.id,
+              variants: sourceVariants.map((v) => variantBulkInput(v, true)),
+              strategy: "REMOVE_STANDALONE_VARIANT",
+            });
+            const verrs = vdata?.productVariantsBulkCreate?.userErrors;
+            if (verrs?.length) {
+              onLog(`  ⚠ Variants partial for ${p.title} — ${verrs[0].message}`);
+            }
+          } else {
+            // single default variant: update it in place with price / SKU
+            const defaultVariantId =
+              newProduct.variants?.edges?.[0]?.node?.id;
+            if (defaultVariantId) {
+              const vdata = await gql(target, M_VARIANTS_BULK_UPDATE, {
+                productId: newProduct.id,
+                variants: [
+                  {
+                    id: defaultVariantId,
+                    ...variantBulkInput(sourceVariants[0], false),
+                  },
+                ],
+              });
+              const verrs = vdata?.productVariantsBulkUpdate?.userErrors;
+              if (verrs?.length) {
+                onLog(`  ⚠ Variant update failed for ${p.title} — ${verrs[0].message}`);
+              }
+            }
+          }
+        } catch (verr) {
+          onLog(`  ⚠ Variants failed for ${p.title} — ${String(verr.message).slice(0, 100)}`);
+        }
+      }
+
+      counters.created++;
+      consume();
+      onLog(`✓ Created: ${p.title} (${sourceVariants.length} variant${sourceVariants.length === 1 ? "" : "s"})`);
     } catch (err) {
       counters.failed++;
       onLog(`✕ Error: ${p.title} — ${String(err.message).slice(0, 120)}`);
@@ -213,14 +319,14 @@ const M_COLLECTION_CREATE = `#graphql
   }`;
 
 async function migrateCollections(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const cols = await fetchAll(source, Q_COLLECTIONS, "collections", {}, (n) =>
     onLog(`Fetched ${n} collections…`),
   );
   onLog(`Total ${cols.length} collections found. Importing…`);
 
   for (const c of cols) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping collections.");
       break;
     }
@@ -260,6 +366,7 @@ async function migrateCollections(ctx) {
         onLog(`✕ Failed: ${c.title} — ${errs[0].message}`);
       } else {
         counters.created++;
+        consume();
         onLog(`✓ Created: ${c.title}`);
       }
     } catch (err) {
@@ -290,14 +397,14 @@ const M_PAGE_CREATE = `#graphql
   }`;
 
 async function migratePages(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const pages = await fetchAll(source, Q_PAGES, "pages", {}, (n) =>
     onLog(`Fetched ${n} pages…`),
   );
   onLog(`Total ${pages.length} pages found. Importing…`);
 
   for (const pg of pages) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping pages.");
       break;
     }
@@ -317,6 +424,7 @@ async function migratePages(ctx) {
         onLog(`↪︎ Skipped: ${pg.title} — ${errs[0].message}`);
       } else {
         counters.created++;
+        consume();
         onLog(`✓ Created: ${pg.title}`);
       }
     } catch (err) {
@@ -352,20 +460,22 @@ const M_FILE_CREATE = `#graphql
   }`;
 
 async function migrateFiles(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const files = await fetchAll(source, Q_FILES, "files", {}, (n) =>
     onLog(`Fetched ${n} files…`),
   );
   onLog(`Total ${files.length} files found. Importing…`);
 
   for (const f of files) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping files.");
       break;
     }
     const url = f.image?.url || f.url;
     if (!url) {
+      // videos and other media without a public URL can't be re-uploaded
       counters.skipped++;
+      onLog("↪︎ Skipped file (no downloadable URL — e.g. hosted video)");
       continue;
     }
     try {
@@ -384,6 +494,7 @@ async function migrateFiles(ctx) {
         onLog(`✕ File failed — ${errs[0].message}`);
       } else {
         counters.created++;
+        consume();
         onLog(`✓ File uploaded`);
       }
     } catch (err) {
@@ -433,7 +544,7 @@ const M_METAOBJECT_CREATE = `#graphql
   }`;
 
 async function migrateMetaobjects(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const defs = await fetchAll(
     source,
     Q_METAOBJECT_DEFS,
@@ -444,9 +555,9 @@ async function migrateMetaobjects(ctx) {
   onLog(`Total ${defs.length} metaobject definitions found.`);
 
   for (const def of defs) {
-    // create the definition on target (ignore "already exists" errors)
+    // create the definition on target ("taken" = already exists → fine)
     try {
-      await gql(target, M_METAOBJECT_DEF_CREATE, {
+      const ddata = await gql(target, M_METAOBJECT_DEF_CREATE, {
         definition: {
           type: def.type,
           name: def.name,
@@ -458,9 +569,21 @@ async function migrateMetaobjects(ctx) {
           })),
         },
       });
-      onLog(`✓ Definition ready: ${def.type}`);
-    } catch {
-      onLog(`↪︎ Definition exists: ${def.type}`);
+      const derrs = ddata?.metaobjectDefinitionCreate?.userErrors;
+      if (derrs?.length) {
+        const msg = derrs[0].message || "";
+        if (/taken|exists|in use/i.test(msg)) {
+          onLog(`↪︎ Definition exists: ${def.type}`);
+        } else {
+          onLog(`✕ Definition failed: ${def.type} — ${msg}`);
+          continue; // entries would all fail without the definition
+        }
+      } else {
+        onLog(`✓ Definition ready: ${def.type}`);
+      }
+    } catch (err) {
+      onLog(`✕ Definition error: ${def.type} — ${String(err.message).slice(0, 100)}`);
+      continue;
     }
 
     // then copy entries
@@ -471,7 +594,7 @@ async function migrateMetaobjects(ctx) {
       { type: def.type },
     );
     for (const o of objs) {
-      if (!consume()) {
+      if (!hasQuota()) {
         onLog("Quota reached — stopping metaobjects.");
         return;
       }
@@ -488,6 +611,7 @@ async function migrateMetaobjects(ctx) {
           counters.skipped++;
         } else {
           counters.created++;
+          consume();
         }
       } catch {
         counters.failed++;
@@ -517,7 +641,7 @@ const M_METAFIELD_DEF_CREATE = `#graphql
   }`;
 
 async function migrateMetafields(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const defs = await fetchAll(
     source,
     Q_METAFIELD_DEFS,
@@ -528,7 +652,7 @@ async function migrateMetafields(ctx) {
   onLog(`Total ${defs.length} product metafield definitions found.`);
 
   for (const d of defs) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping metafields.");
       break;
     }
@@ -549,6 +673,7 @@ async function migrateMetafields(ctx) {
         onLog(`↪︎ Exists: ${d.namespace}.${d.key}`);
       } else {
         counters.created++;
+        consume();
         onLog(`✓ Definition: ${d.namespace}.${d.key}`);
       }
     } catch (err) {
@@ -610,14 +735,14 @@ function mapAddress(a) {
 }
 
 async function migrateCustomers(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const customers = await fetchAll(source, Q_CUSTOMERS, "customers", {}, (n) =>
     onLog(`Fetched ${n} customers…`),
   );
   onLog(`Total ${customers.length} customers found. Importing…`);
 
   for (const c of customers) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping customers.");
       break;
     }
@@ -625,7 +750,7 @@ async function migrateCustomers(ctx) {
     if (c.email) {
       try {
         const r = await gql(target, Q_TARGET_CUSTOMER_BY_EMAIL, {
-          q: `email:${c.email}`,
+          q: `email:${qv(c.email)}`,
         });
         if (r?.customers?.edges?.length) {
           counters.skipped++;
@@ -654,6 +779,7 @@ async function migrateCustomers(ctx) {
         onLog(`↪︎ Skipped: ${c.email || c.id} — ${errs[0].message}`);
       } else {
         counters.created++;
+        consume();
         onLog(`✓ Customer: ${c.email || `${c.firstName} ${c.lastName}`}`);
       }
     } catch (err) {
@@ -716,21 +842,21 @@ const ORDER_FIN_STATUS = new Set([
 ]);
 
 async function migrateOrders(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const orders = await fetchAll(source, Q_ORDERS, "orders", {}, (n) =>
     onLog(`Fetched ${n} orders…`),
   );
   onLog(`Total ${orders.length} orders found. Importing…`);
 
   for (const o of orders) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping orders.");
       break;
     }
     // duplicate detection by order name (e.g. "#1001")
     try {
       const r = await gql(target, Q_TARGET_ORDER_BY_NAME, {
-        q: `name:${o.name}`,
+        q: `name:${qv(o.name)}`,
       });
       if (r?.orders?.edges?.length) {
         counters.skipped++;
@@ -783,6 +909,7 @@ async function migrateOrders(ctx) {
         onLog(`↪︎ Skipped: ${o.name} — ${errs[0].message}`);
       } else {
         counters.created++;
+        consume();
         onLog(`✓ Order: ${o.name}`);
       }
     } catch (err) {
@@ -841,7 +968,7 @@ const M_DRAFT_ORDER_CREATE = `#graphql
   }`;
 
 async function migrateDraftOrders(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   onLog("Draft orders…");
   const drafts = await fetchAll(source, Q_DRAFT_ORDERS, "draftOrders", {}, (n) =>
     onLog(`Fetched ${n} draft orders…`),
@@ -849,7 +976,7 @@ async function migrateDraftOrders(ctx) {
   onLog(`Total ${drafts.length} draft orders found. Importing…`);
 
   for (const o of drafts) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping draft orders.");
       break;
     }
@@ -857,7 +984,7 @@ async function migrateDraftOrders(ctx) {
     if (o.name) {
       try {
         const r = await gql(target, Q_TARGET_DRAFT_BY_NAME, {
-          q: `name:${o.name}`,
+          q: `name:${qv(o.name)}`,
         });
         if (r?.draftOrders?.edges?.length) {
           counters.skipped++;
@@ -905,6 +1032,7 @@ async function migrateDraftOrders(ctx) {
         onLog(`↪︎ Skipped: ${o.name} — ${errs[0].message}`);
       } else {
         counters.created++;
+        consume();
         onLog(`✓ Draft order: ${o.name}`);
       }
     } catch (err) {
@@ -935,14 +1063,14 @@ const M_REDIRECT_CREATE = `#graphql
   }`;
 
 async function migrateRedirects(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const redirects = await fetchAll(source, Q_REDIRECTS, "urlRedirects", {}, (n) =>
     onLog(`Fetched ${n} URL redirects…`),
   );
   onLog(`Total ${redirects.length} redirects found. Importing…`);
 
   for (const r of redirects) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping redirects.");
       break;
     }
@@ -957,6 +1085,7 @@ async function migrateRedirects(ctx) {
         onLog(`↪︎ Skipped: ${r.path} — ${errs[0].message}`);
       } else {
         counters.created++;
+        consume();
         onLog(`✓ Redirect: ${r.path} → ${r.target}`);
       }
     } catch (err) {
@@ -974,16 +1103,22 @@ const Q_BLOGS = `#graphql
   query Blogs($cursor: String) {
     blogs(first: 25, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      edges { node {
-        id title handle
-        articles(first: 100) {
-          edges { node {
-            id title handle body summary tags isPublished publishedAt
-            author { name }
-            image { url altText }
-          } }
-        }
-      } }
+      edges { node { id title handle } }
+    }
+  }`;
+
+// articles are paginated separately so blogs with 100+ posts migrate fully
+const Q_BLOG_ARTICLES = `#graphql
+  query BlogArticles($id: ID!, $cursor: String) {
+    blog(id: $id) {
+      articles(first: 50, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges { node {
+          id title handle body summary tags isPublished publishedAt
+          author { name }
+          image { url altText }
+        } }
+      }
     }
   }`;
 
@@ -1008,8 +1143,22 @@ const M_ARTICLE_CREATE = `#graphql
     }
   }`;
 
+// fetch every article of a source blog, following pagination
+async function fetchAllArticles(source, blogId) {
+  let cursor = null;
+  const all = [];
+  do {
+    const data = await gql(source, Q_BLOG_ARTICLES, { id: blogId, cursor });
+    const conn = data?.blog?.articles;
+    for (const e of conn?.edges ?? []) all.push(e.node);
+    cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+    if (cursor) await sleep(250);
+  } while (cursor);
+  return all;
+}
+
 async function migrateBlogPosts(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const blogs = await fetchAll(source, Q_BLOGS, "blogs", {}, (n) =>
     onLog(`Fetched ${n} blogs…`),
   );
@@ -1020,7 +1169,7 @@ async function migrateBlogPosts(ctx) {
     let targetBlogId = null;
     try {
       const found = await gql(target, Q_TARGET_BLOG_BY_HANDLE, {
-        q: `handle:${blog.handle}`,
+        q: `handle:${qv(blog.handle)}`,
       });
       targetBlogId = found?.blogs?.edges?.[0]?.node?.id ?? null;
     } catch { /* ignore lookup errors */ }
@@ -1040,9 +1189,10 @@ async function migrateBlogPosts(ctx) {
     }
     if (!targetBlogId) continue;
 
-    const articles = (blog.articles?.edges || []).map((e) => e.node);
+    const articles = await fetchAllArticles(source, blog.id);
+    onLog(`${articles.length} article(s) in ${blog.title}…`);
     for (const a of articles) {
-      if (!consume()) {
+      if (!hasQuota()) {
         onLog("Quota reached — stopping blog posts.");
         return;
       }
@@ -1067,6 +1217,7 @@ async function migrateBlogPosts(ctx) {
           onLog(`↪︎ Skipped article: ${a.title} — ${errs[0].message}`);
         } else {
           counters.created++;
+          consume();
           onLog(`✓ Article: ${a.title}`);
         }
       } catch (err) {
@@ -1093,7 +1244,9 @@ const Q_MENUS = `#graphql
       edges { node {
         id title handle
         items { id title type url tags
-          items { id title type url tags }
+          items { id title type url tags
+            items { id title type url tags }
+          }
         }
       } }
     }
@@ -1135,20 +1288,20 @@ function mapMenuItem(item) {
 }
 
 async function migrateMenus(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const menus = await fetchAll(source, Q_MENUS, "menus", {}, (n) =>
     onLog(`Fetched ${n} menus…`),
   );
   onLog(`Total ${menus.length} menus found. Importing…`);
 
   for (const m of menus) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping menus.");
       break;
     }
     try {
       const found = await gql(target, Q_TARGET_MENU_BY_HANDLE, {
-        q: `handle:${m.handle}`,
+        q: `handle:${qv(m.handle)}`,
       });
       if (found?.menus?.edges?.length) {
         counters.skipped++;
@@ -1169,6 +1322,7 @@ async function migrateMenus(ctx) {
         onLog(`✕ Failed: ${m.title} — ${errs[0].message}`);
       } else {
         counters.created++;
+        consume();
         onLog(`✓ Menu: ${m.title}`);
       }
     } catch (err) {
@@ -1380,14 +1534,14 @@ function discountValueInput(value) {
 }
 
 async function migrateDiscounts(ctx) {
-  const { source, target, onLog, counters, consume } = ctx;
+  const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const nodes = await fetchAll(source, Q_DISCOUNTS, "discountNodes", {}, (n) =>
     onLog(`Fetched ${n} discounts…`),
   );
   onLog(`Total ${nodes.length} discounts found. Importing…`);
 
   for (const n of nodes) {
-    if (!consume()) {
+    if (!hasQuota()) {
       onLog("Quota reached — stopping discounts.");
       break;
     }
@@ -1420,6 +1574,7 @@ async function migrateDiscounts(ctx) {
           onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
         } else {
           counters.created++;
+          consume();
           onLog(`✓ Code discount: ${d.title}`);
         }
       } else if (kind === "DiscountAutomaticBasic") {
@@ -1444,6 +1599,7 @@ async function migrateDiscounts(ctx) {
           onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
         } else {
           counters.created++;
+          consume();
           onLog(`✓ Automatic discount: ${d.title}`);
         }
       } else if (kind === "DiscountCodeFreeShipping") {
@@ -1465,6 +1621,7 @@ async function migrateDiscounts(ctx) {
           onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
         } else {
           counters.created++;
+          consume();
           onLog(`✓ Free-shipping code discount: ${d.title}`);
         }
       } else if (kind === "DiscountAutomaticFreeShipping") {
@@ -1482,6 +1639,7 @@ async function migrateDiscounts(ctx) {
           onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
         } else {
           counters.created++;
+          consume();
           onLog(`✓ Automatic free-shipping discount: ${d.title}`);
         }
       } else if (kind === "DiscountCodeBxgy") {
@@ -1512,6 +1670,7 @@ async function migrateDiscounts(ctx) {
           onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
         } else {
           counters.created++;
+          consume();
           onLog(`✓ Buy X Get Y code discount: ${d.title}`);
         }
       } else if (kind === "DiscountAutomaticBxgy") {
@@ -1537,6 +1696,7 @@ async function migrateDiscounts(ctx) {
           onLog(`↪︎ Skipped: ${d.title} — ${errs[0].message}`);
         } else {
           counters.created++;
+          consume();
           onLog(`✓ Automatic Buy X Get Y discount: ${d.title}`);
         }
       } else {
@@ -1603,29 +1763,30 @@ export async function runMigration({
   onLog = () => {},
 }) {
   const counters = { created: 0, updated: 0, skipped: 0, failed: 0 };
-  // per-type consumed counters
+  // per-type consumed counters — only items actually CREATED consume quota;
+  // duplicates that are skipped and failed attempts cost nothing.
   const consumed = {};
   types.forEach((t) => (consumed[t] = 0));
 
-  // returns false when per-type quota is exhausted.
-  // `type` is the current data type being migrated.
-  const consume = (type) => {
+  // true while the current type still has quota left
+  const hasQuota = (type) => {
     const limit = limits[type];
-    if (limit != null && limit !== Infinity) {
-      if (consumed[type] >= limit) return false;
-    }
+    if (limit == null || limit === Infinity) return true;
+    return (consumed[type] || 0) < limit;
+  };
+  // record one successfully created item of the current type
+  const consume = (type) => {
     consumed[type] = (consumed[type] || 0) + 1;
-    return true;
   };
 
-  // consume counter shared across modules: the orchestrator passes the
-  // current type into ctx so each runner can check its own quota.
+  // the orchestrator tracks the current type so each runner checks its own quota
   let currentType = null;
   const ctx = {
     source,
     target,
     onLog,
     counters,
+    hasQuota: () => hasQuota(currentType),
     consume: () => consume(currentType),
     setType: (t) => {
       currentType = t;

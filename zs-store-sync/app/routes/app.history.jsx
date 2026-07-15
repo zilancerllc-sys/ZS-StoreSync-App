@@ -3,6 +3,7 @@ import { useLoaderData, Link as RouterLink } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { failStaleJobs, parseLogsJson } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import {
   ArrowLeftRight, ChevronDown, CheckCircle2, AlertCircle, Clock, XCircle,
@@ -11,6 +12,9 @@ import {
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
+
+  // jobs left "running" by a server restart are marked failed
+  await failStaleJobs(shop);
 
   const jobs = await db.migrationJob.findMany({
     where: { shop },
@@ -33,7 +37,7 @@ export const loader = async ({ request }) => {
       total: j.itemCount,
       summary: j.summary,
       error: j.error,
-      logs: j.logJson ? JSON.parse(j.logJson) : [],
+      logs: parseLogsJson(j.logJson),
       createdAt: j.createdAt,
       finishedAt: j.finishedAt,
     })),

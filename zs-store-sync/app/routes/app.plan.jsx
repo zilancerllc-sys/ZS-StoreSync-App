@@ -5,6 +5,7 @@ import { authenticate } from "../shopify.server";
 import {
   getUsage,
   setPlan,
+  schedulePlanChange,
   PLAN_PRICE,
   PLAN_PRICE_ANNUAL,
   PLAN_ANNUAL_SAVINGS,
@@ -19,37 +20,32 @@ function basePlan(billingPlan) {
   return String(billingPlan || "").replace("_annual", "");
 }
 
-// ─── Loader ──────────────────────────────────────────────────────────────────
-export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
-  const shop = session.shop;
-  const url = new URL(request.url);
+const BILLING_PLANS = [
+  "starter",
+  "starter_annual",
+  "growth",
+  "growth_annual",
+  "pro",
+  "pro_annual",
+];
 
-  const chargeId = url.searchParams.get("charge_id");
-  const activate = url.searchParams.get("activate");
-  const VALID = ["free", "starter", "growth", "pro"];
+// Pre-format the lock date on the server (fixed locale/timezone) so SSR and
+// client render identical text — same hydration concern as the Migrate page.
+function fmtLockDate(d) {
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(d));
+}
 
-  if (chargeId && activate) {
-    const base = basePlan(activate);
-    if (VALID.includes(base)) {
-      await setPlan(shop, base, chargeId);
-      const usage = await getUsage(shop);
-      // Render the confirmation right away and tell the client to strip the
-      // billing params from the URL in place — no second full-page reload.
-      return {
-        current: usage.plan,
-        usage: usage.usage,
-        planPrice: PLAN_PRICE,
-        planPriceAnnual: PLAN_PRICE_ANNUAL,
-        planSavings: PLAN_ANNUAL_SAVINGS,
-        planLimits: PLAN_LIMITS,
-        activated: base,
-        cleanBillingParams: true,
-      };
-    }
-  }
-
+async function loaderData(shop, extra = {}) {
   const usage = await getUsage(shop);
+  const locked =
+    usage.plan !== "free" &&
+    usage.lockedUntil &&
+    new Date() < new Date(usage.lockedUntil);
   return {
     current: usage.plan,
     usage: usage.usage,
@@ -57,12 +53,89 @@ export const loader = async ({ request }) => {
     planPriceAnnual: PLAN_PRICE_ANNUAL,
     planSavings: PLAN_ANNUAL_SAVINGS,
     planLimits: PLAN_LIMITS,
-    activated: url.searchParams.get("activated"),
+    // commitment window: downgrades take effect after this date
+    lockedUntilLabel: locked ? fmtLockDate(usage.lockedUntil) : null,
+    // scheduled downgrade, if any
+    pendingPlan: usage.pendingPlan || null,
+    activated: null,
     cleanBillingParams: false,
+    ...extra,
   };
+}
+
+const Q_APP_SUBSCRIPTION = `#graphql
+  query AppSubscription($id: ID!) {
+    node(id: $id) {
+      ... on AppSubscription { id name status currentPeriodEnd }
+    }
+  }`;
+
+// ─── Loader ──────────────────────────────────────────────────────────────────
+export const loader = async ({ request }) => {
+  const { session, billing, admin } = await authenticate.admin(request);
+  const shop = session.shop;
+  const url = new URL(request.url);
+
+  const chargeId = url.searchParams.get("charge_id");
+  const activate = url.searchParams.get("activate");
+
+  if (chargeId && activate && BILLING_PLANS.includes(activate)) {
+    // SECURITY: never trust the URL params alone — anyone could type them.
+    // Confirm with Shopify what state this exact subscription is in before
+    // touching the stored plan.
+    const base = basePlan(activate);
+    const interval = activate.endsWith("_annual") ? "annual" : "monthly";
+
+    const { appSubscriptions } = await billing.check();
+    const sub = (appSubscriptions || []).find(
+      (s) =>
+        s.name === activate &&
+        (String(s.id).endsWith(`/${chargeId}`) || String(s.id) === chargeId),
+    );
+    if (sub) {
+      // immediate activation (new purchase or prorated upgrade)
+      await setPlan(shop, base, String(sub.id), {
+        interval,
+        lockedUntil: sub.currentPeriodEnd || undefined,
+      });
+      // Render the confirmation right away and tell the client to strip the
+      // billing params from the URL in place — no second full-page reload.
+      return loaderData(shop, { activated: base, cleanBillingParams: true });
+    }
+
+    // Not among active subscriptions — this may be a scheduled downgrade the
+    // merchant just approved (APPLY_ON_NEXT_BILLING_CYCLE). Verify the charge
+    // directly; only an ACCEPTED subscription with our name schedules a change.
+    try {
+      const res = await admin.graphql(Q_APP_SUBSCRIPTION, {
+        variables: { id: `gid://shopify/AppSubscription/${chargeId}` },
+      });
+      const node = (await res.json())?.data?.node;
+      if (node?.name === activate && node?.status === "ACCEPTED") {
+        const current = (appSubscriptions || [])[0];
+        await schedulePlanChange(
+          shop,
+          base,
+          current?.currentPeriodEnd || undefined,
+        );
+        return loaderData(shop, { cleanBillingParams: true });
+      }
+    } catch {
+      // verification failed — never change the plan on unverified params
+    }
+  }
+
+  return loaderData(shop, { activated: url.searchParams.get("activated") });
 };
 
 // ─── Action ──────────────────────────────────────────────────────────────────
+// Plan-change policy:
+//   • UPGRADES apply immediately — Shopify replaces the subscription and
+//     prorates the difference.
+//   • DOWNGRADES (incl. cancel to Free) never cut a paid period short: they
+//     take effect when the current billing period ends. Free = cancel the
+//     subscription now (no renewal, no refund) but keep the plan until the
+//     period ends. Lower paid tier = Shopify's APPLY_ON_NEXT_BILLING_CYCLE.
 export const action = async ({ request }) => {
   const { billing, session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -75,13 +148,74 @@ export const action = async ({ request }) => {
     process.env.BILLING_TEST === "true" ||
     process.env.NODE_ENV !== "production";
 
-  // ── Downgrade to Free: cancel any active paid subscription ──
-  // (billing.request only handles paid plans; there is no "free" charge to
-  //  request, so we cancel the current subscription and drop back to free.)
+  if (![...PLAN_ORDER].includes(plan)) return { error: "Invalid plan." };
+
+  const usage = await getUsage(shop);
+  const currentPlan = usage.plan;
+
+  if (plan === currentPlan && (plan === "free" || interval === usage.interval)) {
+    return { error: "You're already on this plan." };
+  }
+
+  // Live subscription state — currentPeriodEnd is authoritative (it advances
+  // with every auto-renewal, unlike our stored lockedUntil).
+  const { appSubscriptions } = await billing.check();
+  const activeSub = (appSubscriptions || [])[0] || null;
+  const periodEnd = activeSub?.currentPeriodEnd
+    ? new Date(activeSub.currentPeriodEnd)
+    : null;
+  const inPaidPeriod =
+    currentPlan !== "free" && periodEnd && new Date() < periodEnd;
+
+  const currentIdx = PLAN_ORDER.indexOf(currentPlan);
+  const targetIdx = PLAN_ORDER.indexOf(plan);
+  const isUpgradeChange =
+    targetIdx > currentIdx ||
+    (targetIdx === currentIdx &&
+      interval === "annual" &&
+      usage.interval === "monthly");
+
+  const billingPlan =
+    plan === "free" ? null : interval === "annual" ? `${plan}_annual` : plan;
+  const storeName = shop.replace(".myshopify.com", "");
+  const returnUrl = billingPlan
+    ? `https://admin.shopify.com/store/${storeName}/apps/${APP_HANDLE}/app/plan?activate=${billingPlan}`
+    : null;
+
+  // ── Downgrades during a paid period → scheduled, never immediate ────────────
+  if (!isUpgradeChange && inPaidPeriod) {
+    if (usage.pendingPlan) {
+      return {
+        error: `A change to ${usage.pendingPlan[0].toUpperCase() + usage.pendingPlan.slice(1)} is already scheduled for ${fmtLockDate(usage.lockedUntil || periodEnd)}. It will apply automatically when your current period ends.`,
+      };
+    }
+
+    if (plan === "free") {
+      // Stop the renewal now (no refund — the period was committed), keep the
+      // paid plan until the period ends, then getUsage flips it to free.
+      for (const sub of appSubscriptions || []) {
+        await billing.cancel({ subscriptionId: sub.id, isTest, prorate: false });
+      }
+      await schedulePlanChange(shop, "free", periodEnd);
+      return { scheduled: "free", effectiveLabel: fmtLockDate(periodEnd) };
+    }
+
+    // Lower paid tier: merchant approves the new charge now; Shopify activates
+    // it when the current billing cycle ends (no double charge). Our plan
+    // updates via the ACTIVE webhook / the return-URL loader.
+    await billing.request({
+      plan: billingPlan,
+      isTest,
+      returnUrl,
+      replacementBehavior: "APPLY_ON_NEXT_BILLING_CYCLE",
+    });
+    return null;
+  }
+
+  // ── Free (no active paid period) → immediate ────────────────────────────────
   if (plan === "free") {
-    const { appSubscriptions } = await billing.check();
     for (const sub of appSubscriptions || []) {
-      await billing.cancel({ subscriptionId: sub.id, isTest, prorate: true });
+      await billing.cancel({ subscriptionId: sub.id, isTest, prorate: false });
     }
     await setPlan(shop, "free", null);
     // Return data (no redirect): React Router revalidates the loader in place,
@@ -90,13 +224,7 @@ export const action = async ({ request }) => {
     return { downgradedToFree: true };
   }
 
-  const VALID = ["starter", "growth", "pro"];
-  if (!VALID.includes(plan)) return { error: "Invalid plan." };
-
-  const billingPlan = interval === "annual" ? `${plan}_annual` : plan;
-  const storeName = shop.replace(".myshopify.com", "");
-  const returnUrl = `https://admin.shopify.com/store/${storeName}/apps/${APP_HANDLE}/app/plan?activate=${billingPlan}`;
-
+  // ── Upgrades (and changes outside a paid period) → immediate, prorated ─────
   await billing.request({
     plan: billingPlan,
     isTest,
@@ -280,19 +408,19 @@ const DISPLAY_TYPES = [
 const faqs = [
   {
     q: "What counts toward my monthly quota?",
-    a: "Each item synced or migrated (product, page, file, etc.) counts once per billing cycle. The counter resets every 30 days with your Shopify billing date.",
+    a: "Each new item created in this store by a migration or sync (product, page, file, etc.) counts once per billing cycle. Items that already exist and are skipped don't count. The counter resets every 30 days.",
   },
   {
     q: "What happens if I hit my limit?",
     a: "Syncs for that data type pause until your quota resets or you upgrade. Existing data in both stores is never deleted.",
   },
   {
-    q: "Can I change plans later?",
-    a: "Yes — upgrade or downgrade anytime. Changes apply immediately and billing is prorated automatically through Shopify.",
+    q: "Can I change or cancel my plan later?",
+    a: "Upgrades apply immediately — Shopify prorates so you only pay the difference. Downgrades and cancellations can be requested anytime but take effect at the end of your current billing period; you keep your paid features until then, and nothing is refunded mid-period.",
   },
   {
     q: "Is there a free trial?",
-    a: "The Free plan is yours forever with no credit card required. Paid plans include a 3-day free trial before the first charge.",
+    a: "The Free plan is yours forever with no credit card required — use it to try the app before upgrading. Paid plans are billed from day one through Shopify.",
   },
 ];
 
@@ -402,6 +530,8 @@ export default function Plan() {
     planPriceAnnual,
     planSavings,
     planLimits,
+    lockedUntilLabel,
+    pendingPlan,
     activated,
     cleanBillingParams,
   } = useLoaderData();
@@ -473,10 +603,14 @@ export default function Plan() {
     return targetIdx > currentIdx;
   };
 
-  const ctaLabel = (planId) => {
+  const ctaLabel = (planId, inPaidPeriod = false) => {
     if (submittingPlan === planId) return "Redirecting to Shopify…";
     const name = planId[0].toUpperCase() + planId.slice(1);
-    return isUpgrade(planId) ? `Upgrade to ${name}` : `Downgrade to ${name}`;
+    if (isUpgrade(planId)) return `Upgrade to ${name}`;
+    // downgrades during a paid period are scheduled for the period's end
+    return inPaidPeriod
+      ? `Downgrade to ${name} at period end`
+      : `Downgrade to ${name}`;
   };
 
   return (
@@ -494,6 +628,84 @@ export default function Plan() {
                   {bannerPlan[0].toUpperCase() + bannerPlan.slice(1)}
                 </strong>{" "}
                 plan is now active.
+              </div>
+            )}
+
+            {/* Scheduled downgrade notice */}
+            {pendingPlan && (
+              <div
+                className="zs-activated zs-reveal zs-d1"
+                style={{
+                  background: "var(--zs-cream-tint)",
+                  border: "1px solid var(--zs-border)",
+                  color: "var(--zs-clay-deep)",
+                }}
+              >
+                <Lock size={13} style={{ verticalAlign: "-2px" }} /> Your plan
+                switches to{" "}
+                <strong>
+                  {pendingPlan[0].toUpperCase() + pendingPlan.slice(1)}
+                </strong>
+                {lockedUntilLabel ? (
+                  <>
+                    {" "}
+                    on <strong>{lockedUntilLabel}</strong>
+                  </>
+                ) : (
+                  " when your current period ends"
+                )}
+                . You keep your{" "}
+                <strong>{current[0].toUpperCase() + current.slice(1)}</strong>{" "}
+                features until then.
+              </div>
+            )}
+
+            {/* Just scheduled a free downgrade */}
+            {planFetcher.data?.scheduled === "free" && !pendingPlan && (
+              <div
+                className="zs-activated zs-reveal zs-d1"
+                style={{
+                  background: "var(--zs-cream-tint)",
+                  border: "1px solid var(--zs-border)",
+                  color: "var(--zs-clay-deep)",
+                }}
+              >
+                ✓ Downgrade scheduled — your plan switches to{" "}
+                <strong>Free</strong> on{" "}
+                <strong>{planFetcher.data.effectiveLabel}</strong>. No further
+                charges.
+              </div>
+            )}
+
+            {/* Commitment notice (paid period, nothing scheduled) */}
+            {lockedUntilLabel && !pendingPlan && (
+              <div
+                className="zs-activated zs-reveal zs-d1"
+                style={{
+                  background: "var(--zs-cream-tint)",
+                  border: "1px solid var(--zs-border)",
+                  color: "var(--zs-clay-deep)",
+                }}
+              >
+                <Lock size={13} style={{ verticalAlign: "-2px" }} /> Your{" "}
+                <strong>{current[0].toUpperCase() + current.slice(1)}</strong>{" "}
+                plan runs until <strong>{lockedUntilLabel}</strong>. Upgrades
+                apply immediately (prorated by Shopify); downgrades and
+                cancellations take effect on that date.
+              </div>
+            )}
+
+            {/* Action errors (e.g. attempted change while locked) */}
+            {planFetcher.data?.error && (
+              <div
+                className="zs-activated zs-reveal zs-d1"
+                style={{
+                  background: "#fbeaea",
+                  border: "1px solid #f3d2d2",
+                  color: "#9a3412",
+                }}
+              >
+                {planFetcher.data.error}
               </div>
             )}
 
@@ -585,11 +797,22 @@ export default function Plan() {
                         <button
                           type="submit"
                           className="zs-plan-cta"
-                          disabled={!!submittingPlan}
+                          disabled={!!submittingPlan || !!pendingPlan}
+                          title={
+                            pendingPlan
+                              ? "A plan change is already scheduled"
+                              : lockedUntilLabel
+                                ? `Takes effect ${lockedUntilLabel}`
+                                : undefined
+                          }
                         >
                           {submittingPlan === "free"
-                            ? "Downgrading…"
-                            : "Downgrade to Free"}
+                            ? "Scheduling…"
+                            : pendingPlan
+                              ? "Change scheduled"
+                              : lockedUntilLabel
+                                ? "Downgrade at period end"
+                                : "Downgrade to Free"}
                         </button>
                       </planFetcher.Form>
                     ) : (
@@ -606,9 +829,21 @@ export default function Plan() {
                         <button
                           type="submit"
                           className={`zs-plan-cta ${isUpgrade(planId) && meta.featured ? "primary" : ""}`}
-                          disabled={!!submittingPlan}
+                          disabled={
+                            !!submittingPlan ||
+                            (!isUpgrade(planId) && !!pendingPlan)
+                          }
+                          title={
+                            !isUpgrade(planId) && pendingPlan
+                              ? "A plan change is already scheduled"
+                              : !isUpgrade(planId) && lockedUntilLabel
+                                ? `Takes effect ${lockedUntilLabel}`
+                                : undefined
+                          }
                         >
-                          {ctaLabel(planId)}
+                          {!isUpgrade(planId) && pendingPlan
+                            ? "Change scheduled"
+                            : ctaLabel(planId, !!lockedUntilLabel)}
                         </button>
                       </planFetcher.Form>
                     )}

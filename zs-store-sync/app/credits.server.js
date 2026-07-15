@@ -165,6 +165,25 @@ export async function getUsage(shop) {
     sub = await db.subscription.create({ data: { shop, plan: "free" } });
   }
 
+  // apply a scheduled downgrade once the committed period has ended
+  // (paid→paid downgrades are normally applied earlier by the ACTIVE webhook
+  //  for the deferred subscription; this is the fallback plus the free path)
+  if (
+    sub.pendingPlan &&
+    sub.lockedUntil &&
+    Date.now() >= new Date(sub.lockedUntil).getTime()
+  ) {
+    sub = await db.subscription.update({
+      where: { shop },
+      data: {
+        plan: sub.pendingPlan,
+        pendingPlan: null,
+        lockedUntil: null,
+        ...(sub.pendingPlan === "free" ? { shopifyChargeId: null } : {}),
+      },
+    });
+  }
+
   // roll the 30-day window if it has elapsed
   const now = Date.now();
   if (now - new Date(sub.periodStart).getTime() >= PERIOD_MS) {
@@ -192,7 +211,24 @@ export async function getUsage(shop) {
     allowedTypes: planAllowedTypes(sub.plan),
     allowsOverage: planAllowsOverage(sub.plan),
     periodStart: sub.periodStart,
+    interval: sub.interval,
+    lockedUntil: sub.lockedUntil,
+    pendingPlan: sub.pendingPlan,
   };
+}
+
+// ─── Schedule a downgrade for when the current period ends ────────────────────
+// effectiveAt: the current period's end (from Shopify's currentPeriodEnd when
+// available) — also refreshes lockedUntil so the switch happens on time even
+// after auto-renewals moved the period forward.
+export async function schedulePlanChange(shop, pendingPlan, effectiveAt = null) {
+  return db.subscription.update({
+    where: { shop },
+    data: {
+      pendingPlan,
+      ...(effectiveAt ? { lockedUntil: new Date(effectiveAt) } : {}),
+    },
+  });
 }
 
 // ─── Record consumed items per type after a run ───────────────────────────────
@@ -233,11 +269,32 @@ export async function filterAllowedTypes(shop, requestedTypes) {
   return { allowed, blocked, plan: u.plan };
 }
 
-// ─── Set the plan (called from billing callback) ──────────────────────────────
-export async function setPlan(shop, plan, shopifyChargeId = null) {
+// ─── Set the plan (called from billing callback / webhook) ────────────────────
+// opts.interval: "monthly" | "annual"
+// opts.lockedUntil: Date when the current billing period ends (from Shopify's
+//   currentPeriodEnd when available). Computed from the interval if omitted.
+export async function setPlan(shop, plan, shopifyChargeId = null, opts = {}) {
+  const interval = opts.interval === "annual" ? "annual" : "monthly";
+  let lockedUntil = null;
+  if (plan !== "free") {
+    lockedUntil = opts.lockedUntil
+      ? new Date(opts.lockedUntil)
+      : new Date(
+          Date.now() + (interval === "annual" ? 365 : 30) * 24 * 60 * 60 * 1000,
+        );
+  }
+  // Any explicit plan set supersedes a scheduled change.
+  const data = {
+    plan,
+    shopifyChargeId,
+    status: "active",
+    interval,
+    lockedUntil,
+    pendingPlan: null,
+  };
   return db.subscription.upsert({
     where: { shop },
-    update: { plan, shopifyChargeId, status: "active" },
-    create: { shop, plan, shopifyChargeId },
+    update: data,
+    create: { shop, ...data },
   });
 }

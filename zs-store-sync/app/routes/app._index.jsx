@@ -4,6 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { getUsage, PLAN_LABEL } from "../credits.server";
+import { failStaleJobs } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import {
   ArrowLeftRight, Package, Layers, FileText, Image, Users,
@@ -17,6 +18,9 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
+  // jobs left "running" by a server restart are marked failed
+  await failStaleJobs(shop);
+
   const dbJobs = await db.migrationJob.findMany({
     where: { shop },
     orderBy: { createdAt: "desc" },
@@ -28,7 +32,7 @@ export const loader = async ({ request }) => {
     source: j.sourceShop,
     target: j.targetShop,
     summary: j.summary || `${j.itemCount ?? 0} items`,
-    status: j.status === "running" ? "running" : "completed",
+    status: j.status,
     type: (j.dataTypes || "").split(",")[0] || "Products",
     createdAt: j.createdAt,
   }));
@@ -167,6 +171,8 @@ const pageStyles = `
   .zs-badge-done::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--zs-sage-deep);}
   .zs-badge-run{background:var(--zs-cream-tint);color:var(--zs-clay-deep);font-size:11px;font-weight:600;padding:4px 11px;border-radius:20px;display:inline-flex;align-items:center;gap:6px;}
   .zs-badge-run::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--zs-clay);}
+  .zs-badge-fail{background:#fbeaea;color:#9a3412;font-size:11px;font-weight:600;padding:4px 11px;border-radius:20px;display:inline-flex;align-items:center;gap:6px;}
+  .zs-badge-fail::before{content:"";width:6px;height:6px;border-radius:50%;background:#9a3412;}
   .zs-plan-card{background:var(--zs-dark);border-radius:var(--zs-r-lg);padding:1.75rem;position:relative;overflow:hidden;box-shadow:var(--zs-shadow-md);}
   .zs-plan-card::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 100% 0%,rgba(186,191,148,.28) 0%,transparent 55%);pointer-events:none;}
   .zs-plan-inner{position:relative;z-index:1;}
@@ -525,7 +531,23 @@ export default function Index() {
                           <div className="zs-recent-sub">{j.summary}</div>
                         </div>
                       </div>
-                      <span className={j.status === "running" ? "zs-badge-run" : "zs-badge-done"}>{j.status === "running" ? "Running" : "Done"}</span>
+                      <span
+                        className={
+                          j.status === "running"
+                            ? "zs-badge-run"
+                            : j.status === "failed"
+                              ? "zs-badge-fail"
+                              : "zs-badge-done"
+                        }
+                      >
+                        {j.status === "running"
+                          ? "Running"
+                          : j.status === "failed"
+                            ? "Failed"
+                            : j.status === "partial"
+                              ? "Partial"
+                              : "Done"}
+                      </span>
                     </div>
                   ))
                 )}
