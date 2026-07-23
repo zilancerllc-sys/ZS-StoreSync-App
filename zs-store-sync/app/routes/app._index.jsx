@@ -533,7 +533,7 @@ function FeedbackModal({ onClose }) {
           <>
             <h3 className="zs-fb-modal-title">What do you think of ZS StoreSync?</h3>
             <p className="zs-fb-modal-sub">
-              Your rating helps us keep improving. It only takes a moment.
+              Your feedback helps us keep improving. It only takes a moment.
             </p>
             <StarRow
               value={rating}
@@ -549,8 +549,8 @@ function FeedbackModal({ onClose }) {
           <>
             <h3 className="zs-fb-modal-title">Help us do better</h3>
             <p className="zs-fb-modal-sub">
-              Sorry it&apos;s not a 5-star experience yet. Tell us what went wrong
-              or what&apos;s missing — it goes straight to our team.
+              We&apos;d like to fix this. Tell us what went wrong or what you were
+              expecting — we read every message.
             </p>
             <StarRow value={rating} interactive={false} />
             <textarea
