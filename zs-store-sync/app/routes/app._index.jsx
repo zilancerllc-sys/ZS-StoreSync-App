@@ -1,17 +1,23 @@
 import { useRef, useState, useEffect } from "react";
-import { Link as RouterLink, useLoaderData } from "react-router";
+import { Link as RouterLink, useLoaderData, useFetcher } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { getUsage, PLAN_LABEL } from "../credits.server";
 import { failStaleJobs } from "../jobs.server";
+import { recordFeedback } from "../feedback.server";
 import { brandStyles } from "./zs-styles.js";
 import {
   ArrowLeftRight, Package, Layers, FileText, Image, Users,
   ShoppingCart, Boxes, Tag, Zap, ShieldCheck, BookOpen,
   HelpCircle, Mail, Rocket, PlayCircle,
   Percent, Menu, Shuffle, Newspaper,
+  Star, MessageSquareHeart, X, PartyPopper,
 } from "lucide-react";
+
+// Public app-store listing — deep-linked to open the "Write a review" modal.
+const APP_STORE_REVIEW_URL =
+  "https://apps.shopify.com/zs-storesync#modal-show=WriteReviewModal";
 
 // ─── Loader (live DB) ────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
@@ -71,6 +77,28 @@ export const loader = async ({ request }) => {
     },
     jobs,
   };
+};
+
+// ─── Action: record merchant feedback ────────────────────────────────────────
+export const action = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  const form = await request.formData();
+
+  if (form.get("intent") === "feedback") {
+    const rating = Number(form.get("rating"));
+    const message = form.get("message") || "";
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return { ok: false, error: "Invalid rating" };
+    }
+    const result = await recordFeedback({
+      shop: session.shop,
+      rating,
+      message,
+    });
+    return result;
+  }
+
+  return { ok: false };
 };
 
 // (styles + component are identical to the standalone homepage file)
@@ -252,6 +280,46 @@ const pageStyles = `
   .ma-cta:hover .ma-cta-arr{transform:translateX(2px);}
   @media(max-width:860px){.ma-card{flex:0 0 calc((100% - 12px) / 2);}}
   @media(max-width:560px){.ma-card{flex:0 0 100%;}}
+
+  /* ── Feedback CTA banner ─────────────────────────────────────────────── */
+  .zs-fb-banner{display:flex;align-items:center;gap:20px;background:var(--zs-white);border:1px solid var(--zs-border);border-radius:var(--zs-r-lg);padding:1.5rem 3rem 1.5rem 1.8rem;box-shadow:var(--zs-shadow-sm);position:relative;overflow:hidden;}
+  .zs-fb-banner-close{position:absolute;top:12px;right:12px;z-index:2;width:28px;height:28px;border-radius:8px;border:none;background:transparent;color:var(--zs-muted);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;}
+  .zs-fb-banner-close:hover{background:var(--zs-bg);color:var(--zs-dark);}
+  .zs-fb-banner::before{content:"";position:absolute;top:0;right:0;width:340px;height:100%;background:radial-gradient(circle at 100% 0%,rgba(226,158,73,.10) 0%,transparent 62%);pointer-events:none;}
+  .zs-fb-icon{width:58px;height:58px;border-radius:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(150deg,var(--zs-camel),var(--zs-clay-deep));box-shadow:0 8px 22px rgba(169,139,118,.32);}
+  .zs-fb-copy{flex:1;min-width:0;position:relative;z-index:1;}
+  .zs-fb-eyebrow{font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--zs-clay);margin-bottom:5px;}
+  .zs-fb-title{font-family:var(--zs-font-display);font-size:20px;font-weight:600;color:var(--zs-dark);letter-spacing:-.01em;margin:0 0 4px;}
+  .zs-fb-sub{font-size:13px;color:var(--zs-muted);line-height:1.55;margin:0;max-width:560px;}
+  .zs-fb-cta{flex-shrink:0;position:relative;z-index:1;background:var(--zs-clay);color:#fff;border:none;padding:12px 22px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px;box-shadow:var(--zs-shadow-clay);transition:transform .18s,box-shadow .18s,background .18s;}
+  .zs-fb-cta:hover{transform:translateY(-2px);background:var(--zs-clay-deep);box-shadow:0 14px 36px rgba(169,139,118,.40);}
+  @media(max-width:640px){.zs-fb-banner{flex-direction:column;align-items:flex-start;text-align:left;}.zs-fb-cta{width:100%;justify-content:center;}}
+
+  /* ── Feedback modal ──────────────────────────────────────────────────── */
+  .zs-fb-overlay{position:fixed;inset:0;z-index:2147483000;background:rgba(34,29,24,.52);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:1.25rem;animation:zsFbFade .2s ease forwards;}
+  @keyframes zsFbFade{from{opacity:0;}to{opacity:1;}}
+  @keyframes zsFbPop{from{opacity:0;transform:translateY(12px) scale(.97);}to{opacity:1;transform:translateY(0) scale(1);}}
+  .zs-fb-modal{background:var(--zs-white);border-radius:var(--zs-r-lg);box-shadow:0 30px 80px rgba(34,29,24,.35);width:100%;max-width:440px;padding:2rem 2rem 1.8rem;position:relative;animation:zsFbPop .28s cubic-bezier(.2,.7,.2,1) forwards;font-family:var(--zs-font-body);}
+  .zs-fb-close{position:absolute;top:16px;right:16px;width:30px;height:30px;border-radius:8px;border:none;background:transparent;color:var(--zs-muted);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;}
+  .zs-fb-close:hover{background:var(--zs-bg);color:var(--zs-dark);}
+  .zs-fb-modal-title{font-family:var(--zs-font-display);font-size:21px;font-weight:600;color:var(--zs-dark);letter-spacing:-.01em;margin:0 0 6px;padding-right:28px;}
+  .zs-fb-modal-sub{font-size:13.5px;color:var(--zs-muted);line-height:1.55;margin:0 0 20px;}
+  .zs-stars{display:flex;gap:8px;justify-content:center;margin:6px 0 18px;}
+  .zs-star-btn{background:none;border:none;cursor:pointer;padding:4px;line-height:0;color:var(--zs-border);transition:transform .12s,color .12s;}
+  .zs-star-btn:hover{transform:scale(1.14);}
+  .zs-star-btn.on{color:#e29e49;}
+  .zs-fb-textarea{width:100%;box-sizing:border-box;min-height:120px;resize:vertical;border:1.5px solid var(--zs-border);border-radius:var(--zs-r-md);padding:13px 15px;font-family:inherit;font-size:14px;color:var(--zs-dark);background:var(--zs-bg);transition:border-color .15s,box-shadow .15s;margin-bottom:16px;}
+  .zs-fb-textarea:focus{outline:none;border-color:var(--zs-clay);box-shadow:0 0 0 3px var(--zs-clay-soft);background:var(--zs-white);}
+  .zs-fb-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center;}
+  .zs-fb-btn{padding:11px 20px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;border:none;transition:transform .15s,background .15s,box-shadow .15s,opacity .15s;display:inline-flex;align-items:center;gap:7px;text-decoration:none;}
+  .zs-fb-btn.primary{background:var(--zs-clay);color:#fff;box-shadow:var(--zs-shadow-clay);}
+  .zs-fb-btn.primary:hover{transform:translateY(-2px);background:var(--zs-clay-deep);}
+  .zs-fb-btn.primary:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none;}
+  .zs-fb-btn.ghost{background:transparent;color:var(--zs-muted);border:1px solid var(--zs-border);}
+  .zs-fb-btn.ghost:hover{border-color:var(--zs-camel);color:var(--zs-dark);}
+  .zs-fb-celebrate{width:64px;height:64px;border-radius:50%;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(150deg,var(--zs-camel),var(--zs-clay-deep));box-shadow:0 10px 28px rgba(169,139,118,.35);}
+  .zs-fb-center{text-align:center;}
+  .zs-fb-thanks-ico{width:56px;height:56px;border-radius:50%;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;color:var(--zs-sage-deep);background:var(--zs-sage-soft);}
 `;
 
 // ─── Decorative flowing dot-wave for the hero (right side) ────────────────────
@@ -358,8 +426,211 @@ const RECOMMENDED_APPS = [
   },
 ];
 
+// ─── Star row ─────────────────────────────────────────────────────────────────
+// Module-level so it keeps a stable identity across renders (defining it inside
+// the modal would remount it on every hover and drop the hover state).
+// eslint-disable-next-line react/prop-types
+function StarRow({ value, hover, onPick, onHover, interactive }) {
+  return (
+    <div className="zs-stars" onMouseLeave={interactive ? () => onHover(0) : undefined}>
+      {[1, 2, 3, 4, 5].map((n) => {
+        const active = (interactive ? hover || value : value) >= n;
+        return (
+          <button
+            key={n}
+            type="button"
+            className={`zs-star-btn${active ? " on" : ""}`}
+            onClick={interactive ? () => onPick(n) : undefined}
+            onMouseEnter={interactive ? () => onHover(n) : undefined}
+            aria-label={`${n} star${n > 1 ? "s" : ""}`}
+            disabled={!interactive}
+          >
+            <Star size={30} fill={active ? "#e29e49" : "none"} strokeWidth={1.75} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Feedback rating modal ────────────────────────────────────────────────────
+// Flow: pick stars → 1-3 asks for a written note that we email to the team;
+// 4-5 invites the merchant to leave a public App Store review.
+// eslint-disable-next-line react/prop-types
+function FeedbackModal({ onClose }) {
+  const fetcher = useFetcher();
+  const [step, setStep] = useState("rate"); // rate | write | rock | thanks
+  const [rating, setRating] = useState(0);
+  const [hover, setHover] = useState(0);
+  const [message, setMessage] = useState("");
+
+  const submitting = fetcher.state !== "idle";
+
+  // Advance to the thank-you screen once a written submission succeeds.
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.ok && step === "write") {
+      setStep("thanks");
+    }
+  }, [fetcher.state, fetcher.data, step]);
+
+  // Close on Escape for keyboard users.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // Lock background scroll while the modal is open.
+  useEffect(() => {
+    const { body, documentElement: html } = document;
+    const prevBody = body.style.overflow;
+    const prevHtml = html.style.overflow;
+    body.style.overflow = "hidden";
+    html.style.overflow = "hidden";
+    return () => {
+      body.style.overflow = prevBody;
+      html.style.overflow = prevHtml;
+    };
+  }, []);
+
+  const pickRating = (n) => {
+    setRating(n);
+    setStep(n <= 3 ? "write" : "rock");
+  };
+
+  const sendWritten = () => {
+    fetcher.submit(
+      { intent: "feedback", rating: String(rating), message },
+      { method: "post" },
+    );
+  };
+
+  const shareOnAppStore = () => {
+    window.open(APP_STORE_REVIEW_URL, "_blank", "noopener,noreferrer");
+    onClose();
+  };
+
+  return (
+    // Backdrop click-to-close is a convenience; Escape and the ✕ button provide
+    // the keyboard-accessible paths.
+    // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions
+    <div
+      className="zs-fb-overlay"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Share your feedback"
+    >
+      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
+      <div className="zs-fb-modal" onClick={(e) => e.stopPropagation()}>
+        <button className="zs-fb-close" onClick={onClose} aria-label="Close">
+          <X size={18} />
+        </button>
+
+        {step === "rate" && (
+          <>
+            <h3 className="zs-fb-modal-title">What do you think of ZS StoreSync?</h3>
+            <p className="zs-fb-modal-sub">
+              Your rating helps us keep improving. It only takes a moment.
+            </p>
+            <StarRow
+              value={rating}
+              hover={hover}
+              onPick={pickRating}
+              onHover={setHover}
+              interactive
+            />
+          </>
+        )}
+
+        {step === "write" && (
+          <>
+            <h3 className="zs-fb-modal-title">Help us do better</h3>
+            <p className="zs-fb-modal-sub">
+              Sorry it&apos;s not a 5-star experience yet. Tell us what went wrong
+              or what&apos;s missing — it goes straight to our team.
+            </p>
+            <StarRow value={rating} interactive={false} />
+            <textarea
+              className="zs-fb-textarea"
+              placeholder="Write your feedback…"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              // Focusing the note field on open is expected in a modal context.
+              // eslint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+            />
+            <div className="zs-fb-actions">
+              <button className="zs-fb-btn ghost" onClick={onClose} type="button">
+                Cancel
+              </button>
+              <button
+                className="zs-fb-btn primary"
+                onClick={sendWritten}
+                disabled={submitting || message.trim().length === 0}
+                type="button"
+              >
+                {submitting ? "Sending…" : "Send feedback"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === "rock" && (
+          <div className="zs-fb-center">
+            <div className="zs-fb-celebrate">
+              <PartyPopper size={30} />
+            </div>
+            <h3 className="zs-fb-modal-title" style={{ paddingRight: 0 }}>
+              You rock! 🎉
+            </h3>
+            <p className="zs-fb-modal-sub">
+              It&apos;s awesome to see you succeed with ZS StoreSync. Just one
+              click to share a quick review on the Shopify App Store — a small
+              click for you, a big leap for us.
+            </p>
+            <div className="zs-fb-actions" style={{ justifyContent: "center" }}>
+              <button className="zs-fb-btn ghost" onClick={onClose} type="button">
+                Maybe later
+              </button>
+              <button className="zs-fb-btn primary" onClick={shareOnAppStore} type="button">
+                Yes, share on App Store
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === "thanks" && (
+          <div className="zs-fb-center">
+            <div className="zs-fb-thanks-ico">
+              <MessageSquareHeart size={26} />
+            </div>
+            <h3 className="zs-fb-modal-title" style={{ paddingRight: 0 }}>
+              Thank you!
+            </h3>
+            <p className="zs-fb-modal-sub">
+              We&apos;ve received your feedback and our team will take a close
+              look. We appreciate you helping us improve.
+            </p>
+            <div className="zs-fb-actions" style={{ justifyContent: "center" }}>
+              <button className="zs-fb-btn primary" onClick={onClose} type="button">
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Index() {
   const { stats, plan, jobs } = useLoaderData();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  // Session-only dismissal — the banner returns on the next page load.
+  const [feedbackDismissed, setFeedbackDismissed] = useState(false);
 
   const sliderRef = useRef(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -615,6 +886,38 @@ export default function Index() {
               </div>
             </div>
 
+            {!feedbackDismissed && (
+              <div className="zs-reveal zs-d7">
+                <div className="zs-fb-banner">
+                  <button
+                    className="zs-fb-banner-close"
+                    type="button"
+                    onClick={() => setFeedbackDismissed(true)}
+                    aria-label="Dismiss feedback"
+                  >
+                    <X size={16} />
+                  </button>
+                  <div className="zs-fb-icon"><MessageSquareHeart size={28} /></div>
+                  <div className="zs-fb-copy">
+                    <div className="zs-fb-eyebrow">Your opinion matters</div>
+                    <h2 className="zs-fb-title">Enjoying ZS StoreSync?</h2>
+                    <p className="zs-fb-sub">
+                      We value your opinion — it helps us evaluate our performance and
+                      make sure we&apos;re meeting your expectations. Share a quick rating
+                      and let us know how we&apos;re doing.
+                    </p>
+                  </div>
+                  <button
+                    className="zs-fb-cta"
+                    type="button"
+                    onClick={() => setFeedbackOpen(true)}
+                  >
+                    <Star size={16} /> Give feedback
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="zs-reveal zs-d7">
               <section className="more-apps">
                 <div className="ma-head">
@@ -675,6 +978,8 @@ export default function Index() {
             </div>
 
           </div>
+
+          {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
         </div>
       </div>
     </s-page>

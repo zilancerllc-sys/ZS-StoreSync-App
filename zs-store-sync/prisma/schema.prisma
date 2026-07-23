@@ -130,3 +130,18 @@ model ShopSecret {
 
   @@index([connectionCode])
 }
+
+// ── Merchant feedback / in-app review prompt ─────────────────────────────────
+model Feedback {
+  id        String   @id @default(cuid())
+  shop      String
+  rating    Int      // 1–5 stars
+  // Written feedback — only collected for low ratings (1–3 stars)
+  message   String?  @db.Text
+  // whether we successfully emailed this feedback to the team
+  emailed   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([shop])
+  @@index([shop, createdAt])
+}
