@@ -116,7 +116,7 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode }) {
     const { admin: source } = await unauthenticated.admin(sourceShop);
     const { admin: target } = await unauthenticated.admin(shop);
 
-    const result = await runMigration({ source, target, types, limits, onLog });
+    const result = await runMigration({ source, target, types, limits, mode, onLog });
     await consumeQuota(shop, result.consumedByType);
 
     const summary =

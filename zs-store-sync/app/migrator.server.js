@@ -86,15 +86,19 @@ const Q_PRODUCTS = `#graphql
       pageInfo { hasNextPage endCursor }
       edges { node {
         id title handle descriptionHtml vendor productType tags status templateSuffix
+        isGiftCard requiresSellingPlan
+        seo { title description }
         options { name values }
         variants(first: 100) {
           edges { node {
             sku title price compareAtPrice barcode
             inventoryQuantity
+            inventoryItem { measurement { weight { value unit } } }
             selectedOptions { name value }
           } }
         }
         images(first: 50) { edges { node { src altText } } }
+        metafields(first: 50) { edges { node { namespace key value type } } }
       } }
     }
   }`;
@@ -117,6 +121,14 @@ const M_PRODUCT_CREATE = `#graphql
         id handle
         variants(first: 1) { edges { node { id } } }
       }
+      userErrors { field message }
+    }
+  }`;
+
+const M_PRODUCT_UPDATE = `#graphql
+  mutation UpdateProduct($product: ProductUpdateInput!) {
+    productUpdate(product: $product) {
+      product { id handle }
       userErrors { field message }
     }
   }`;
@@ -152,7 +164,11 @@ function variantBulkInput(v, withOptionValues) {
     compareAtPrice: v.compareAtPrice ?? undefined,
     barcode: v.barcode ?? undefined,
   };
-  if (v.sku) input.inventoryItem = { sku: v.sku };
+  const invItem = {};
+  if (v.sku) invItem.sku = v.sku;
+  const w = v.inventoryItem?.measurement?.weight;
+  if (w?.value != null) invItem.measurement = { weight: { value: w.value, unit: w.unit } };
+  if (Object.keys(invItem).length) input.inventoryItem = invItem;
   if (withOptionValues) {
     input.optionValues = (v.selectedOptions || []).map((so) => ({
       optionName: so.name,
@@ -197,12 +213,6 @@ async function migrateProducts(ctx) {
       existing = r?.productByHandle ?? null;
     }
 
-    if (existing) {
-      counters.skipped++;
-      onLog(`↪︎ Skipped (exists): ${p.title}`);
-      continue;
-    }
-
     const realOptions = hasRealOptions(p);
     const product = {
       title: p.title,
@@ -213,6 +223,16 @@ async function migrateProducts(ctx) {
       tags: p.tags,
       status: p.status || "ACTIVE",
       templateSuffix: p.templateSuffix || null,
+      giftCard: !!p.isGiftCard,
+      requiresSellingPlan: !!p.requiresSellingPlan,
+      seo:
+        p.seo && (p.seo.title || p.seo.description)
+          ? { title: p.seo.title || undefined, description: p.seo.description || undefined }
+          : undefined,
+      metafields: (p.metafields?.edges || [])
+        .map((e) => e.node)
+        .filter((m) => m.namespace !== "app" && !/_reference$/.test(m.type || ""))
+        .map((m) => ({ namespace: m.namespace, key: m.key, value: m.value, type: m.type })),
     };
     if (realOptions) {
       product.productOptions = (p.options || []).map((o) => ({
@@ -226,6 +246,33 @@ async function migrateProducts(ctx) {
       alt: e.node.altText || "",
       mediaContentType: "IMAGE",
     }));
+
+    // EXISTING item: sync mode updates it (overwrite), migrate mode skips it.
+    if (existing) {
+      if (ctx.mode !== "sync") {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (exists): ${p.title}`);
+        continue;
+      }
+      try {
+        const upd = await gql(target, M_PRODUCT_UPDATE, {
+          product: { ...product, id: existing.id },
+        });
+        const uerrs = upd?.productUpdate?.userErrors;
+        if (uerrs?.length) {
+          counters.failed++;
+          onLog(`✕ Update failed: ${p.title} — ${uerrs[0].message}`);
+        } else {
+          counters.updated++;
+          onLog(`↻ Updated: ${p.title}`);
+        }
+      } catch (err) {
+        counters.failed++;
+        onLog(`✕ Update error: ${p.title} — ${String(err.message).slice(0, 120)}`);
+      }
+      await sleep(200);
+      continue;
+    }
 
     try {
       const data = await gql(target, M_PRODUCT_CREATE, { product, media });
@@ -252,13 +299,12 @@ async function migrateProducts(ctx) {
             });
             const verrs = vdata?.productVariantsBulkCreate?.userErrors;
             if (verrs?.length) {
-              onLog(
-                `  ⚠ Variants partial for ${p.title} — ${verrs[0].message}`,
-              );
+              onLog(`  ⚠ Variants partial for ${p.title} — ${verrs[0].message}`);
             }
           } else {
             // single default variant: update it in place with price / SKU
-            const defaultVariantId = newProduct.variants?.edges?.[0]?.node?.id;
+            const defaultVariantId =
+              newProduct.variants?.edges?.[0]?.node?.id;
             if (defaultVariantId) {
               const vdata = await gql(target, M_VARIANTS_BULK_UPDATE, {
                 productId: newProduct.id,
@@ -271,24 +317,18 @@ async function migrateProducts(ctx) {
               });
               const verrs = vdata?.productVariantsBulkUpdate?.userErrors;
               if (verrs?.length) {
-                onLog(
-                  `  ⚠ Variant update failed for ${p.title} — ${verrs[0].message}`,
-                );
+                onLog(`  ⚠ Variant update failed for ${p.title} — ${verrs[0].message}`);
               }
             }
           }
         } catch (verr) {
-          onLog(
-            `  ⚠ Variants failed for ${p.title} — ${String(verr.message).slice(0, 100)}`,
-          );
+          onLog(`  ⚠ Variants failed for ${p.title} — ${String(verr.message).slice(0, 100)}`);
         }
       }
 
       counters.created++;
       consume();
-      onLog(
-        `✓ Created: ${p.title} (${sourceVariants.length} variant${sourceVariants.length === 1 ? "" : "s"})`,
-      );
+      onLog(`✓ Created: ${p.title} (${sourceVariants.length} variant${sourceVariants.length === 1 ? "" : "s"})`);
     } catch (err) {
       counters.failed++;
       onLog(`✕ Error: ${p.title} — ${String(err.message).slice(0, 120)}`);
@@ -307,6 +347,8 @@ const Q_COLLECTIONS = `#graphql
       pageInfo { hasNextPage endCursor }
       edges { node {
         id title handle descriptionHtml templateSuffix
+        seo { title description }
+        metafields(first: 50) { edges { node { namespace key value type } } }
         image { src altText }
         ruleSet { appliedDisjunctively rules { column relation condition } }
       } }
@@ -321,6 +363,38 @@ const Q_TARGET_COLLECTION_BY_HANDLE = `#graphql
 const M_COLLECTION_CREATE = `#graphql
   mutation CreateCollection($input: CollectionInput!) {
     collectionCreate(input: $input) {
+      collection { id handle }
+      userErrors { field message }
+    }
+  }`;
+
+// #7 — manual collection membership (matched by product handle across stores)
+const Q_COLLECTION_PRODUCTS = `#graphql
+  query ColProducts($id: ID!, $cursor: String) {
+    collection(id: $id) {
+      products(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges { node { handle } }
+      }
+    }
+  }`;
+
+const Q_TARGET_PRODUCT_ID_BY_HANDLE = `#graphql
+  query TPByHandle($handle: String!) {
+    productByHandle(handle: $handle) { id }
+  }`;
+
+const M_COLLECTION_ADD_PRODUCTS = `#graphql
+  mutation AddProducts($id: ID!, $productIds: [ID!]!) {
+    collectionAddProducts(id: $id, productIds: $productIds) {
+      collection { id }
+      userErrors { field message }
+    }
+  }`;
+
+const M_COLLECTION_UPDATE = `#graphql
+  mutation UpdateCollection($input: CollectionInput!) {
+    collectionUpdate(input: $input) {
       collection { id handle }
       userErrors { field message }
     }
@@ -341,17 +415,21 @@ async function migrateCollections(ctx) {
     const r = await gql(target, Q_TARGET_COLLECTION_BY_HANDLE, {
       handle: c.handle,
     });
-    if (r?.collectionByHandle) {
-      counters.skipped++;
-      onLog(`↪︎ Skipped (exists): ${c.title}`);
-      continue;
-    }
+    const existingCol = r?.collectionByHandle || null;
 
     const input = {
       title: c.title,
       handle: c.handle,
       descriptionHtml: c.descriptionHtml,
       templateSuffix: c.templateSuffix || null,
+      seo:
+        c.seo && (c.seo.title || c.seo.description)
+          ? { title: c.seo.title || undefined, description: c.seo.description || undefined }
+          : undefined,
+      metafields: (c.metafields?.edges || [])
+        .map((e) => e.node)
+        .filter((m) => m.namespace !== "app" && !/_reference$/.test(m.type || ""))
+        .map((m) => ({ namespace: m.namespace, key: m.key, value: m.value, type: m.type })),
     };
     if (c.ruleSet) {
       input.ruleSet = {
@@ -367,6 +445,33 @@ async function migrateCollections(ctx) {
       input.image = { src: c.image.src, altText: c.image.altText || "" };
     }
 
+    // EXISTING collection: sync updates it, migrate skips it.
+    if (existingCol) {
+      if (ctx.mode !== "sync") {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (exists): ${c.title}`);
+        continue;
+      }
+      try {
+        const upd = await gql(target, M_COLLECTION_UPDATE, {
+          input: { ...input, id: existingCol.id },
+        });
+        const uerrs = upd?.collectionUpdate?.userErrors;
+        if (uerrs?.length) {
+          counters.failed++;
+          onLog(`✕ Update failed: ${c.title} — ${uerrs[0].message}`);
+        } else {
+          counters.updated++;
+          onLog(`↻ Updated: ${c.title}`);
+        }
+      } catch (err) {
+        counters.failed++;
+        onLog(`✕ Update error: ${c.title} — ${String(err.message).slice(0, 120)}`);
+      }
+      await sleep(180);
+      continue;
+    }
+
     try {
       const data = await gql(target, M_COLLECTION_CREATE, { input });
       const errs = data?.collectionCreate?.userErrors;
@@ -377,6 +482,45 @@ async function migrateCollections(ctx) {
         counters.created++;
         consume();
         onLog(`✓ Created: ${c.title}`);
+
+        // #7 — manual collection: copy product membership by handle
+        const newCollectionId = data?.collectionCreate?.collection?.id || null;
+        if (!c.ruleSet && newCollectionId) {
+          let cur = null;
+          const handles = [];
+          do {
+            const pd = await gql(source, Q_COLLECTION_PRODUCTS, { id: c.id, cursor: cur });
+            const conn = pd?.collection?.products;
+            for (const e of conn?.edges ?? []) handles.push(e.node.handle);
+            cur = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+            if (cur) await sleep(250);
+          } while (cur);
+
+          const ids = [];
+          for (const h of handles) {
+            try {
+              const tp = await gql(target, Q_TARGET_PRODUCT_ID_BY_HANDLE, { handle: h });
+              if (tp?.productByHandle?.id) ids.push(tp.productByHandle.id);
+            } catch { /* product not on target — skip */ }
+          }
+
+          for (let i = 0; i < ids.length; i += 100) {
+            const batch = ids.slice(i, i + 100);
+            if (!batch.length) continue;
+            try {
+              await gql(target, M_COLLECTION_ADD_PRODUCTS, {
+                id: newCollectionId,
+                productIds: batch,
+              });
+            } catch {
+              onLog(`  ⚠ Could not add some products to ${c.title}`);
+            }
+            await sleep(200);
+          }
+          if (handles.length) {
+            onLog(`  → linked ${ids.length}/${handles.length} products to ${c.title}`);
+          }
+        }
       }
     } catch (err) {
       counters.failed++;
@@ -393,7 +537,7 @@ const Q_PAGES = `#graphql
   query Pages($cursor: String) {
     pages(first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      edges { node { id title handle body isPublished templateSuffix } }
+      edges { node { id title handle body isPublished templateSuffix seo { title description } } }
     }
   }`;
 
@@ -403,6 +547,19 @@ const M_PAGE_CREATE = `#graphql
       page { id handle }
       userErrors { field message }
     }
+  }`;
+
+const M_PAGE_UPDATE = `#graphql
+  mutation UpdatePage($id: ID!, $page: PageUpdateInput!) {
+    pageUpdate(id: $id, page: $page) {
+      page { id handle }
+      userErrors { field message }
+    }
+  }`;
+
+const Q_TARGET_PAGE_BY_HANDLE = `#graphql
+  query PageByHandle($q: String!) {
+    pages(first: 1, query: $q) { edges { node { id handle } } }
   }`;
 
 async function migratePages(ctx) {
@@ -417,19 +574,59 @@ async function migratePages(ctx) {
       onLog("Quota reached — stopping pages.");
       break;
     }
+    const pageBody = {
+      title: pg.title,
+      handle: pg.handle,
+      body: pg.body,
+      isPublished: pg.isPublished,
+      templateSuffix: pg.templateSuffix || null,
+      seo:
+        pg.seo && (pg.seo.title || pg.seo.description)
+          ? { title: pg.seo.title || undefined, description: pg.seo.description || undefined }
+          : undefined,
+    };
+
+    // find existing page by handle
+    let existingPage = null;
     try {
-      const data = await gql(target, M_PAGE_CREATE, {
-        page: {
-          title: pg.title,
-          handle: pg.handle,
-          body: pg.body,
-          isPublished: pg.isPublished,
-          templateSuffix: pg.templateSuffix || null,
-        },
+      const pr = await gql(target, Q_TARGET_PAGE_BY_HANDLE, {
+        q: `handle:${qv(pg.handle)}`,
       });
+      existingPage = pr?.pages?.edges?.[0]?.node || null;
+    } catch { /* ignore */ }
+
+    if (existingPage) {
+      if (ctx.mode !== "sync") {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (exists): ${pg.title}`);
+        await sleep(160);
+        continue;
+      }
+      try {
+        const upd = await gql(target, M_PAGE_UPDATE, {
+          id: existingPage.id,
+          page: pageBody,
+        });
+        const uerrs = upd?.pageUpdate?.userErrors;
+        if (uerrs?.length) {
+          counters.failed++;
+          onLog(`✕ Update failed: ${pg.title} — ${uerrs[0].message}`);
+        } else {
+          counters.updated++;
+          onLog(`↻ Updated: ${pg.title}`);
+        }
+      } catch (err) {
+        counters.failed++;
+        onLog(`✕ Update error: ${pg.title} — ${String(err.message).slice(0, 120)}`);
+      }
+      await sleep(160);
+      continue;
+    }
+
+    try {
+      const data = await gql(target, M_PAGE_CREATE, { page: pageBody });
       const errs = data?.pageCreate?.userErrors;
       if (errs?.length) {
-        // likely duplicate handle → treat as skip
         counters.skipped++;
         onLog(`↪︎ Skipped: ${pg.title} — ${errs[0].message}`);
       } else {
@@ -592,16 +789,17 @@ async function migrateMetaobjects(ctx) {
         onLog(`✓ Definition ready: ${def.type}`);
       }
     } catch (err) {
-      onLog(
-        `✕ Definition error: ${def.type} — ${String(err.message).slice(0, 100)}`,
-      );
+      onLog(`✕ Definition error: ${def.type} — ${String(err.message).slice(0, 100)}`);
       continue;
     }
 
     // then copy entries
-    const objs = await fetchAll(source, Q_METAOBJECTS_BY_TYPE, "metaobjects", {
-      type: def.type,
-    });
+    const objs = await fetchAll(
+      source,
+      Q_METAOBJECTS_BY_TYPE,
+      "metaobjects",
+      { type: def.type },
+    );
     for (const o of objs) {
       if (!hasQuota()) {
         onLog("Quota reached — stopping metaobjects.");
@@ -612,7 +810,9 @@ async function migrateMetaobjects(ctx) {
           metaobject: {
             type: def.type,
             handle: o.handle,
-            fields: o.fields.map((f) => ({ key: f.key, value: f.value })),
+            fields: o.fields
+              .filter((f) => !/^gid:\/\//.test(String(f.value || "")))
+              .map((f) => ({ key: f.key, value: f.value })),
           },
         });
         const errs = data?.metaobjectCreate?.userErrors;
@@ -766,9 +966,7 @@ async function migrateCustomers(ctx) {
           onLog(`↪︎ Skipped (exists): ${c.email}`);
           continue;
         }
-      } catch {
-        /* ignore lookup errors, attempt create */
-      }
+      } catch { /* ignore lookup errors, attempt create */ }
     }
 
     const input = {
@@ -795,9 +993,7 @@ async function migrateCustomers(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(
-        `✕ Customer error: ${c.email || c.id} — ${String(err.message).slice(0, 120)}`,
-      );
+      onLog(`✕ Customer error: ${c.email || c.id} — ${String(err.message).slice(0, 120)}`);
     }
     await sleep(200);
   }
@@ -850,13 +1046,8 @@ const M_ORDER_CREATE = `#graphql
 
 // financial statuses accepted by OrderCreateOrderInput
 const ORDER_FIN_STATUS = new Set([
-  "PENDING",
-  "AUTHORIZED",
-  "PARTIALLY_PAID",
-  "PAID",
-  "PARTIALLY_REFUNDED",
-  "REFUNDED",
-  "VOIDED",
+  "PENDING", "AUTHORIZED", "PARTIALLY_PAID", "PAID",
+  "PARTIALLY_REFUNDED", "REFUNDED", "VOIDED",
 ]);
 
 async function migrateOrders(ctx) {
@@ -881,9 +1072,7 @@ async function migrateOrders(ctx) {
         onLog(`↪︎ Skipped (exists): ${o.name}`);
         continue;
       }
-    } catch {
-      /* ignore lookup errors, attempt create */
-    }
+    } catch { /* ignore lookup errors, attempt create */ }
 
     const lineItems = (o.lineItems?.edges || []).map((e) => {
       const li = e.node;
@@ -891,10 +1080,7 @@ async function migrateOrders(ctx) {
       const money = li.originalUnitPriceSet?.shopMoney;
       if (money?.amount) {
         item.priceSet = {
-          shopMoney: {
-            amount: money.amount,
-            currencyCode: money.currencyCode || o.currencyCode,
-          },
+          shopMoney: { amount: money.amount, currencyCode: money.currencyCode || o.currencyCode },
         };
       }
       return item;
@@ -924,11 +1110,7 @@ async function migrateOrders(ctx) {
     try {
       const data = await gql(target, M_ORDER_CREATE, {
         order,
-        options: {
-          sendReceipt: false,
-          sendFulfillmentReceipt: false,
-          inventoryBehaviour: "BYPASS",
-        },
+        options: { sendReceipt: false, sendFulfillmentReceipt: false, inventoryBehaviour: "BYPASS" },
       });
       const errs = data?.orderCreate?.userErrors;
       if (errs?.length) {
@@ -997,12 +1179,8 @@ const M_DRAFT_ORDER_CREATE = `#graphql
 async function migrateDraftOrders(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
   onLog("Draft orders…");
-  const drafts = await fetchAll(
-    source,
-    Q_DRAFT_ORDERS,
-    "draftOrders",
-    {},
-    (n) => onLog(`Fetched ${n} draft orders…`),
+  const drafts = await fetchAll(source, Q_DRAFT_ORDERS, "draftOrders", {}, (n) =>
+    onLog(`Fetched ${n} draft orders…`),
   );
   onLog(`Total ${drafts.length} draft orders found. Importing…`);
 
@@ -1022,9 +1200,7 @@ async function migrateDraftOrders(ctx) {
           onLog(`↪︎ Skipped (exists): ${o.name}`);
           continue;
         }
-      } catch {
-        /* ignore lookup errors, attempt create */
-      }
+      } catch { /* ignore lookup errors, attempt create */ }
     }
 
     const lineItems = (o.lineItems?.edges || []).map((e) => {
@@ -1070,9 +1246,7 @@ async function migrateDraftOrders(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(
-        `✕ Draft order error: ${o.name} — ${String(err.message).slice(0, 120)}`,
-      );
+      onLog(`✕ Draft order error: ${o.name} — ${String(err.message).slice(0, 120)}`);
     }
     await sleep(250);
   }
@@ -1097,14 +1271,23 @@ const M_REDIRECT_CREATE = `#graphql
     }
   }`;
 
+const M_REDIRECT_UPDATE = `#graphql
+  mutation UpdateRedirect($id: ID!, $redirect: UrlRedirectInput!) {
+    urlRedirectUpdate(id: $id, urlRedirect: $redirect) {
+      urlRedirect { id }
+      userErrors { field message }
+    }
+  }`;
+
+const Q_TARGET_REDIRECT_BY_PATH = `#graphql
+  query RedirectByPath($q: String!) {
+    urlRedirects(first: 1, query: $q) { edges { node { id path } } }
+  }`;
+
 async function migrateRedirects(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
-  const redirects = await fetchAll(
-    source,
-    Q_REDIRECTS,
-    "urlRedirects",
-    {},
-    (n) => onLog(`Fetched ${n} URL redirects…`),
+  const redirects = await fetchAll(source, Q_REDIRECTS, "urlRedirects", {}, (n) =>
+    onLog(`Fetched ${n} URL redirects…`),
   );
   onLog(`Total ${redirects.length} redirects found. Importing…`);
 
@@ -1113,13 +1296,49 @@ async function migrateRedirects(ctx) {
       onLog("Quota reached — stopping redirects.");
       break;
     }
+    // find existing redirect by path
+    let existingRedirect = null;
+    try {
+      const rr = await gql(target, Q_TARGET_REDIRECT_BY_PATH, {
+        q: `path:${qv(r.path)}`,
+      });
+      existingRedirect = rr?.urlRedirects?.edges?.[0]?.node || null;
+    } catch { /* ignore */ }
+
+    if (existingRedirect) {
+      if (ctx.mode !== "sync") {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (exists): ${r.path}`);
+        await sleep(120);
+        continue;
+      }
+      try {
+        const upd = await gql(target, M_REDIRECT_UPDATE, {
+          id: existingRedirect.id,
+          redirect: { path: r.path, target: r.target },
+        });
+        const uerrs = upd?.urlRedirectUpdate?.userErrors;
+        if (uerrs?.length) {
+          counters.failed++;
+          onLog(`✕ Update failed: ${r.path} — ${uerrs[0].message}`);
+        } else {
+          counters.updated++;
+          onLog(`↻ Updated: ${r.path} → ${r.target}`);
+        }
+      } catch (err) {
+        counters.failed++;
+        onLog(`✕ Update error: ${r.path} — ${String(err.message).slice(0, 120)}`);
+      }
+      await sleep(120);
+      continue;
+    }
+
     try {
       const data = await gql(target, M_REDIRECT_CREATE, {
         redirect: { path: r.path, target: r.target },
       });
       const errs = data?.urlRedirectCreate?.userErrors;
       if (errs?.length) {
-        // path already exists → skip
         counters.skipped++;
         onLog(`↪︎ Skipped: ${r.path} — ${errs[0].message}`);
       } else {
@@ -1129,9 +1348,7 @@ async function migrateRedirects(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(
-        `✕ Redirect error: ${r.path} — ${String(err.message).slice(0, 120)}`,
-      );
+      onLog(`✕ Redirect error: ${r.path} — ${String(err.message).slice(0, 120)}`);
     }
     await sleep(120);
   }
@@ -1156,6 +1373,7 @@ const Q_BLOG_ARTICLES = `#graphql
         pageInfo { hasNextPage endCursor }
         edges { node {
           id title handle body summary tags isPublished publishedAt templateSuffix
+          seo { title description }
           author { name }
           image { url altText }
         } }
@@ -1198,6 +1416,24 @@ async function fetchAllArticles(source, blogId) {
   return all;
 }
 
+const M_ARTICLE_UPDATE = `#graphql
+  mutation UpdateArticle($id: ID!, $article: ArticleUpdateInput!) {
+    articleUpdate(id: $id, article: $article) {
+      article { id handle }
+      userErrors { field message }
+    }
+  }`;
+
+const Q_TARGET_ARTICLE = `#graphql
+  query TargetArticle($id: ID!, $cursor: String) {
+    blog(id: $id) {
+      articles(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges { node { id handle } }
+      }
+    }
+  }`;
+
 async function migrateBlogPosts(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const blogs = await fetchAll(source, Q_BLOGS, "blogs", {}, (n) =>
@@ -1213,9 +1449,7 @@ async function migrateBlogPosts(ctx) {
         q: `handle:${qv(blog.handle)}`,
       });
       targetBlogId = found?.blogs?.edges?.[0]?.node?.id ?? null;
-    } catch {
-      /* ignore lookup errors */
-    }
+    } catch { /* ignore lookup errors */ }
 
     if (!targetBlogId) {
       try {
@@ -1225,9 +1459,7 @@ async function migrateBlogPosts(ctx) {
         targetBlogId = created?.blogCreate?.blog?.id ?? null;
         if (targetBlogId) onLog(`✓ Blog ready: ${blog.title}`);
       } catch (err) {
-        onLog(
-          `✕ Blog failed: ${blog.title} — ${String(err.message).slice(0, 100)}`,
-        );
+        onLog(`✕ Blog failed: ${blog.title} — ${String(err.message).slice(0, 100)}`);
       }
     } else {
       onLog(`↪︎ Blog exists: ${blog.title}`);
@@ -1236,6 +1468,19 @@ async function migrateBlogPosts(ctx) {
 
     const articles = await fetchAllArticles(source, blog.id);
     onLog(`${articles.length} article(s) in ${blog.title}…`);
+
+    // map existing target articles by handle (for sync updates)
+    const targetArticles = {};
+    try {
+      let acur = null;
+      do {
+        const ad = await gql(target, Q_TARGET_ARTICLE, { id: targetBlogId, cursor: acur });
+        const aconn = ad?.blog?.articles;
+        for (const e of aconn?.edges ?? []) targetArticles[e.node.handle] = e.node.id;
+        acur = aconn?.pageInfo?.hasNextPage ? aconn.pageInfo.endCursor : null;
+        if (acur) await sleep(200);
+      } while (acur);
+    } catch { /* ignore */ }
     for (const a of articles) {
       if (!hasQuota()) {
         onLog("Quota reached — stopping blog posts.");
@@ -1250,11 +1495,47 @@ async function migrateBlogPosts(ctx) {
         tags: a.tags || [],
         isPublished: a.isPublished,
         templateSuffix: a.templateSuffix || null,
+        publishedAt: a.publishedAt || undefined,
+        seo:
+          a.seo && (a.seo.title || a.seo.description)
+            ? { title: a.seo.title || undefined, description: a.seo.description || undefined }
+            : undefined,
         author: a.author?.name ? { name: a.author.name } : undefined,
       };
       if (a.image?.url) {
         article.image = { url: a.image.url, altText: a.image.altText || "" };
       }
+      const existingArticleId = targetArticles[a.handle];
+      if (existingArticleId) {
+        if (ctx.mode !== "sync") {
+          counters.skipped++;
+          onLog(`↪︎ Skipped (exists): ${a.title}`);
+          await sleep(160);
+          continue;
+        }
+        try {
+          // articleUpdate doesn't take blogId; drop it from the payload
+          const { blogId, ...articleNoBlorg } = article;
+          const upd = await gql(target, M_ARTICLE_UPDATE, {
+            id: existingArticleId,
+            article: articleNoBlorg,
+          });
+          const uerrs = upd?.articleUpdate?.userErrors;
+          if (uerrs?.length) {
+            counters.failed++;
+            onLog(`✕ Update failed: ${a.title} — ${uerrs[0].message}`);
+          } else {
+            counters.updated++;
+            onLog(`↻ Updated: ${a.title}`);
+          }
+        } catch (err) {
+          counters.failed++;
+          onLog(`✕ Update error: ${a.title} — ${String(err.message).slice(0, 120)}`);
+        }
+        await sleep(160);
+        continue;
+      }
+
       try {
         const data = await gql(target, M_ARTICLE_CREATE, { article });
         const errs = data?.articleCreate?.userErrors;
@@ -1268,9 +1549,7 @@ async function migrateBlogPosts(ctx) {
         }
       } catch (err) {
         counters.failed++;
-        onLog(
-          `✕ Article error: ${a.title} — ${String(err.message).slice(0, 120)}`,
-        );
+        onLog(`✕ Article error: ${a.title} — ${String(err.message).slice(0, 120)}`);
       }
       await sleep(160);
     }
@@ -1293,7 +1572,9 @@ const Q_MENUS = `#graphql
         id title handle
         items { id title type url tags
           items { id title type url tags
-            items { id title type url tags }
+            items { id title type url tags
+              items { id title type url tags }
+            }
           }
         }
       } }
@@ -1315,13 +1596,7 @@ const M_MENU_CREATE = `#graphql
 
 // types that need a resourceId we can't map across stores → fall back to URL
 const RESOURCE_MENU_TYPES = new Set([
-  "COLLECTION",
-  "PRODUCT",
-  "PAGE",
-  "BLOG",
-  "ARTICLE",
-  "CATALOG",
-  "SHOP_POLICY",
+  "COLLECTION", "PRODUCT", "PAGE", "BLOG", "ARTICLE", "CATALOG", "SHOP_POLICY",
 ]);
 
 function mapMenuItem(item) {
@@ -1362,9 +1637,7 @@ async function migrateMenus(ctx) {
         onLog(`↪︎ Skipped (exists): ${m.title}`);
         continue;
       }
-    } catch {
-      /* ignore lookup errors, attempt create */
-    }
+    } catch { /* ignore lookup errors, attempt create */ }
 
     try {
       const data = await gql(target, M_MENU_CREATE, {
@@ -1576,7 +1849,7 @@ function discountValueInput(value) {
   if (!value) return null;
   if (value.__typename === "DiscountPercentage") {
     // Shopify expects a 0–1 fraction for percentage
-    return { percentage: value.percentage ?? 0 };
+    return { percentage: (value.percentage ?? 0) };
   }
   if (value.__typename === "DiscountAmount") {
     return {
@@ -1646,9 +1919,7 @@ async function migrateDiscounts(ctx) {
             startsAt: d.startsAt,
             endsAt: d.endsAt || null,
             customerGets: { value, items: { all: true } },
-            minimumRequirement: {
-              quantity: { greaterThanOrEqualToQuantity: "1" },
-            },
+            minimumRequirement: { quantity: { greaterThanOrEqualToQuantity: "1" } },
           },
         });
         const errs = data?.discountAutomaticBasicCreate?.userErrors;
@@ -1763,9 +2034,7 @@ async function migrateDiscounts(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(
-        `✕ Discount error: ${d?.title || "?"} — ${String(err.message).slice(0, 120)}`,
-      );
+      onLog(`✕ Discount error: ${d?.title || "?"} — ${String(err.message).slice(0, 120)}`);
     }
     await sleep(220);
   }
@@ -1794,8 +2063,8 @@ const RUNNERS = {
 const RUN_ORDER = [
   "metafields",
   "metaobjects",
-  "collections",
   "products",
+  "collections",
   "pages",
   "blogPosts",
   "files",
@@ -1820,6 +2089,7 @@ export async function runMigration({
   target,
   types,
   limits = {},
+  mode = "migrate",
   onLog = () => {},
 }) {
   const counters = { created: 0, updated: 0, skipped: 0, failed: 0 };
@@ -1846,6 +2116,7 @@ export async function runMigration({
     target,
     onLog,
     counters,
+    mode,
     hasQuota: () => hasQuota(currentType),
     consume: () => consume(currentType),
     setType: (t) => {
@@ -1873,8 +2144,8 @@ export async function runMigration({
     ...counters,
     total,
     consumed: consumedTotal,
-    consumedByType: consumed, // { products: 5, collections: 3, ... }
-    summary: `${counters.created} created · ${counters.skipped} skipped · ${counters.failed} failed`,
+    consumedByType: consumed,   // { products: 5, collections: 3, ... }
+    summary: `${counters.created} created · ${counters.updated} updated · ${counters.skipped} skipped · ${counters.failed} failed`,
   };
 }
 
