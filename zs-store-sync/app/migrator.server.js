@@ -85,7 +85,7 @@ const Q_PRODUCTS = `#graphql
     products(first: 25, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       edges { node {
-        id title handle descriptionHtml vendor productType tags status
+        id title handle descriptionHtml vendor productType tags status templateSuffix
         options { name values }
         variants(first: 100) {
           edges { node {
@@ -212,6 +212,7 @@ async function migrateProducts(ctx) {
       productType: p.productType,
       tags: p.tags,
       status: p.status || "ACTIVE",
+      templateSuffix: p.templateSuffix || null,
     };
     if (realOptions) {
       product.productOptions = (p.options || []).map((o) => ({
@@ -251,12 +252,13 @@ async function migrateProducts(ctx) {
             });
             const verrs = vdata?.productVariantsBulkCreate?.userErrors;
             if (verrs?.length) {
-              onLog(`  ⚠ Variants partial for ${p.title} — ${verrs[0].message}`);
+              onLog(
+                `  ⚠ Variants partial for ${p.title} — ${verrs[0].message}`,
+              );
             }
           } else {
             // single default variant: update it in place with price / SKU
-            const defaultVariantId =
-              newProduct.variants?.edges?.[0]?.node?.id;
+            const defaultVariantId = newProduct.variants?.edges?.[0]?.node?.id;
             if (defaultVariantId) {
               const vdata = await gql(target, M_VARIANTS_BULK_UPDATE, {
                 productId: newProduct.id,
@@ -269,18 +271,24 @@ async function migrateProducts(ctx) {
               });
               const verrs = vdata?.productVariantsBulkUpdate?.userErrors;
               if (verrs?.length) {
-                onLog(`  ⚠ Variant update failed for ${p.title} — ${verrs[0].message}`);
+                onLog(
+                  `  ⚠ Variant update failed for ${p.title} — ${verrs[0].message}`,
+                );
               }
             }
           }
         } catch (verr) {
-          onLog(`  ⚠ Variants failed for ${p.title} — ${String(verr.message).slice(0, 100)}`);
+          onLog(
+            `  ⚠ Variants failed for ${p.title} — ${String(verr.message).slice(0, 100)}`,
+          );
         }
       }
 
       counters.created++;
       consume();
-      onLog(`✓ Created: ${p.title} (${sourceVariants.length} variant${sourceVariants.length === 1 ? "" : "s"})`);
+      onLog(
+        `✓ Created: ${p.title} (${sourceVariants.length} variant${sourceVariants.length === 1 ? "" : "s"})`,
+      );
     } catch (err) {
       counters.failed++;
       onLog(`✕ Error: ${p.title} — ${String(err.message).slice(0, 120)}`);
@@ -298,7 +306,7 @@ const Q_COLLECTIONS = `#graphql
     collections(first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       edges { node {
-        id title handle descriptionHtml
+        id title handle descriptionHtml templateSuffix
         image { src altText }
         ruleSet { appliedDisjunctively rules { column relation condition } }
       } }
@@ -343,6 +351,7 @@ async function migrateCollections(ctx) {
       title: c.title,
       handle: c.handle,
       descriptionHtml: c.descriptionHtml,
+      templateSuffix: c.templateSuffix || null,
     };
     if (c.ruleSet) {
       input.ruleSet = {
@@ -384,7 +393,7 @@ const Q_PAGES = `#graphql
   query Pages($cursor: String) {
     pages(first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      edges { node { id title handle body isPublished } }
+      edges { node { id title handle body isPublished templateSuffix } }
     }
   }`;
 
@@ -415,6 +424,7 @@ async function migratePages(ctx) {
           handle: pg.handle,
           body: pg.body,
           isPublished: pg.isPublished,
+          templateSuffix: pg.templateSuffix || null,
         },
       });
       const errs = data?.pageCreate?.userErrors;
@@ -582,17 +592,16 @@ async function migrateMetaobjects(ctx) {
         onLog(`✓ Definition ready: ${def.type}`);
       }
     } catch (err) {
-      onLog(`✕ Definition error: ${def.type} — ${String(err.message).slice(0, 100)}`);
+      onLog(
+        `✕ Definition error: ${def.type} — ${String(err.message).slice(0, 100)}`,
+      );
       continue;
     }
 
     // then copy entries
-    const objs = await fetchAll(
-      source,
-      Q_METAOBJECTS_BY_TYPE,
-      "metaobjects",
-      { type: def.type },
-    );
+    const objs = await fetchAll(source, Q_METAOBJECTS_BY_TYPE, "metaobjects", {
+      type: def.type,
+    });
     for (const o of objs) {
       if (!hasQuota()) {
         onLog("Quota reached — stopping metaobjects.");
@@ -757,7 +766,9 @@ async function migrateCustomers(ctx) {
           onLog(`↪︎ Skipped (exists): ${c.email}`);
           continue;
         }
-      } catch { /* ignore lookup errors, attempt create */ }
+      } catch {
+        /* ignore lookup errors, attempt create */
+      }
     }
 
     const input = {
@@ -784,7 +795,9 @@ async function migrateCustomers(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(`✕ Customer error: ${c.email || c.id} — ${String(err.message).slice(0, 120)}`);
+      onLog(
+        `✕ Customer error: ${c.email || c.id} — ${String(err.message).slice(0, 120)}`,
+      );
     }
     await sleep(200);
   }
@@ -837,8 +850,13 @@ const M_ORDER_CREATE = `#graphql
 
 // financial statuses accepted by OrderCreateOrderInput
 const ORDER_FIN_STATUS = new Set([
-  "PENDING", "AUTHORIZED", "PARTIALLY_PAID", "PAID",
-  "PARTIALLY_REFUNDED", "REFUNDED", "VOIDED",
+  "PENDING",
+  "AUTHORIZED",
+  "PARTIALLY_PAID",
+  "PAID",
+  "PARTIALLY_REFUNDED",
+  "REFUNDED",
+  "VOIDED",
 ]);
 
 async function migrateOrders(ctx) {
@@ -863,7 +881,9 @@ async function migrateOrders(ctx) {
         onLog(`↪︎ Skipped (exists): ${o.name}`);
         continue;
       }
-    } catch { /* ignore lookup errors, attempt create */ }
+    } catch {
+      /* ignore lookup errors, attempt create */
+    }
 
     const lineItems = (o.lineItems?.edges || []).map((e) => {
       const li = e.node;
@@ -871,7 +891,10 @@ async function migrateOrders(ctx) {
       const money = li.originalUnitPriceSet?.shopMoney;
       if (money?.amount) {
         item.priceSet = {
-          shopMoney: { amount: money.amount, currencyCode: money.currencyCode || o.currencyCode },
+          shopMoney: {
+            amount: money.amount,
+            currencyCode: money.currencyCode || o.currencyCode,
+          },
         };
       }
       return item;
@@ -901,7 +924,11 @@ async function migrateOrders(ctx) {
     try {
       const data = await gql(target, M_ORDER_CREATE, {
         order,
-        options: { sendReceipt: false, sendFulfillmentReceipt: false, inventoryBehaviour: "BYPASS" },
+        options: {
+          sendReceipt: false,
+          sendFulfillmentReceipt: false,
+          inventoryBehaviour: "BYPASS",
+        },
       });
       const errs = data?.orderCreate?.userErrors;
       if (errs?.length) {
@@ -970,8 +997,12 @@ const M_DRAFT_ORDER_CREATE = `#graphql
 async function migrateDraftOrders(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
   onLog("Draft orders…");
-  const drafts = await fetchAll(source, Q_DRAFT_ORDERS, "draftOrders", {}, (n) =>
-    onLog(`Fetched ${n} draft orders…`),
+  const drafts = await fetchAll(
+    source,
+    Q_DRAFT_ORDERS,
+    "draftOrders",
+    {},
+    (n) => onLog(`Fetched ${n} draft orders…`),
   );
   onLog(`Total ${drafts.length} draft orders found. Importing…`);
 
@@ -991,7 +1022,9 @@ async function migrateDraftOrders(ctx) {
           onLog(`↪︎ Skipped (exists): ${o.name}`);
           continue;
         }
-      } catch { /* ignore lookup errors, attempt create */ }
+      } catch {
+        /* ignore lookup errors, attempt create */
+      }
     }
 
     const lineItems = (o.lineItems?.edges || []).map((e) => {
@@ -1037,7 +1070,9 @@ async function migrateDraftOrders(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(`✕ Draft order error: ${o.name} — ${String(err.message).slice(0, 120)}`);
+      onLog(
+        `✕ Draft order error: ${o.name} — ${String(err.message).slice(0, 120)}`,
+      );
     }
     await sleep(250);
   }
@@ -1064,8 +1099,12 @@ const M_REDIRECT_CREATE = `#graphql
 
 async function migrateRedirects(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
-  const redirects = await fetchAll(source, Q_REDIRECTS, "urlRedirects", {}, (n) =>
-    onLog(`Fetched ${n} URL redirects…`),
+  const redirects = await fetchAll(
+    source,
+    Q_REDIRECTS,
+    "urlRedirects",
+    {},
+    (n) => onLog(`Fetched ${n} URL redirects…`),
   );
   onLog(`Total ${redirects.length} redirects found. Importing…`);
 
@@ -1090,7 +1129,9 @@ async function migrateRedirects(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(`✕ Redirect error: ${r.path} — ${String(err.message).slice(0, 120)}`);
+      onLog(
+        `✕ Redirect error: ${r.path} — ${String(err.message).slice(0, 120)}`,
+      );
     }
     await sleep(120);
   }
@@ -1114,7 +1155,7 @@ const Q_BLOG_ARTICLES = `#graphql
       articles(first: 50, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         edges { node {
-          id title handle body summary tags isPublished publishedAt
+          id title handle body summary tags isPublished publishedAt templateSuffix
           author { name }
           image { url altText }
         } }
@@ -1172,7 +1213,9 @@ async function migrateBlogPosts(ctx) {
         q: `handle:${qv(blog.handle)}`,
       });
       targetBlogId = found?.blogs?.edges?.[0]?.node?.id ?? null;
-    } catch { /* ignore lookup errors */ }
+    } catch {
+      /* ignore lookup errors */
+    }
 
     if (!targetBlogId) {
       try {
@@ -1182,7 +1225,9 @@ async function migrateBlogPosts(ctx) {
         targetBlogId = created?.blogCreate?.blog?.id ?? null;
         if (targetBlogId) onLog(`✓ Blog ready: ${blog.title}`);
       } catch (err) {
-        onLog(`✕ Blog failed: ${blog.title} — ${String(err.message).slice(0, 100)}`);
+        onLog(
+          `✕ Blog failed: ${blog.title} — ${String(err.message).slice(0, 100)}`,
+        );
       }
     } else {
       onLog(`↪︎ Blog exists: ${blog.title}`);
@@ -1204,6 +1249,7 @@ async function migrateBlogPosts(ctx) {
         summary: a.summary || undefined,
         tags: a.tags || [],
         isPublished: a.isPublished,
+        templateSuffix: a.templateSuffix || null,
         author: a.author?.name ? { name: a.author.name } : undefined,
       };
       if (a.image?.url) {
@@ -1222,7 +1268,9 @@ async function migrateBlogPosts(ctx) {
         }
       } catch (err) {
         counters.failed++;
-        onLog(`✕ Article error: ${a.title} — ${String(err.message).slice(0, 120)}`);
+        onLog(
+          `✕ Article error: ${a.title} — ${String(err.message).slice(0, 120)}`,
+        );
       }
       await sleep(160);
     }
@@ -1267,7 +1315,13 @@ const M_MENU_CREATE = `#graphql
 
 // types that need a resourceId we can't map across stores → fall back to URL
 const RESOURCE_MENU_TYPES = new Set([
-  "COLLECTION", "PRODUCT", "PAGE", "BLOG", "ARTICLE", "CATALOG", "SHOP_POLICY",
+  "COLLECTION",
+  "PRODUCT",
+  "PAGE",
+  "BLOG",
+  "ARTICLE",
+  "CATALOG",
+  "SHOP_POLICY",
 ]);
 
 function mapMenuItem(item) {
@@ -1308,7 +1362,9 @@ async function migrateMenus(ctx) {
         onLog(`↪︎ Skipped (exists): ${m.title}`);
         continue;
       }
-    } catch { /* ignore lookup errors, attempt create */ }
+    } catch {
+      /* ignore lookup errors, attempt create */
+    }
 
     try {
       const data = await gql(target, M_MENU_CREATE, {
@@ -1520,7 +1576,7 @@ function discountValueInput(value) {
   if (!value) return null;
   if (value.__typename === "DiscountPercentage") {
     // Shopify expects a 0–1 fraction for percentage
-    return { percentage: (value.percentage ?? 0) };
+    return { percentage: value.percentage ?? 0 };
   }
   if (value.__typename === "DiscountAmount") {
     return {
@@ -1590,7 +1646,9 @@ async function migrateDiscounts(ctx) {
             startsAt: d.startsAt,
             endsAt: d.endsAt || null,
             customerGets: { value, items: { all: true } },
-            minimumRequirement: { quantity: { greaterThanOrEqualToQuantity: "1" } },
+            minimumRequirement: {
+              quantity: { greaterThanOrEqualToQuantity: "1" },
+            },
           },
         });
         const errs = data?.discountAutomaticBasicCreate?.userErrors;
@@ -1705,7 +1763,9 @@ async function migrateDiscounts(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(`✕ Discount error: ${d?.title || "?"} — ${String(err.message).slice(0, 120)}`);
+      onLog(
+        `✕ Discount error: ${d?.title || "?"} — ${String(err.message).slice(0, 120)}`,
+      );
     }
     await sleep(220);
   }
@@ -1813,7 +1873,7 @@ export async function runMigration({
     ...counters,
     total,
     consumed: consumedTotal,
-    consumedByType: consumed,   // { products: 5, collections: 3, ... }
+    consumedByType: consumed, // { products: 5, collections: 3, ... }
     summary: `${counters.created} created · ${counters.skipped} skipped · ${counters.failed} failed`,
   };
 }
