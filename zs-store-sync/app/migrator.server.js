@@ -514,7 +514,7 @@ const Q_PAGES = `#graphql
   query Pages($cursor: String) {
     pages(first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      edges { node { id title handle body isPublished templateSuffix seo { title description } } }
+      edges { node { id title handle body isPublished publishedAt templateSuffix seo { title description } } }
     }
   }`;
 
@@ -545,6 +545,7 @@ async function migratePages(ctx) {
           handle: pg.handle,
           body: pg.body,
           isPublished: pg.isPublished,
+          publishDate: pg.publishedAt || undefined,
           templateSuffix: pg.templateSuffix || null,
           seo:
             pg.seo && (pg.seo.title || pg.seo.description)
