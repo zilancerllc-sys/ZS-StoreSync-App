@@ -167,7 +167,8 @@ function variantBulkInput(v, withOptionValues) {
   const invItem = {};
   if (v.sku) invItem.sku = v.sku;
   const w = v.inventoryItem?.measurement?.weight;
-  if (w?.value != null) invItem.measurement = { weight: { value: w.value, unit: w.unit } };
+  if (w?.value != null)
+    invItem.measurement = { weight: { value: w.value, unit: w.unit } };
   if (Object.keys(invItem).length) input.inventoryItem = invItem;
   if (withOptionValues) {
     input.optionValues = (v.selectedOptions || []).map((so) => ({
@@ -227,12 +228,22 @@ async function migrateProducts(ctx) {
       requiresSellingPlan: !!p.requiresSellingPlan,
       seo:
         p.seo && (p.seo.title || p.seo.description)
-          ? { title: p.seo.title || undefined, description: p.seo.description || undefined }
+          ? {
+              title: p.seo.title || undefined,
+              description: p.seo.description || undefined,
+            }
           : undefined,
       metafields: (p.metafields?.edges || [])
         .map((e) => e.node)
-        .filter((m) => m.namespace !== "app" && !/_reference$/.test(m.type || ""))
-        .map((m) => ({ namespace: m.namespace, key: m.key, value: m.value, type: m.type })),
+        .filter(
+          (m) => m.namespace !== "app" && !/_reference$/.test(m.type || ""),
+        )
+        .map((m) => ({
+          namespace: m.namespace,
+          key: m.key,
+          value: m.value,
+          type: m.type,
+        })),
     };
     if (realOptions) {
       product.productOptions = (p.options || []).map((o) => ({
@@ -268,13 +279,9 @@ async function migrateProducts(ctx) {
         }
       } catch (err) {
         counters.failed++;
-<<<<<<< HEAD
-        onLog(`✕ Update error: ${p.title} — ${String(err.message).slice(0, 120)}`);
-=======
         onLog(
           `✕ Update error: ${p.title} — ${String(err.message).slice(0, 120)}`,
         );
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
       }
       await sleep(200);
       continue;
@@ -305,12 +312,13 @@ async function migrateProducts(ctx) {
             });
             const verrs = vdata?.productVariantsBulkCreate?.userErrors;
             if (verrs?.length) {
-              onLog(`  ⚠ Variants partial for ${p.title} — ${verrs[0].message}`);
+              onLog(
+                `  ⚠ Variants partial for ${p.title} — ${verrs[0].message}`,
+              );
             }
           } else {
             // single default variant: update it in place with price / SKU
-            const defaultVariantId =
-              newProduct.variants?.edges?.[0]?.node?.id;
+            const defaultVariantId = newProduct.variants?.edges?.[0]?.node?.id;
             if (defaultVariantId) {
               const vdata = await gql(target, M_VARIANTS_BULK_UPDATE, {
                 productId: newProduct.id,
@@ -323,18 +331,24 @@ async function migrateProducts(ctx) {
               });
               const verrs = vdata?.productVariantsBulkUpdate?.userErrors;
               if (verrs?.length) {
-                onLog(`  ⚠ Variant update failed for ${p.title} — ${verrs[0].message}`);
+                onLog(
+                  `  ⚠ Variant update failed for ${p.title} — ${verrs[0].message}`,
+                );
               }
             }
           }
         } catch (verr) {
-          onLog(`  ⚠ Variants failed for ${p.title} — ${String(verr.message).slice(0, 100)}`);
+          onLog(
+            `  ⚠ Variants failed for ${p.title} — ${String(verr.message).slice(0, 100)}`,
+          );
         }
       }
 
       counters.created++;
       consume();
-      onLog(`✓ Created: ${p.title} (${sourceVariants.length} variant${sourceVariants.length === 1 ? "" : "s"})`);
+      onLog(
+        `✓ Created: ${p.title} (${sourceVariants.length} variant${sourceVariants.length === 1 ? "" : "s"})`,
+      );
     } catch (err) {
       counters.failed++;
       onLog(`✕ Error: ${p.title} — ${String(err.message).slice(0, 120)}`);
@@ -430,12 +444,22 @@ async function migrateCollections(ctx) {
       templateSuffix: c.templateSuffix || null,
       seo:
         c.seo && (c.seo.title || c.seo.description)
-          ? { title: c.seo.title || undefined, description: c.seo.description || undefined }
+          ? {
+              title: c.seo.title || undefined,
+              description: c.seo.description || undefined,
+            }
           : undefined,
       metafields: (c.metafields?.edges || [])
         .map((e) => e.node)
-        .filter((m) => m.namespace !== "app" && !/_reference$/.test(m.type || ""))
-        .map((m) => ({ namespace: m.namespace, key: m.key, value: m.value, type: m.type })),
+        .filter(
+          (m) => m.namespace !== "app" && !/_reference$/.test(m.type || ""),
+        )
+        .map((m) => ({
+          namespace: m.namespace,
+          key: m.key,
+          value: m.value,
+          type: m.type,
+        })),
     };
     if (c.ruleSet) {
       input.ruleSet = {
@@ -472,13 +496,9 @@ async function migrateCollections(ctx) {
         }
       } catch (err) {
         counters.failed++;
-<<<<<<< HEAD
-        onLog(`✕ Update error: ${c.title} — ${String(err.message).slice(0, 120)}`);
-=======
         onLog(
           `✕ Update error: ${c.title} — ${String(err.message).slice(0, 120)}`,
         );
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
       }
       await sleep(180);
       continue;
@@ -501,7 +521,10 @@ async function migrateCollections(ctx) {
           let cur = null;
           const handles = [];
           do {
-            const pd = await gql(source, Q_COLLECTION_PRODUCTS, { id: c.id, cursor: cur });
+            const pd = await gql(source, Q_COLLECTION_PRODUCTS, {
+              id: c.id,
+              cursor: cur,
+            });
             const conn = pd?.collection?.products;
             for (const e of conn?.edges ?? []) handles.push(e.node.handle);
             cur = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
@@ -511,9 +534,13 @@ async function migrateCollections(ctx) {
           const ids = [];
           for (const h of handles) {
             try {
-              const tp = await gql(target, Q_TARGET_PRODUCT_ID_BY_HANDLE, { handle: h });
+              const tp = await gql(target, Q_TARGET_PRODUCT_ID_BY_HANDLE, {
+                handle: h,
+              });
               if (tp?.productByHandle?.id) ids.push(tp.productByHandle.id);
-            } catch { /* product not on target — skip */ }
+            } catch {
+              /* product not on target — skip */
+            }
           }
 
           for (let i = 0; i < ids.length; i += 100) {
@@ -530,7 +557,9 @@ async function migrateCollections(ctx) {
             await sleep(200);
           }
           if (handles.length) {
-            onLog(`  → linked ${ids.length}/${handles.length} products to ${c.title}`);
+            onLog(
+              `  → linked ${ids.length}/${handles.length} products to ${c.title}`,
+            );
           }
         }
       }
@@ -549,11 +578,7 @@ const Q_PAGES = `#graphql
   query Pages($cursor: String) {
     pages(first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-<<<<<<< HEAD
-      edges { node { id title handle body isPublished templateSuffix seo { title description } } }
-=======
       edges { node { id title handle body isPublished templateSuffix } }
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
     }
   }`;
 
@@ -573,9 +598,12 @@ const M_PAGE_UPDATE = `#graphql
     }
   }`;
 
-const Q_TARGET_PAGE_BY_HANDLE = `#graphql
-  query PageByHandle($q: String!) {
-    pages(first: 1, query: $q) { edges { node { id handle } } }
+const Q_TARGET_PAGES_ALL = `#graphql
+  query TargetPages($cursor: String) {
+    pages(first: 100, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id handle } }
+    }
   }`;
 
 async function migratePages(ctx) {
@@ -584,6 +612,21 @@ async function migratePages(ctx) {
     onLog(`Fetched ${n} pages…`),
   );
   onLog(`Total ${pages.length} pages found. Importing…`);
+
+  // Build a handle → id map of EXISTING target pages (reliable exact match,
+  // unlike the search `query:` filter which can miss on exact handles).
+  const targetPageMap = {};
+  {
+    let cur = null;
+    do {
+      const td = await gql(target, Q_TARGET_PAGES_ALL, { cursor: cur });
+      const conn = td?.pages;
+      for (const e of conn?.edges ?? [])
+        targetPageMap[e.node.handle] = e.node.id;
+      cur = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+      if (cur) await sleep(200);
+    } while (cur);
+  }
 
   for (const pg of pages) {
     if (!hasQuota()) {
@@ -596,31 +639,12 @@ async function migratePages(ctx) {
       body: pg.body,
       isPublished: pg.isPublished,
       templateSuffix: pg.templateSuffix || null,
-<<<<<<< HEAD
-      seo:
-        pg.seo && (pg.seo.title || pg.seo.description)
-          ? { title: pg.seo.title || undefined, description: pg.seo.description || undefined }
-          : undefined,
-=======
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
     };
 
-    // find existing page by handle
-    let existingPage = null;
-    try {
-      const pr = await gql(target, Q_TARGET_PAGE_BY_HANDLE, {
-        q: `handle:${qv(pg.handle)}`,
-      });
-      existingPage = pr?.pages?.edges?.[0]?.node || null;
-<<<<<<< HEAD
-    } catch { /* ignore */ }
-=======
-    } catch {
-      /* ignore */
-    }
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
+    // find existing page by exact handle (in-memory map)
+    const existingPageId = targetPageMap[pg.handle] || null;
 
-    if (existingPage) {
+    if (existingPageId) {
       if (ctx.mode !== "sync") {
         counters.skipped++;
         onLog(`↪︎ Skipped (exists): ${pg.title}`);
@@ -629,7 +653,7 @@ async function migratePages(ctx) {
       }
       try {
         const upd = await gql(target, M_PAGE_UPDATE, {
-          id: existingPage.id,
+          id: existingPageId,
           page: pageBody,
         });
         const uerrs = upd?.pageUpdate?.userErrors;
@@ -642,13 +666,9 @@ async function migratePages(ctx) {
         }
       } catch (err) {
         counters.failed++;
-<<<<<<< HEAD
-        onLog(`✕ Update error: ${pg.title} — ${String(err.message).slice(0, 120)}`);
-=======
         onLog(
           `✕ Update error: ${pg.title} — ${String(err.message).slice(0, 120)}`,
         );
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
       }
       await sleep(160);
       continue;
@@ -820,17 +840,16 @@ async function migrateMetaobjects(ctx) {
         onLog(`✓ Definition ready: ${def.type}`);
       }
     } catch (err) {
-      onLog(`✕ Definition error: ${def.type} — ${String(err.message).slice(0, 100)}`);
+      onLog(
+        `✕ Definition error: ${def.type} — ${String(err.message).slice(0, 100)}`,
+      );
       continue;
     }
 
     // then copy entries
-    const objs = await fetchAll(
-      source,
-      Q_METAOBJECTS_BY_TYPE,
-      "metaobjects",
-      { type: def.type },
-    );
+    const objs = await fetchAll(source, Q_METAOBJECTS_BY_TYPE, "metaobjects", {
+      type: def.type,
+    });
     for (const o of objs) {
       if (!hasQuota()) {
         onLog("Quota reached — stopping metaobjects.");
@@ -997,7 +1016,9 @@ async function migrateCustomers(ctx) {
           onLog(`↪︎ Skipped (exists): ${c.email}`);
           continue;
         }
-      } catch { /* ignore lookup errors, attempt create */ }
+      } catch {
+        /* ignore lookup errors, attempt create */
+      }
     }
 
     const input = {
@@ -1024,7 +1045,9 @@ async function migrateCustomers(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(`✕ Customer error: ${c.email || c.id} — ${String(err.message).slice(0, 120)}`);
+      onLog(
+        `✕ Customer error: ${c.email || c.id} — ${String(err.message).slice(0, 120)}`,
+      );
     }
     await sleep(200);
   }
@@ -1077,8 +1100,13 @@ const M_ORDER_CREATE = `#graphql
 
 // financial statuses accepted by OrderCreateOrderInput
 const ORDER_FIN_STATUS = new Set([
-  "PENDING", "AUTHORIZED", "PARTIALLY_PAID", "PAID",
-  "PARTIALLY_REFUNDED", "REFUNDED", "VOIDED",
+  "PENDING",
+  "AUTHORIZED",
+  "PARTIALLY_PAID",
+  "PAID",
+  "PARTIALLY_REFUNDED",
+  "REFUNDED",
+  "VOIDED",
 ]);
 
 async function migrateOrders(ctx) {
@@ -1103,7 +1131,9 @@ async function migrateOrders(ctx) {
         onLog(`↪︎ Skipped (exists): ${o.name}`);
         continue;
       }
-    } catch { /* ignore lookup errors, attempt create */ }
+    } catch {
+      /* ignore lookup errors, attempt create */
+    }
 
     const lineItems = (o.lineItems?.edges || []).map((e) => {
       const li = e.node;
@@ -1111,7 +1141,10 @@ async function migrateOrders(ctx) {
       const money = li.originalUnitPriceSet?.shopMoney;
       if (money?.amount) {
         item.priceSet = {
-          shopMoney: { amount: money.amount, currencyCode: money.currencyCode || o.currencyCode },
+          shopMoney: {
+            amount: money.amount,
+            currencyCode: money.currencyCode || o.currencyCode,
+          },
         };
       }
       return item;
@@ -1141,7 +1174,11 @@ async function migrateOrders(ctx) {
     try {
       const data = await gql(target, M_ORDER_CREATE, {
         order,
-        options: { sendReceipt: false, sendFulfillmentReceipt: false, inventoryBehaviour: "BYPASS" },
+        options: {
+          sendReceipt: false,
+          sendFulfillmentReceipt: false,
+          inventoryBehaviour: "BYPASS",
+        },
       });
       const errs = data?.orderCreate?.userErrors;
       if (errs?.length) {
@@ -1210,8 +1247,12 @@ const M_DRAFT_ORDER_CREATE = `#graphql
 async function migrateDraftOrders(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
   onLog("Draft orders…");
-  const drafts = await fetchAll(source, Q_DRAFT_ORDERS, "draftOrders", {}, (n) =>
-    onLog(`Fetched ${n} draft orders…`),
+  const drafts = await fetchAll(
+    source,
+    Q_DRAFT_ORDERS,
+    "draftOrders",
+    {},
+    (n) => onLog(`Fetched ${n} draft orders…`),
   );
   onLog(`Total ${drafts.length} draft orders found. Importing…`);
 
@@ -1231,7 +1272,9 @@ async function migrateDraftOrders(ctx) {
           onLog(`↪︎ Skipped (exists): ${o.name}`);
           continue;
         }
-      } catch { /* ignore lookup errors, attempt create */ }
+      } catch {
+        /* ignore lookup errors, attempt create */
+      }
     }
 
     const lineItems = (o.lineItems?.edges || []).map((e) => {
@@ -1277,7 +1320,9 @@ async function migrateDraftOrders(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(`✕ Draft order error: ${o.name} — ${String(err.message).slice(0, 120)}`);
+      onLog(
+        `✕ Draft order error: ${o.name} — ${String(err.message).slice(0, 120)}`,
+      );
     }
     await sleep(250);
   }
@@ -1317,8 +1362,12 @@ const Q_TARGET_REDIRECT_BY_PATH = `#graphql
 
 async function migrateRedirects(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
-  const redirects = await fetchAll(source, Q_REDIRECTS, "urlRedirects", {}, (n) =>
-    onLog(`Fetched ${n} URL redirects…`),
+  const redirects = await fetchAll(
+    source,
+    Q_REDIRECTS,
+    "urlRedirects",
+    {},
+    (n) => onLog(`Fetched ${n} URL redirects…`),
   );
   onLog(`Total ${redirects.length} redirects found. Importing…`);
 
@@ -1334,13 +1383,9 @@ async function migrateRedirects(ctx) {
         q: `path:${qv(r.path)}`,
       });
       existingRedirect = rr?.urlRedirects?.edges?.[0]?.node || null;
-<<<<<<< HEAD
-    } catch { /* ignore */ }
-=======
     } catch {
       /* ignore */
     }
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
 
     if (existingRedirect) {
       if (ctx.mode !== "sync") {
@@ -1364,13 +1409,9 @@ async function migrateRedirects(ctx) {
         }
       } catch (err) {
         counters.failed++;
-<<<<<<< HEAD
-        onLog(`✕ Update error: ${r.path} — ${String(err.message).slice(0, 120)}`);
-=======
         onLog(
           `✕ Update error: ${r.path} — ${String(err.message).slice(0, 120)}`,
         );
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
       }
       await sleep(120);
       continue;
@@ -1391,7 +1432,9 @@ async function migrateRedirects(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(`✕ Redirect error: ${r.path} — ${String(err.message).slice(0, 120)}`);
+      onLog(
+        `✕ Redirect error: ${r.path} — ${String(err.message).slice(0, 120)}`,
+      );
     }
     await sleep(120);
   }
@@ -1492,7 +1535,9 @@ async function migrateBlogPosts(ctx) {
         q: `handle:${qv(blog.handle)}`,
       });
       targetBlogId = found?.blogs?.edges?.[0]?.node?.id ?? null;
-    } catch { /* ignore lookup errors */ }
+    } catch {
+      /* ignore lookup errors */
+    }
 
     if (!targetBlogId) {
       try {
@@ -1502,7 +1547,9 @@ async function migrateBlogPosts(ctx) {
         targetBlogId = created?.blogCreate?.blog?.id ?? null;
         if (targetBlogId) onLog(`✓ Blog ready: ${blog.title}`);
       } catch (err) {
-        onLog(`✕ Blog failed: ${blog.title} — ${String(err.message).slice(0, 100)}`);
+        onLog(
+          `✕ Blog failed: ${blog.title} — ${String(err.message).slice(0, 100)}`,
+        );
       }
     } else {
       onLog(`↪︎ Blog exists: ${blog.title}`);
@@ -1517,15 +1564,6 @@ async function migrateBlogPosts(ctx) {
     try {
       let acur = null;
       do {
-<<<<<<< HEAD
-        const ad = await gql(target, Q_TARGET_ARTICLE, { id: targetBlogId, cursor: acur });
-        const aconn = ad?.blog?.articles;
-        for (const e of aconn?.edges ?? []) targetArticles[e.node.handle] = e.node.id;
-        acur = aconn?.pageInfo?.hasNextPage ? aconn.pageInfo.endCursor : null;
-        if (acur) await sleep(200);
-      } while (acur);
-    } catch { /* ignore */ }
-=======
         const ad = await gql(target, Q_TARGET_ARTICLE, {
           id: targetBlogId,
           cursor: acur,
@@ -1539,7 +1577,6 @@ async function migrateBlogPosts(ctx) {
     } catch {
       /* ignore */
     }
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
     for (const a of articles) {
       if (!hasQuota()) {
         onLog("Quota reached — stopping blog posts.");
@@ -1557,7 +1594,10 @@ async function migrateBlogPosts(ctx) {
         publishedAt: a.publishedAt || undefined,
         seo:
           a.seo && (a.seo.title || a.seo.description)
-            ? { title: a.seo.title || undefined, description: a.seo.description || undefined }
+            ? {
+                title: a.seo.title || undefined,
+                description: a.seo.description || undefined,
+              }
             : undefined,
         author: a.author?.name ? { name: a.author.name } : undefined,
       };
@@ -1589,13 +1629,9 @@ async function migrateBlogPosts(ctx) {
           }
         } catch (err) {
           counters.failed++;
-<<<<<<< HEAD
-          onLog(`✕ Update error: ${a.title} — ${String(err.message).slice(0, 120)}`);
-=======
           onLog(
             `✕ Update error: ${a.title} — ${String(err.message).slice(0, 120)}`,
           );
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
         }
         await sleep(160);
         continue;
@@ -1614,7 +1650,9 @@ async function migrateBlogPosts(ctx) {
         }
       } catch (err) {
         counters.failed++;
-        onLog(`✕ Article error: ${a.title} — ${String(err.message).slice(0, 120)}`);
+        onLog(
+          `✕ Article error: ${a.title} — ${String(err.message).slice(0, 120)}`,
+        );
       }
       await sleep(160);
     }
@@ -1661,7 +1699,13 @@ const M_MENU_CREATE = `#graphql
 
 // types that need a resourceId we can't map across stores → fall back to URL
 const RESOURCE_MENU_TYPES = new Set([
-  "COLLECTION", "PRODUCT", "PAGE", "BLOG", "ARTICLE", "CATALOG", "SHOP_POLICY",
+  "COLLECTION",
+  "PRODUCT",
+  "PAGE",
+  "BLOG",
+  "ARTICLE",
+  "CATALOG",
+  "SHOP_POLICY",
 ]);
 
 function mapMenuItem(item) {
@@ -1702,7 +1746,9 @@ async function migrateMenus(ctx) {
         onLog(`↪︎ Skipped (exists): ${m.title}`);
         continue;
       }
-    } catch { /* ignore lookup errors, attempt create */ }
+    } catch {
+      /* ignore lookup errors, attempt create */
+    }
 
     try {
       const data = await gql(target, M_MENU_CREATE, {
@@ -1914,7 +1960,7 @@ function discountValueInput(value) {
   if (!value) return null;
   if (value.__typename === "DiscountPercentage") {
     // Shopify expects a 0–1 fraction for percentage
-    return { percentage: (value.percentage ?? 0) };
+    return { percentage: value.percentage ?? 0 };
   }
   if (value.__typename === "DiscountAmount") {
     return {
@@ -1984,7 +2030,9 @@ async function migrateDiscounts(ctx) {
             startsAt: d.startsAt,
             endsAt: d.endsAt || null,
             customerGets: { value, items: { all: true } },
-            minimumRequirement: { quantity: { greaterThanOrEqualToQuantity: "1" } },
+            minimumRequirement: {
+              quantity: { greaterThanOrEqualToQuantity: "1" },
+            },
           },
         });
         const errs = data?.discountAutomaticBasicCreate?.userErrors;
@@ -2099,7 +2147,9 @@ async function migrateDiscounts(ctx) {
       }
     } catch (err) {
       counters.failed++;
-      onLog(`✕ Discount error: ${d?.title || "?"} — ${String(err.message).slice(0, 120)}`);
+      onLog(
+        `✕ Discount error: ${d?.title || "?"} — ${String(err.message).slice(0, 120)}`,
+      );
     }
     await sleep(220);
   }
@@ -2209,11 +2259,7 @@ export async function runMigration({
     ...counters,
     total,
     consumed: consumedTotal,
-<<<<<<< HEAD
-    consumedByType: consumed,   // { products: 5, collections: 3, ... }
-=======
     consumedByType: consumed, // { products: 5, collections: 3, ... }
->>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
     summary: `${counters.created} created · ${counters.updated} updated · ${counters.skipped} skipped · ${counters.failed} failed`,
   };
 }
