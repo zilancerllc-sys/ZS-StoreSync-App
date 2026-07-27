@@ -268,7 +268,13 @@ async function migrateProducts(ctx) {
         }
       } catch (err) {
         counters.failed++;
+<<<<<<< HEAD
         onLog(`✕ Update error: ${p.title} — ${String(err.message).slice(0, 120)}`);
+=======
+        onLog(
+          `✕ Update error: ${p.title} — ${String(err.message).slice(0, 120)}`,
+        );
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
       }
       await sleep(200);
       continue;
@@ -466,7 +472,13 @@ async function migrateCollections(ctx) {
         }
       } catch (err) {
         counters.failed++;
+<<<<<<< HEAD
         onLog(`✕ Update error: ${c.title} — ${String(err.message).slice(0, 120)}`);
+=======
+        onLog(
+          `✕ Update error: ${c.title} — ${String(err.message).slice(0, 120)}`,
+        );
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
       }
       await sleep(180);
       continue;
@@ -537,7 +549,11 @@ const Q_PAGES = `#graphql
   query Pages($cursor: String) {
     pages(first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
+<<<<<<< HEAD
       edges { node { id title handle body isPublished templateSuffix seo { title description } } }
+=======
+      edges { node { id title handle body isPublished templateSuffix } }
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
     }
   }`;
 
@@ -580,10 +596,13 @@ async function migratePages(ctx) {
       body: pg.body,
       isPublished: pg.isPublished,
       templateSuffix: pg.templateSuffix || null,
+<<<<<<< HEAD
       seo:
         pg.seo && (pg.seo.title || pg.seo.description)
           ? { title: pg.seo.title || undefined, description: pg.seo.description || undefined }
           : undefined,
+=======
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
     };
 
     // find existing page by handle
@@ -593,7 +612,13 @@ async function migratePages(ctx) {
         q: `handle:${qv(pg.handle)}`,
       });
       existingPage = pr?.pages?.edges?.[0]?.node || null;
+<<<<<<< HEAD
     } catch { /* ignore */ }
+=======
+    } catch {
+      /* ignore */
+    }
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
 
     if (existingPage) {
       if (ctx.mode !== "sync") {
@@ -617,7 +642,13 @@ async function migratePages(ctx) {
         }
       } catch (err) {
         counters.failed++;
+<<<<<<< HEAD
         onLog(`✕ Update error: ${pg.title} — ${String(err.message).slice(0, 120)}`);
+=======
+        onLog(
+          `✕ Update error: ${pg.title} — ${String(err.message).slice(0, 120)}`,
+        );
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
       }
       await sleep(160);
       continue;
@@ -1303,7 +1334,13 @@ async function migrateRedirects(ctx) {
         q: `path:${qv(r.path)}`,
       });
       existingRedirect = rr?.urlRedirects?.edges?.[0]?.node || null;
+<<<<<<< HEAD
     } catch { /* ignore */ }
+=======
+    } catch {
+      /* ignore */
+    }
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
 
     if (existingRedirect) {
       if (ctx.mode !== "sync") {
@@ -1327,7 +1364,13 @@ async function migrateRedirects(ctx) {
         }
       } catch (err) {
         counters.failed++;
+<<<<<<< HEAD
         onLog(`✕ Update error: ${r.path} — ${String(err.message).slice(0, 120)}`);
+=======
+        onLog(
+          `✕ Update error: ${r.path} — ${String(err.message).slice(0, 120)}`,
+        );
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
       }
       await sleep(120);
       continue;
@@ -1474,6 +1517,7 @@ async function migrateBlogPosts(ctx) {
     try {
       let acur = null;
       do {
+<<<<<<< HEAD
         const ad = await gql(target, Q_TARGET_ARTICLE, { id: targetBlogId, cursor: acur });
         const aconn = ad?.blog?.articles;
         for (const e of aconn?.edges ?? []) targetArticles[e.node.handle] = e.node.id;
@@ -1481,6 +1525,21 @@ async function migrateBlogPosts(ctx) {
         if (acur) await sleep(200);
       } while (acur);
     } catch { /* ignore */ }
+=======
+        const ad = await gql(target, Q_TARGET_ARTICLE, {
+          id: targetBlogId,
+          cursor: acur,
+        });
+        const aconn = ad?.blog?.articles;
+        for (const e of aconn?.edges ?? [])
+          targetArticles[e.node.handle] = e.node.id;
+        acur = aconn?.pageInfo?.hasNextPage ? aconn.pageInfo.endCursor : null;
+        if (acur) await sleep(200);
+      } while (acur);
+    } catch {
+      /* ignore */
+    }
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
     for (const a of articles) {
       if (!hasQuota()) {
         onLog("Quota reached — stopping blog posts.");
@@ -1530,7 +1589,13 @@ async function migrateBlogPosts(ctx) {
           }
         } catch (err) {
           counters.failed++;
+<<<<<<< HEAD
           onLog(`✕ Update error: ${a.title} — ${String(err.message).slice(0, 120)}`);
+=======
+          onLog(
+            `✕ Update error: ${a.title} — ${String(err.message).slice(0, 120)}`,
+          );
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
         }
         await sleep(160);
         continue;
@@ -2144,7 +2209,11 @@ export async function runMigration({
     ...counters,
     total,
     consumed: consumedTotal,
+<<<<<<< HEAD
     consumedByType: consumed,   // { products: 5, collections: 3, ... }
+=======
+    consumedByType: consumed, // { products: 5, collections: 3, ... }
+>>>>>>> 60079bd33d7bfc79aa83c05276ce312db82c9c14
     summary: `${counters.created} created · ${counters.updated} updated · ${counters.skipped} skipped · ${counters.failed} failed`,
   };
 }
