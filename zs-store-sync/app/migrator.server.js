@@ -1934,6 +1934,285 @@ async function migrateDiscounts(ctx) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  THEME (published theme → new UNPUBLISHED theme on target)
+//
+//  Copies the source store's live/published theme — all Liquid/JSON templates,
+//  sections, snippets, config, locales and assets — so templateSuffix references
+//  copied with products/collections/pages/articles actually resolve on target.
+//
+//  Shopify has no "create empty theme" API: themeCreate REQUIRES a source zip.
+//  So we bootstrap the target theme from Dawn's public zip, overwrite every file
+//  with the SOURCE theme's files, then delete any bootstrap-only leftovers — the
+//  final theme equals the source. It is left UNPUBLISHED; the merchant reviews
+//  and publishes it, so the target store's live storefront is never touched.
+//
+//  This is an always-on bundled step (not a credited migration type).
+// ═════════════════════════════════════════════════════════════════════════════
+const THEME_BOOTSTRAP_ZIP =
+  "https://github.com/Shopify/dawn/archive/refs/heads/main.zip";
+
+const Q_SOURCE_MAIN_THEME = `#graphql
+  query MainTheme {
+    themes(first: 1, roles: [MAIN]) {
+      nodes { id name }
+    }
+  }`;
+
+const Q_TARGET_THEMES = `#graphql
+  query TargetThemes($cursor: String) {
+    themes(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes { id name role }
+    }
+  }`;
+
+const Q_THEME_PROCESSING = `#graphql
+  query ThemeProcessing($id: ID!) {
+    theme(id: $id) { id processing }
+  }`;
+
+// full file bodies (for reading the SOURCE theme)
+const Q_THEME_FILES = `#graphql
+  query ThemeFiles($id: ID!, $cursor: String) {
+    theme(id: $id) {
+      files(first: 50, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          filename
+          body {
+            __typename
+            ... on OnlineStoreThemeFileBodyText { content }
+            ... on OnlineStoreThemeFileBodyBase64 { contentBase64 }
+            ... on OnlineStoreThemeFileBodyUrl { url }
+          }
+        }
+      }
+    }
+  }`;
+
+// filenames only (for finding bootstrap leftovers to delete on TARGET)
+const Q_THEME_FILENAMES = `#graphql
+  query ThemeFilenames($id: ID!, $cursor: String) {
+    theme(id: $id) {
+      files(first: 50, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { filename }
+      }
+    }
+  }`;
+
+const M_THEME_CREATE = `#graphql
+  mutation ThemeCreate($name: String!, $source: URL!) {
+    themeCreate(name: $name, source: $source) {
+      theme { id name }
+      userErrors { field message }
+    }
+  }`;
+
+const M_THEME_FILES_UPSERT = `#graphql
+  mutation ThemeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+    themeFilesUpsert(themeId: $themeId, files: $files) {
+      userErrors { field message code }
+    }
+  }`;
+
+const M_THEME_FILES_DELETE = `#graphql
+  mutation ThemeFilesDelete($themeId: ID!, $files: [String!]!) {
+    themeFilesDelete(themeId: $themeId, files: $files) {
+      userErrors { field message code }
+    }
+  }`;
+
+// map a source OnlineStoreThemeFile to an upsert input; URL-bodied assets are
+// re-fetched by Shopify from the source CDN (pass-through, no download here)
+function themeFileUpsertInput(node) {
+  const b = node?.body;
+  if (!b || !node.filename) return null;
+  if (b.__typename === "OnlineStoreThemeFileBodyText" && b.content != null) {
+    return { filename: node.filename, body: { type: "TEXT", value: b.content } };
+  }
+  if (b.__typename === "OnlineStoreThemeFileBodyBase64" && b.contentBase64 != null) {
+    return {
+      filename: node.filename,
+      body: { type: "BASE64", value: b.contentBase64 },
+    };
+  }
+  if (b.__typename === "OnlineStoreThemeFileBodyUrl" && b.url != null) {
+    return { filename: node.filename, body: { type: "URL", value: b.url } };
+  }
+  return null;
+}
+
+// wait out the async bootstrap import so upserts don't race theme processing
+async function waitForThemeReady(admin, themeId, onLog) {
+  for (let i = 0; i < 30; i++) {
+    try {
+      const d = await gql(admin, Q_THEME_PROCESSING, { id: themeId });
+      if (d?.theme && d.theme.processing === false) return;
+    } catch {
+      /* transient — retry */
+    }
+    await sleep(2000);
+  }
+  onLog("  ⚠ Theme still processing after wait — continuing anyway.");
+}
+
+async function migrateThemes(ctx) {
+  const { source, target, onLog, counters } = ctx;
+
+  // 1. source published theme
+  let src = null;
+  try {
+    const d = await gql(source, Q_SOURCE_MAIN_THEME);
+    src = d?.themes?.nodes?.[0] || null;
+  } catch (err) {
+    onLog(
+      `✕ Theme: could not read source theme — ${String(err.message).slice(0, 120)}`,
+    );
+    return;
+  }
+  if (!src) {
+    onLog("↪︎ Theme: no published theme on source — skipped.");
+    return;
+  }
+
+  const targetName = `${src.name} (migrated)`;
+
+  // 2. idempotency — skip if we already created this theme on the target
+  try {
+    let cursor = null;
+    do {
+      const d = await gql(target, Q_TARGET_THEMES, { cursor });
+      const conn = d?.themes;
+      for (const t of conn?.nodes ?? []) {
+        if (t.name === targetName) {
+          onLog(`↪︎ Theme exists on target: "${targetName}" — skipped.`);
+          return;
+        }
+      }
+      cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+    } while (cursor);
+  } catch {
+    /* couldn't list — fall through and attempt create */
+  }
+
+  // 3. create target theme (unpublished) from the bootstrap zip
+  let newThemeId = null;
+  try {
+    const d = await gql(target, M_THEME_CREATE, {
+      name: targetName,
+      source: THEME_BOOTSTRAP_ZIP,
+    });
+    const errs = d?.themeCreate?.userErrors;
+    if (errs?.length) {
+      onLog(`✕ Theme create failed — ${errs[0].message}`);
+      return;
+    }
+    newThemeId = d?.themeCreate?.theme?.id || null;
+  } catch (err) {
+    onLog(`✕ Theme create error — ${String(err.message).slice(0, 140)}`);
+    return;
+  }
+  if (!newThemeId) {
+    onLog("✕ Theme create returned no id — skipped.");
+    return;
+  }
+  onLog(`✓ Theme created (unpublished): "${targetName}" — copying files…`);
+
+  // 4. wait for the bootstrap import to finish processing
+  await waitForThemeReady(target, newThemeId, onLog);
+
+  // 5. read every file from the source theme
+  const srcFiles = [];
+  try {
+    let cursor = null;
+    do {
+      const d = await gql(source, Q_THEME_FILES, { id: src.id, cursor });
+      const conn = d?.theme?.files;
+      for (const n of conn?.nodes ?? []) srcFiles.push(n);
+      cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+      if (cursor) await sleep(250);
+    } while (cursor);
+  } catch (err) {
+    onLog(
+      `✕ Theme: reading source files failed — ${String(err.message).slice(0, 120)}`,
+    );
+    return;
+  }
+
+  const inputs = srcFiles.map(themeFileUpsertInput).filter(Boolean);
+  const sourceFilenames = new Set(inputs.map((f) => f.filename));
+  onLog(`  ${inputs.length} source theme files to copy…`);
+
+  // 6. overwrite the bootstrap files with the source files (small batches)
+  let upserted = 0;
+  let fileIssues = 0;
+  for (let i = 0; i < inputs.length; i += 5) {
+    const batch = inputs.slice(i, i + 5);
+    try {
+      const d = await gql(target, M_THEME_FILES_UPSERT, {
+        themeId: newThemeId,
+        files: batch,
+      });
+      const errs = d?.themeFilesUpsert?.userErrors;
+      if (errs?.length) {
+        fileIssues += batch.length;
+        onLog(`  ⚠ Some theme files failed — ${errs[0].message}`);
+      } else {
+        upserted += batch.length;
+      }
+    } catch (err) {
+      fileIssues += batch.length;
+      onLog(`  ⚠ Theme file batch error — ${String(err.message).slice(0, 100)}`);
+    }
+    await sleep(400);
+  }
+  onLog(
+    `  copied ${upserted} files${fileIssues ? `, ${fileIssues} had issues` : ""}.`,
+  );
+
+  // 7. delete bootstrap-only leftovers (files on target not present in source)
+  try {
+    const targetFilenames = [];
+    let cursor = null;
+    do {
+      const d = await gql(target, Q_THEME_FILENAMES, {
+        id: newThemeId,
+        cursor,
+      });
+      const conn = d?.theme?.files;
+      for (const n of conn?.nodes ?? []) targetFilenames.push(n.filename);
+      cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+      if (cursor) await sleep(250);
+    } while (cursor);
+
+    const leftovers = targetFilenames.filter((f) => !sourceFilenames.has(f));
+    for (let i = 0; i < leftovers.length; i += 10) {
+      const batch = leftovers.slice(i, i + 10);
+      try {
+        await gql(target, M_THEME_FILES_DELETE, {
+          themeId: newThemeId,
+          files: batch,
+        });
+      } catch {
+        /* best-effort cleanup */
+      }
+      await sleep(300);
+    }
+    if (leftovers.length) {
+      onLog(`  removed ${leftovers.length} bootstrap file(s) not in source.`);
+    }
+  } catch {
+    /* cleanup is best-effort — leftover base files don't break the theme */
+  }
+
+  counters.created++;
+  onLog(
+    `✓ Theme sync complete: "${targetName}" — review and publish it in the target admin.`,
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  ORCHESTRATOR
 // ═════════════════════════════════════════════════════════════════════════════
 const RUNNERS = {
@@ -2016,6 +2295,18 @@ export async function runMigration({
       currentType = t;
     },
   };
+
+  // Themes are an always-on bundled step (not a credited type): copy the
+  // source's published theme into a new UNPUBLISHED theme on the target BEFORE
+  // other data, so templateSuffix references resolve. Never publishes and never
+  // edits the target's live theme. Skips cheaply if already copied.
+  currentType = "themes";
+  onLog("── THEME ──");
+  try {
+    await migrateThemes(ctx);
+  } catch (err) {
+    onLog(`✕ theme module failed: ${String(err.message).slice(0, 160)}`);
+  }
 
   const ordered = RUN_ORDER.filter((t) => types.includes(t));
   for (const t of ordered) {
