@@ -507,6 +507,30 @@ async function migrateCollections(ctx) {
   }
 }
 
+// Pages and Articles have NO `seo` field in the Admin API — their SEO title and
+// description are the reserved metafields global.title_tag / global.description_tag.
+// Read those from the source and pass them straight through, preserving the exact
+// namespace/key/value/type so the reserved definition on the target accepts them.
+function seoMetafieldsInput(node) {
+  const out = [];
+  for (const e of node?.metafields?.edges || []) {
+    const m = e.node;
+    if (
+      m.namespace === "global" &&
+      (m.key === "title_tag" || m.key === "description_tag") &&
+      m.value
+    ) {
+      out.push({
+        namespace: m.namespace,
+        key: m.key,
+        value: m.value,
+        type: m.type || "single_line_text_field",
+      });
+    }
+  }
+  return out;
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  PAGES
 // ═════════════════════════════════════════════════════════════════════════════
@@ -514,7 +538,12 @@ const Q_PAGES = `#graphql
   query Pages($cursor: String) {
     pages(first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      edges { node { id title handle body isPublished publishedAt templateSuffix seo { title description } } }
+      edges { node {
+        id title handle body isPublished publishedAt templateSuffix
+        metafields(namespace: "global", first: 10) {
+          edges { node { namespace key value type } }
+        }
+      } }
     }
   }`;
 
@@ -539,6 +568,7 @@ async function migratePages(ctx) {
       break;
     }
     try {
+      const seoMf = seoMetafieldsInput(pg);
       const data = await gql(target, M_PAGE_CREATE, {
         page: {
           title: pg.title,
@@ -547,13 +577,7 @@ async function migratePages(ctx) {
           isPublished: pg.isPublished,
           publishDate: pg.publishedAt || undefined,
           templateSuffix: pg.templateSuffix || null,
-          seo:
-            pg.seo && (pg.seo.title || pg.seo.description)
-              ? {
-                  title: pg.seo.title || undefined,
-                  description: pg.seo.description || undefined,
-                }
-              : undefined,
+          ...(seoMf.length ? { metafields: seoMf } : {}),
         },
       });
       const errs = data?.pageCreate?.userErrors;
@@ -1308,7 +1332,9 @@ const Q_BLOG_ARTICLES = `#graphql
         pageInfo { hasNextPage endCursor }
         edges { node {
           id title handle body summary tags isPublished publishedAt templateSuffix
-          seo { title description }
+          metafields(namespace: "global", first: 10) {
+            edges { node { namespace key value type } }
+          }
           author { name }
           image { url altText }
         } }
@@ -1394,6 +1420,7 @@ async function migrateBlogPosts(ctx) {
         onLog("Quota reached — stopping blog posts.");
         return;
       }
+      const seoMf = seoMetafieldsInput(a);
       const article = {
         blogId: targetBlogId,
         title: a.title,
@@ -1403,16 +1430,10 @@ async function migrateBlogPosts(ctx) {
         tags: a.tags || [],
         isPublished: a.isPublished,
         templateSuffix: a.templateSuffix || null,
-        publishedAt: a.publishedAt || undefined,
-        seo:
-          a.seo && (a.seo.title || a.seo.description)
-            ? {
-                title: a.seo.title || undefined,
-                description: a.seo.description || undefined,
-              }
-            : undefined,
+        publishDate: a.publishedAt || undefined,
         author: a.author?.name ? { name: a.author.name } : undefined,
       };
+      if (seoMf.length) article.metafields = seoMf;
       if (a.image?.url) {
         article.image = { url: a.image.url, altText: a.image.altText || "" };
       }
