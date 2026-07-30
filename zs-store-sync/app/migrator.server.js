@@ -152,10 +152,21 @@ const M_PRODUCT_UPDATE = `#graphql
 const Q_TARGET_PRODUCT_VARIANTS = `#graphql
   query TargetVariants($id: ID!) {
     product(id: $id) {
+      id
+      hasOnlyDefaultVariant
+      options { id name position values }
       variants(first: 100) { edges { node {
         id sku title
         selectedOptions { name value }
       } } }
+    }
+  }`;
+
+const M_PRODUCT_OPTIONS_CREATE = `#graphql
+  mutation ProductOptionsCreate($productId: ID!, $options: [OptionCreateInput!]!, $variantStrategy: ProductOptionCreateVariantStrategy) {
+    productOptionsCreate(productId: $productId, options: $options, variantStrategy: $variantStrategy) {
+      product { id }
+      userErrors { field message code }
     }
   }`;
 
@@ -252,11 +263,18 @@ async function variantInputsFor(ctx, sourceVariants, withOptionValues) {
   return out;
 }
 
-// Sync mode: push price / compare-at / barcode / weight / metafields onto the
-// variants that already exist on the target. Matched by SKU where present,
-// otherwise by option-value signature (many stores don't use SKUs at all).
-// Variants missing on the target are left alone — a sync never creates or
-// deletes variants.
+// Sync mode variant reconciliation. `productUpdate` cannot touch options or
+// variants at all (`productOptions` is create-only), so an existing target
+// product that was created without the source's options could never gain them —
+// it just sat there with a single default variant. This brings the target's
+// variant structure in line with the source:
+//   1. add any option the source has and the target lacks;
+//   2. if the target still only has the implicit default variant, rebuild the
+//      variants from the source and drop that placeholder;
+//   3. otherwise update matching variants (by SKU, else option signature) and
+//      create the ones the target is missing.
+// Variants that exist only on the target are left alone — a sync never deletes
+// merchant data beyond the implicit default placeholder in step 2.
 async function syncVariants(ctx, targetProductId, sourceProduct) {
   const { target, onLog } = ctx;
   const sourceVariants = (sourceProduct.variants?.edges || []).map(
@@ -264,55 +282,142 @@ async function syncVariants(ctx, targetProductId, sourceProduct) {
   );
   if (!sourceVariants.length) return;
 
-  const bySku = new Map();
-  const bySig = new Map();
-  for (const v of sourceVariants) {
-    const sku = v.sku?.trim();
-    if (sku) bySku.set(sku, v);
-    const sig = variantSignature(v);
-    if (sig && !bySig.has(sig)) bySig.set(sig, v);
+  const label = sourceProduct.title;
+  const sourceRealOptions = hasRealOptions(sourceProduct);
+
+  // metafields are async to build, so precompute one input per source variant
+  const mfFor = new Map();
+  for (const sv of sourceVariants) {
+    mfFor.set(sv, await metafieldsInput(ctx, sv, { excludeSeo: true }));
   }
 
   try {
-    const td = await gql(target, Q_TARGET_PRODUCT_VARIANTS, {
+    let td = await gql(target, Q_TARGET_PRODUCT_VARIANTS, {
       id: targetProductId,
     });
-    const targetVariants = (td?.product?.variants?.edges || []).map(
-      (e) => e.node,
-    );
-    // a single-variant product on both sides always corresponds, even with no
-    // SKU and no real options
-    const singleton =
-      targetVariants.length === 1 && sourceVariants.length === 1;
+    let tp = td?.product;
+    if (!tp) return;
 
-    const updates = [];
+    // ── 1. create options the target is missing ──────────────────────────────
+    if (sourceRealOptions) {
+      const haveNames = new Set(
+        (tp.options || [])
+          .filter((o) => o.name !== "Title")
+          .map((o) => o.name),
+      );
+      const missing = (sourceProduct.options || []).filter(
+        (o) => !haveNames.has(o.name),
+      );
+      if (missing.length) {
+        const odata = await gql(target, M_PRODUCT_OPTIONS_CREATE, {
+          productId: targetProductId,
+          options: missing.map((o, i) => ({
+            name: o.name,
+            position: haveNames.size + i + 1,
+            values: (o.values || []).map((v) => ({ name: v })),
+          })),
+          variantStrategy: "LEAVE_AS_IS",
+        });
+        const oerrs = odata?.productOptionsCreate?.userErrors;
+        if (oerrs?.length) {
+          onLog(`  ⚠ Options not added for ${label} — ${errText(oerrs)}`);
+        } else {
+          onLog(
+            `  + ${missing.length} option(s) added to ${label}: ${missing.map((o) => o.name).join(", ")}`,
+          );
+          td = await gql(target, Q_TARGET_PRODUCT_VARIANTS, {
+            id: targetProductId,
+          });
+          tp = td?.product || tp;
+        }
+      }
+    }
+
+    const targetVariants = (tp.variants?.edges || []).map((e) => e.node);
+
+    // ── 2. target has only the implicit default variant → rebuild from source ─
+    if (sourceRealOptions && tp.hasOnlyDefaultVariant) {
+      const vdata = await gql(target, M_VARIANTS_BULK_CREATE, {
+        productId: targetProductId,
+        variants: sourceVariants.map((sv) =>
+          variantBulkInput(sv, true, mfFor.get(sv)),
+        ),
+        strategy: "REMOVE_STANDALONE_VARIANT",
+      });
+      const verrs = vdata?.productVariantsBulkCreate?.userErrors;
+      if (verrs?.length) {
+        onLog(`  ⚠ Variant rebuild partial for ${label} — ${errText(verrs)}`);
+      } else {
+        onLog(`  + ${sourceVariants.length} variant(s) created for ${label}`);
+      }
+      await sleep(200);
+      return;
+    }
+
+    // ── 3. match, update, and create what's missing ───────────────────────────
+    const tBySku = new Map();
+    const tBySig = new Map();
     for (const tv of targetVariants) {
       const sku = tv.sku?.trim();
-      let sv = sku ? bySku.get(sku) : null;
-      if (!sv) {
-        const sig = variantSignature(tv);
-        if (sig) sv = bySig.get(sig);
-      }
-      if (!sv && singleton) sv = sourceVariants[0];
-      if (!sv) continue;
-      const mf = await metafieldsInput(ctx, sv, { excludeSeo: true });
-      updates.push({ id: tv.id, ...variantBulkInput(sv, false, mf) });
+      if (sku) tBySku.set(sku, tv);
+      const sig = variantSignature(tv);
+      if (sig && !tBySig.has(sig)) tBySig.set(sig, tv);
     }
-    if (!updates.length) return;
+    // with one variant on each side and no real options, they correspond
+    const singleton =
+      !sourceRealOptions &&
+      targetVariants.length === 1 &&
+      sourceVariants.length === 1;
 
-    const vdata = await gql(target, M_VARIANTS_BULK_UPDATE, {
-      productId: targetProductId,
-      variants: updates,
-    });
-    const verrs = vdata?.productVariantsBulkUpdate?.userErrors;
-    if (verrs?.length) {
-      onLog(`  ⚠ Variant sync partial for ${sourceProduct.title} — ${errText(verrs)}`);
-    } else {
-      onLog(`  ↻ ${updates.length} variant(s) synced`);
+    const updates = [];
+    const creates = [];
+    for (const sv of sourceVariants) {
+      const sku = sv.sku?.trim();
+      let tv = sku ? tBySku.get(sku) : null;
+      if (!tv) {
+        const sig = variantSignature(sv);
+        if (sig) tv = tBySig.get(sig);
+      }
+      if (!tv && singleton) tv = targetVariants[0];
+
+      if (tv) {
+        updates.push({ id: tv.id, ...variantBulkInput(sv, false, mfFor.get(sv)) });
+      } else if (sourceRealOptions) {
+        // only meaningful with real options — otherwise there's nothing to
+        // distinguish a second variant by
+        creates.push(variantBulkInput(sv, true, mfFor.get(sv)));
+      }
+    }
+
+    if (updates.length) {
+      const vdata = await gql(target, M_VARIANTS_BULK_UPDATE, {
+        productId: targetProductId,
+        variants: updates,
+      });
+      const verrs = vdata?.productVariantsBulkUpdate?.userErrors;
+      if (verrs?.length) {
+        onLog(`  ⚠ Variant sync partial for ${label} — ${errText(verrs)}`);
+      } else {
+        onLog(`  ↻ ${updates.length} variant(s) synced`);
+      }
+    }
+
+    if (creates.length) {
+      const cdata = await gql(target, M_VARIANTS_BULK_CREATE, {
+        productId: targetProductId,
+        variants: creates,
+        strategy: "DEFAULT",
+      });
+      const cerrs = cdata?.productVariantsBulkCreate?.userErrors;
+      if (cerrs?.length) {
+        onLog(`  ⚠ New variants partial for ${label} — ${errText(cerrs)}`);
+      } else {
+        onLog(`  + ${creates.length} new variant(s) added to ${label}`);
+      }
     }
   } catch (err) {
     onLog(
-      `  ⚠ Variant sync failed for ${sourceProduct.title} — ${String(err.message).slice(0, 100)}`,
+      `  ⚠ Variant sync failed for ${label} — ${String(err.message).slice(0, 120)}`,
     );
   }
   await sleep(200);
@@ -1355,7 +1460,7 @@ const Q_METAFIELD_DEFS = `#graphql
     metafieldDefinitions(first: 50, ownerType: $ownerType, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       edges { node {
-        id name namespace key description
+        id name namespace key description pinnedPosition
         type { name }
         validations { name value }
       } }
@@ -1428,6 +1533,11 @@ async function migrateMetafields(ctx) {
             type: d.type.name,
             description: d.description || "",
             ownerType,
+            // Carry the source's pinned state. Unpinned definitions still hold
+            // their values, but Shopify's product/article page only renders
+            // PINNED ones — an unpinned copy reads as "No metafields pinned"
+            // even though the data is there under "View all".
+            pin: d.pinnedPosition != null,
             validations: (d.validations || []).map((v) => ({
               name: v.name,
               value: v.value,
