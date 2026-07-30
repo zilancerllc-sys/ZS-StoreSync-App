@@ -169,6 +169,15 @@ const pageStyles = `
   .zs-type-name{font-size:14px;font-weight:600;color:var(--zs-dark);}
   .zs-type-sub{font-size:11px;color:var(--zs-muted);margin-top:2px;}
   .zs-type-lock{margin-left:auto;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--zs-camel);background:var(--zs-camel-soft);padding:3px 8px;border-radius:20px;}
+  .zs-steps-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;counter-reset:zs-step;}
+  .zs-step{background:var(--zs-white);border:1px solid var(--zs-border);border-radius:var(--zs-r-lg);padding:1.5rem 1.4rem;box-shadow:var(--zs-shadow-sm);position:relative;overflow:hidden;transition:transform .18s,border-color .18s,box-shadow .18s;}
+  .zs-step:hover{transform:translateY(-3px);border-color:var(--zs-clay);box-shadow:var(--zs-shadow-md);}
+  .zs-step-num{width:40px;height:40px;border-radius:12px;background:var(--zs-clay-soft);color:var(--zs-clay-deep);display:flex;align-items:center;justify-content:center;font-family:var(--zs-font-display);font-size:19px;font-weight:600;margin-bottom:16px;}
+  .zs-step-title{font-family:var(--zs-font-display);font-size:16px;font-weight:600;color:var(--zs-dark);margin-bottom:7px;letter-spacing:-.01em;}
+  .zs-step-desc{font-size:12.5px;color:var(--zs-muted);line-height:1.6;}
+  .zs-step-desc b{color:var(--zs-dark);font-weight:600;}
+  .zs-step-conn{position:absolute;top:1.95rem;right:-9px;color:var(--zs-camel);opacity:.5;}
+  .zs-step:last-child .zs-step-conn{display:none;}
   .zs-nav-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
   .zs-nav-card{background:var(--zs-white);border:1px solid var(--zs-border);border-radius:var(--zs-r-lg);padding:1.75rem;text-decoration:none;display:flex;flex-direction:column;position:relative;overflow:hidden;box-shadow:var(--zs-shadow-sm);transition:transform .2s,border-color .2s,box-shadow .2s;}
   .zs-nav-card::after{content:"";position:absolute;bottom:0;left:0;right:0;height:3px;background:var(--zs-grad);transform:scaleX(0);transition:transform .26s;transform-origin:left;}
@@ -237,9 +246,9 @@ const pageStyles = `
   .zs-empty-icon{color:var(--zs-camel);margin-bottom:12px;display:flex;justify-content:center;}
   .zs-empty-title{font-family:var(--zs-font-display);font-size:17px;font-weight:600;color:var(--zs-dark);margin-bottom:6px;}
   .zs-empty-sub{font-size:13px;color:var(--zs-muted);}
-  @media(max-width:1100px){.zs-stats-grid{grid-template-columns:repeat(2,1fr);}.zs-types-grid{grid-template-columns:repeat(2,1fr);}.zs-nav-grid{grid-template-columns:1fr;}.zs-resources-grid{grid-template-columns:1fr;}}
+  @media(max-width:1100px){.zs-stats-grid{grid-template-columns:repeat(2,1fr);}.zs-types-grid{grid-template-columns:repeat(2,1fr);}.zs-steps-grid{grid-template-columns:repeat(2,1fr);}.zs-steps-grid .zs-step-conn{display:none;}.zs-nav-grid{grid-template-columns:1fr;}.zs-resources-grid{grid-template-columns:1fr;}}
   @media(max-width:720px){.zs-split{grid-template-columns:1fr;}}
-  @media(max-width:600px){.zs-hero{padding:1.8rem 1.35rem;min-height:0;}.zs-hero-wave{width:120%;opacity:.45;}.zs-hero h1{font-size:32px;}.zs-stats-grid{grid-template-columns:1fr;}.zs-types-grid{grid-template-columns:1fr;}}
+  @media(max-width:600px){.zs-hero{padding:1.8rem 1.35rem;min-height:0;}.zs-hero-wave{width:120%;opacity:.45;}.zs-hero h1{font-size:32px;}.zs-stats-grid{grid-template-columns:1fr;}.zs-types-grid{grid-template-columns:1fr;}.zs-steps-grid{grid-template-columns:1fr;}}
 
   /* More Apps Recommendation section */
   .more-apps{background:var(--zs-white);border:1px solid var(--zs-border);border-radius:18px;padding:1.4rem 1.6rem 1.5rem;box-shadow:var(--zs-shadow-sm);position:relative;overflow:hidden;}
@@ -703,6 +712,13 @@ export default function Index() {
     { icon: <PlayCircle size={26} />, cls: "sage", title: "Preview & Compare", desc: "See exactly what will transfer before you run it. Compare source vs target counts at a glance.", href: "/app/preview", meta: "Dry run · Zero changes to your store" },
   ];
 
+  const steps = [
+    { title: "Get the connection code", desc: <>On the <b>source</b> store, open ZS StoreSync → <b>Settings</b> and copy its connection code.</> },
+    { title: "Connect the source", desc: <>On <b>New Migration</b>, enter the source store domain and paste the connection code to authorize.</> },
+    { title: "Pick what to move", desc: <>Choose the data types — products, collections, pages, files & more. <b>Preview</b> counts before you run.</> },
+    { title: "Run & sync later", desc: <>Run it — duplicates are skipped. Come back anytime and use <b>Sync Changes</b> to pull only what&apos;s new.</> },
+  ];
+
   const planMeters = [
     { label: "Items this month", value: `${plan.monthlyUsed} / ${plan.monthlyLimit}`, pct: plan.monthlyPct },
   ];
@@ -740,6 +756,20 @@ export default function Index() {
             </div>
 
             <div className="zs-reveal zs-d2">
+              <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">How It Works</div><h2 className="zs-sec-title">Migrate in 4 Steps</h2></div></div>
+              <div className="zs-steps-grid">
+                {steps.map((s, i) => (
+                  <div key={i} className="zs-step">
+                    <span className="zs-step-conn">→</span>
+                    <div className="zs-step-num">{i + 1}</div>
+                    <div className="zs-step-title">{s.title}</div>
+                    <div className="zs-step-desc">{s.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="zs-reveal zs-d3">
               <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">Overview</div><h2 className="zs-sec-title">Migration Activity</h2></div></div>
               <div className="zs-stats-grid">
                 {statCards.map(({ icon, cls, label, value }) => (
@@ -751,7 +781,7 @@ export default function Index() {
               </div>
             </div>
 
-            <div className="zs-reveal zs-d3">
+            <div className="zs-reveal zs-d4">
               <div className="zs-sec-head">
                 <div><div className="zs-sec-eyebrow">Supported Data</div><h2 className="zs-sec-title">What StoreSync Moves</h2></div>
                 <RouterLink to="/app/plan" className="zs-sec-link">See plans →</RouterLink>
@@ -766,7 +796,7 @@ export default function Index() {
               </div>
             </div>
 
-            <div className="zs-reveal zs-d4">
+            <div className="zs-reveal zs-d5">
               <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">Get Started</div><h2 className="zs-sec-title">Run a Transfer</h2></div></div>
               <div className="zs-nav-grid">
                 {featureCards.map(({ icon, cls, title, desc, href, meta }) => (

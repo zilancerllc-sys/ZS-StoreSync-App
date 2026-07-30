@@ -1,6 +1,6 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { parseLogsJson, LOG_TAIL } from "../jobs.server";
+import { parseLogsJson } from "../jobs.server";
 
 // Resource route polled by the Migrate / Sync pages for live job status.
 // Scoped to the authenticated shop — one merchant can never read another's job.
@@ -28,7 +28,7 @@ export const loader = async ({ request, params }) => {
       total: job.itemCount,
       summary: job.summary,
       error: job.error,
-      logs: parseLogsJson(job.logJson).slice(-LOG_TAIL),
+      logs: parseLogsJson(job.logJson),
       finished: ["completed", "partial", "failed"].includes(job.status),
     },
   };

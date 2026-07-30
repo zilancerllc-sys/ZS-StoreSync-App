@@ -14,9 +14,6 @@ import { consumeQuota } from "./credits.server";
 // a "running" job older than this is considered dead (server restart etc.)
 const STALE_MS = 2 * 60 * 60 * 1000;
 
-// how many log lines the poll endpoint returns
-export const LOG_TAIL = 40;
-
 // ─── Log serialization that can never produce invalid JSON ────────────────────
 // The old code sliced the JSON string, which could cut mid-token and make the
 // History page crash on JSON.parse. Trim the ARRAY until the JSON fits instead.
