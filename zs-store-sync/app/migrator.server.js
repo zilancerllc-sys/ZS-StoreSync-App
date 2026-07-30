@@ -17,7 +17,7 @@
 async function gql(admin, query, variables = {}) {
   let attempt = 0;
   // simple retry loop for THROTTLED / transient errors
-  while (true) {
+  for (;;) {
     attempt++;
     const res = await admin.graphql(query, { variables });
     const json = await res.json();
@@ -133,6 +133,39 @@ const M_PRODUCT_UPDATE = `#graphql
     }
   }`;
 
+// existing target variants, so a sync can match them to source variants by SKU
+const Q_TARGET_PRODUCT_VARIANTS = `#graphql
+  query TargetVariants($id: ID!) {
+    product(id: $id) {
+      variants(first: 100) { edges { node { id sku } } }
+    }
+  }`;
+
+// ProductUpdateInput is NOT a superset of ProductCreateInput: `giftCard` and
+// `productOptions` are create-only, and sending them makes productUpdate fail
+// input coercion. Keep only the fields the update input actually accepts.
+const PRODUCT_UPDATE_FIELDS = [
+  "title",
+  "handle",
+  "descriptionHtml",
+  "vendor",
+  "productType",
+  "tags",
+  "status",
+  "templateSuffix",
+  "requiresSellingPlan",
+  "seo",
+  "metafields",
+];
+
+function productUpdateInput(product, id) {
+  const out = { id };
+  for (const k of PRODUCT_UPDATE_FIELDS) {
+    if (product[k] !== undefined) out[k] = product[k];
+  }
+  return out;
+}
+
 const M_VARIANTS_BULK_CREATE = `#graphql
   mutation VariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!, $strategy: ProductVariantsBulkCreateStrategy) {
     productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: $strategy) {
@@ -179,8 +212,55 @@ function variantBulkInput(v, withOptionValues) {
   return input;
 }
 
+// Sync mode: push price / compare-at / barcode / weight onto the variants that
+// already exist on the target, matched by SKU. Variants without a SKU can't be
+// matched across stores, and variants missing on the target are left alone (we
+// never create or delete variants during a sync).
+async function syncVariants(ctx, targetProductId, sourceProduct) {
+  const { target, onLog } = ctx;
+  const sourceVariants = (sourceProduct.variants?.edges || []).map(
+    (e) => e.node,
+  );
+  const bySku = new Map();
+  for (const v of sourceVariants) {
+    const sku = v.sku?.trim();
+    if (sku) bySku.set(sku, v);
+  }
+  if (!bySku.size) return;
+
+  try {
+    const td = await gql(target, Q_TARGET_PRODUCT_VARIANTS, {
+      id: targetProductId,
+    });
+    const updates = [];
+    for (const e of td?.product?.variants?.edges || []) {
+      const tv = e.node;
+      const sku = tv.sku?.trim();
+      const sv = sku ? bySku.get(sku) : null;
+      if (sv) updates.push({ id: tv.id, ...variantBulkInput(sv, false) });
+    }
+    if (!updates.length) return;
+
+    const vdata = await gql(target, M_VARIANTS_BULK_UPDATE, {
+      productId: targetProductId,
+      variants: updates,
+    });
+    const verrs = vdata?.productVariantsBulkUpdate?.userErrors;
+    if (verrs?.length) {
+      onLog(`  ⚠ Variant sync partial for ${sourceProduct.title} — ${verrs[0].message}`);
+    } else {
+      onLog(`  ↻ ${updates.length} variant(s) synced`);
+    }
+  } catch (err) {
+    onLog(
+      `  ⚠ Variant sync failed for ${sourceProduct.title} — ${String(err.message).slice(0, 100)}`,
+    );
+  }
+  await sleep(200);
+}
+
 async function migrateProducts(ctx) {
-  const { source, target, onLog, counters, hasQuota, consume } = ctx;
+  const { source, target, onLog, counters, consume } = ctx;
 
   const products = await fetchAll(
     source,
@@ -192,7 +272,7 @@ async function migrateProducts(ctx) {
   onLog(`Total ${products.length} products found. Importing…`);
 
   for (const p of products) {
-    if (!hasQuota()) {
+    if (ctx.stopOnQuota()) {
       onLog("Quota reached — stopping product import.");
       break;
     }
@@ -233,17 +313,7 @@ async function migrateProducts(ctx) {
               description: p.seo.description || undefined,
             }
           : undefined,
-      metafields: (p.metafields?.edges || [])
-        .map((e) => e.node)
-        .filter(
-          (m) => m.namespace !== "app" && !/_reference$/.test(m.type || ""),
-        )
-        .map((m) => ({
-          namespace: m.namespace,
-          key: m.key,
-          value: m.value,
-          type: m.type,
-        })),
+      metafields: metafieldsInput(p),
     };
     if (realOptions) {
       product.productOptions = (p.options || []).map((o) => ({
@@ -267,7 +337,7 @@ async function migrateProducts(ctx) {
       }
       try {
         const upd = await gql(target, M_PRODUCT_UPDATE, {
-          product: { ...product, id: existing.id },
+          product: productUpdateInput(product, existing.id),
         });
         const uerrs = upd?.productUpdate?.userErrors;
         if (uerrs?.length) {
@@ -276,6 +346,7 @@ async function migrateProducts(ctx) {
         } else {
           counters.updated++;
           onLog(`↻ Updated: ${p.title}`);
+          await syncVariants(ctx, existing.id, p);
         }
       } catch (err) {
         counters.failed++;
@@ -284,6 +355,12 @@ async function migrateProducts(ctx) {
         );
       }
       await sleep(200);
+      continue;
+    }
+
+    if (!ctx.canCreate()) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (quota reached, not created): ${p.title}`);
       continue;
     }
 
@@ -420,15 +497,66 @@ const M_COLLECTION_UPDATE = `#graphql
     }
   }`;
 
+// #7 — copy a manual collection's product membership, matching products by
+// handle across stores. Additive: products already in the target collection are
+// left in place (collectionAddProducts never removes), so this is safe to re-run.
+async function linkCollectionProducts(ctx, collectionId, sourceCollection) {
+  const { source, target, onLog } = ctx;
+
+  let cur = null;
+  const handles = [];
+  do {
+    const pd = await gql(source, Q_COLLECTION_PRODUCTS, {
+      id: sourceCollection.id,
+      cursor: cur,
+    });
+    const conn = pd?.collection?.products;
+    for (const e of conn?.edges ?? []) handles.push(e.node.handle);
+    cur = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+    if (cur) await sleep(250);
+  } while (cur);
+
+  const ids = [];
+  for (const h of handles) {
+    try {
+      const tp = await gql(target, Q_TARGET_PRODUCT_ID_BY_HANDLE, {
+        handle: h,
+      });
+      if (tp?.productByHandle?.id) ids.push(tp.productByHandle.id);
+    } catch {
+      /* product not on target — skip */
+    }
+  }
+
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
+    if (!batch.length) continue;
+    try {
+      await gql(target, M_COLLECTION_ADD_PRODUCTS, {
+        id: collectionId,
+        productIds: batch,
+      });
+    } catch {
+      onLog(`  ⚠ Could not add some products to ${sourceCollection.title}`);
+    }
+    await sleep(200);
+  }
+  if (handles.length) {
+    onLog(
+      `  → linked ${ids.length}/${handles.length} products to ${sourceCollection.title}`,
+    );
+  }
+}
+
 async function migrateCollections(ctx) {
-  const { source, target, onLog, counters, hasQuota, consume } = ctx;
+  const { source, target, onLog, counters, consume } = ctx;
   const cols = await fetchAll(source, Q_COLLECTIONS, "collections", {}, (n) =>
     onLog(`Fetched ${n} collections…`),
   );
   onLog(`Total ${cols.length} collections found. Importing…`);
 
   for (const c of cols) {
-    if (!hasQuota()) {
+    if (ctx.stopOnQuota()) {
       onLog("Quota reached — stopping collections.");
       break;
     }
@@ -449,17 +577,7 @@ async function migrateCollections(ctx) {
               description: c.seo.description || undefined,
             }
           : undefined,
-      metafields: (c.metafields?.edges || [])
-        .map((e) => e.node)
-        .filter(
-          (m) => m.namespace !== "app" && !/_reference$/.test(m.type || ""),
-        )
-        .map((m) => ({
-          namespace: m.namespace,
-          key: m.key,
-          value: m.value,
-          type: m.type,
-        })),
+      metafields: metafieldsInput(c),
     };
     if (c.ruleSet) {
       input.ruleSet = {
@@ -493,6 +611,9 @@ async function migrateCollections(ctx) {
         } else {
           counters.updated++;
           onLog(`↻ Updated: ${c.title}`);
+          if (!c.ruleSet) {
+            await linkCollectionProducts(ctx, existingCol.id, c);
+          }
         }
       } catch (err) {
         counters.failed++;
@@ -501,6 +622,12 @@ async function migrateCollections(ctx) {
         );
       }
       await sleep(180);
+      continue;
+    }
+
+    if (!ctx.canCreate()) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (quota reached, not created): ${c.title}`);
       continue;
     }
 
@@ -518,49 +645,7 @@ async function migrateCollections(ctx) {
         // #7 — manual collection: copy product membership by handle
         const newCollectionId = data?.collectionCreate?.collection?.id || null;
         if (!c.ruleSet && newCollectionId) {
-          let cur = null;
-          const handles = [];
-          do {
-            const pd = await gql(source, Q_COLLECTION_PRODUCTS, {
-              id: c.id,
-              cursor: cur,
-            });
-            const conn = pd?.collection?.products;
-            for (const e of conn?.edges ?? []) handles.push(e.node.handle);
-            cur = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
-            if (cur) await sleep(250);
-          } while (cur);
-
-          const ids = [];
-          for (const h of handles) {
-            try {
-              const tp = await gql(target, Q_TARGET_PRODUCT_ID_BY_HANDLE, {
-                handle: h,
-              });
-              if (tp?.productByHandle?.id) ids.push(tp.productByHandle.id);
-            } catch {
-              /* product not on target — skip */
-            }
-          }
-
-          for (let i = 0; i < ids.length; i += 100) {
-            const batch = ids.slice(i, i + 100);
-            if (!batch.length) continue;
-            try {
-              await gql(target, M_COLLECTION_ADD_PRODUCTS, {
-                id: newCollectionId,
-                productIds: batch,
-              });
-            } catch {
-              onLog(`  ⚠ Could not add some products to ${c.title}`);
-            }
-            await sleep(200);
-          }
-          if (handles.length) {
-            onLog(
-              `  → linked ${ids.length}/${handles.length} products to ${c.title}`,
-            );
-          }
+          await linkCollectionProducts(ctx, newCollectionId, c);
         }
       }
     } catch (err) {
@@ -571,6 +656,32 @@ async function migrateCollections(ctx) {
   }
 }
 
+// Metafields we can safely recreate on the target, preserving the exact
+// namespace/key/value/type. Two kinds are dropped:
+//   • app-reserved namespaces ("app", "app--…") — only the owning app may write
+//     them, so the target would reject the whole payload;
+//   • *_reference types — their values are gids pointing at SOURCE-store
+//     resources, which would be broken references on the target.
+// Everything else passes through, including the reserved SEO keys
+// global.title_tag / global.description_tag. That is how Page and Article SEO
+// migrates at all: neither type has an `seo` field in the Admin API.
+function metafieldsInput(node) {
+  return (node?.metafields?.edges || [])
+    .map((e) => e.node)
+    .filter(
+      (m) =>
+        m.namespace !== "app" &&
+        !String(m.namespace || "").startsWith("app--") &&
+        !/_reference$/.test(m.type || ""),
+    )
+    .map((m) => ({
+      namespace: m.namespace,
+      key: m.key,
+      value: m.value,
+      type: m.type,
+    }));
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  PAGES
 // ═════════════════════════════════════════════════════════════════════════════
@@ -578,7 +689,10 @@ const Q_PAGES = `#graphql
   query Pages($cursor: String) {
     pages(first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      edges { node { id title handle body isPublished templateSuffix } }
+      edges { node {
+        id title handle body isPublished publishedAt templateSuffix
+        metafields(first: 50) { edges { node { namespace key value type } } }
+      } }
     }
   }`;
 
@@ -607,7 +721,7 @@ const Q_TARGET_PAGES_ALL = `#graphql
   }`;
 
 async function migratePages(ctx) {
-  const { source, target, onLog, counters, hasQuota, consume } = ctx;
+  const { source, target, onLog, counters, consume } = ctx;
   const pages = await fetchAll(source, Q_PAGES, "pages", {}, (n) =>
     onLog(`Fetched ${n} pages…`),
   );
@@ -629,16 +743,19 @@ async function migratePages(ctx) {
   }
 
   for (const pg of pages) {
-    if (!hasQuota()) {
+    if (ctx.stopOnQuota()) {
       onLog("Quota reached — stopping pages.");
       break;
     }
+    const pageMf = metafieldsInput(pg);
     const pageBody = {
       title: pg.title,
       handle: pg.handle,
       body: pg.body,
       isPublished: pg.isPublished,
+      publishDate: pg.publishedAt || undefined,
       templateSuffix: pg.templateSuffix || null,
+      ...(pageMf.length ? { metafields: pageMf } : {}),
     };
 
     // find existing page by exact handle (in-memory map)
@@ -671,6 +788,12 @@ async function migratePages(ctx) {
         );
       }
       await sleep(160);
+      continue;
+    }
+
+    if (!ctx.canCreate()) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (quota reached, not created): ${pg.title}`);
       continue;
     }
 
@@ -717,12 +840,35 @@ const M_FILE_CREATE = `#graphql
     }
   }`;
 
+// Shopify exposes no filename on File, so dedupe on the CDN url's basename
+// ("…/files/hero.jpg?v=1" → "hero.jpg"), which Shopify preserves on re-upload.
+function fileKeyFromUrl(url) {
+  try {
+    return new URL(url).pathname.split("/").pop() || null;
+  } catch {
+    return String(url).split("?")[0].split("/").pop() || null;
+  }
+}
+
 async function migrateFiles(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
   const files = await fetchAll(source, Q_FILES, "files", {}, (n) =>
     onLog(`Fetched ${n} files…`),
   );
   onLog(`Total ${files.length} files found. Importing…`);
+
+  // existing target files, so a re-run doesn't duplicate the media library
+  const existingKeys = new Set();
+  try {
+    const tfiles = await fetchAll(target, Q_FILES, "files");
+    for (const tf of tfiles) {
+      const k = fileKeyFromUrl(tf.image?.url || tf.url || "");
+      if (k) existingKeys.add(k);
+    }
+    onLog(`${existingKeys.size} file(s) already on target.`);
+  } catch {
+    /* couldn't list target files — fall through and attempt every upload */
+  }
 
   for (const f of files) {
     if (!hasQuota()) {
@@ -734,6 +880,12 @@ async function migrateFiles(ctx) {
       // videos and other media without a public URL can't be re-uploaded
       counters.skipped++;
       onLog("↪︎ Skipped file (no downloadable URL — e.g. hosted video)");
+      continue;
+    }
+    const key = fileKeyFromUrl(url);
+    if (key && existingKeys.has(key)) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (exists): ${key}`);
       continue;
     }
     try {
@@ -753,7 +905,8 @@ async function migrateFiles(ctx) {
       } else {
         counters.created++;
         consume();
-        onLog(`✓ File uploaded`);
+        if (key) existingKeys.add(key);
+        onLog(`✓ File uploaded${key ? `: ${key}` : ""}`);
       }
     } catch (err) {
       counters.failed++;
@@ -800,6 +953,26 @@ const M_METAOBJECT_CREATE = `#graphql
       userErrors { field message }
     }
   }`;
+
+// A metaobject field value references another store resource if it is a bare
+// gid ("gid://…") or a JSON array of gids ('["gid://…", …]', as list-reference
+// fields store them). Those gids don't map across stores, so the field is
+// dropped instead of writing a broken reference.
+function hasCrossStoreGid(value) {
+  const s = String(value || "").trim();
+  if (/^gid:\/\//.test(s)) return true;
+  if (s.startsWith("[") && s.includes("gid://")) {
+    try {
+      const arr = JSON.parse(s);
+      return (
+        Array.isArray(arr) && arr.some((v) => /^gid:\/\//.test(String(v || "")))
+      );
+    } catch {
+      return true; // looks like a gid array but won't parse — safest to drop
+    }
+  }
+  return false;
+}
 
 async function migrateMetaobjects(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
@@ -861,7 +1034,7 @@ async function migrateMetaobjects(ctx) {
             type: def.type,
             handle: o.handle,
             fields: o.fields
-              .filter((f) => !/^gid:\/\//.test(String(f.value || "")))
+              .filter((f) => !hasCrossStoreGid(f.value))
               .map((f) => ({ key: f.key, value: f.value })),
           },
         });
@@ -881,15 +1054,34 @@ async function migrateMetaobjects(ctx) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  METAFIELD DEFINITIONS (product-level) — copies definitions so fields persist
+//  METAFIELD DEFINITIONS — copies definitions so migrated metafield VALUES show
+//  up in the target admin (and validate) instead of being invisible orphans.
+//  Covers every owner type this app migrates data for, not just products.
 // ═════════════════════════════════════════════════════════════════════════════
 const Q_METAFIELD_DEFS = `#graphql
-  query MFDefs($cursor: String) {
-    metafieldDefinitions(first: 50, ownerType: PRODUCT, after: $cursor) {
+  query MFDefs($ownerType: MetafieldOwnerType!, $cursor: String) {
+    metafieldDefinitions(first: 50, ownerType: $ownerType, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      edges { node { id name namespace key type { name } description } }
+      edges { node {
+        id name namespace key description
+        type { name }
+        validations { name value }
+      } }
     }
   }`;
+
+// owner types worth copying — one per resource kind the migrator handles
+const METAFIELD_OWNER_TYPES = [
+  "PRODUCT",
+  "PRODUCTVARIANT",
+  "COLLECTION",
+  "PAGE",
+  "ARTICLE",
+  "BLOG",
+  "CUSTOMER",
+  "ORDER",
+  "DRAFTORDER",
+];
 
 const M_METAFIELD_DEF_CREATE = `#graphql
   mutation MFDefCreate($definition: MetafieldDefinitionInput!) {
@@ -901,45 +1093,72 @@ const M_METAFIELD_DEF_CREATE = `#graphql
 
 async function migrateMetafields(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
-  const defs = await fetchAll(
-    source,
-    Q_METAFIELD_DEFS,
-    "metafieldDefinitions",
-    {},
-    (n) => onLog(`Fetched ${n} metafield definitions…`),
-  );
-  onLog(`Total ${defs.length} product metafield definitions found.`);
 
-  for (const d of defs) {
+  for (const ownerType of METAFIELD_OWNER_TYPES) {
     if (!hasQuota()) {
       onLog("Quota reached — stopping metafields.");
-      break;
+      return;
     }
+
+    let defs = [];
     try {
-      const data = await gql(target, M_METAFIELD_DEF_CREATE, {
-        definition: {
-          name: d.name,
-          namespace: d.namespace,
-          key: d.key,
-          type: d.type.name,
-          description: d.description || "",
-          ownerType: "PRODUCT",
-        },
+      defs = await fetchAll(source, Q_METAFIELD_DEFS, "metafieldDefinitions", {
+        ownerType,
       });
-      const errs = data?.metafieldDefinitionCreate?.userErrors;
-      if (errs?.length) {
-        counters.skipped++;
-        onLog(`↪︎ Exists: ${d.namespace}.${d.key}`);
-      } else {
-        counters.created++;
-        consume();
-        onLog(`✓ Definition: ${d.namespace}.${d.key}`);
-      }
     } catch (err) {
-      counters.failed++;
-      onLog(`✕ ${d.key} — ${String(err.message).slice(0, 100)}`);
+      // one unreadable owner type (missing scope, etc.) must not kill the rest
+      onLog(`✕ ${ownerType} definitions — ${String(err.message).slice(0, 100)}`);
+      continue;
     }
-    await sleep(140);
+
+    // app-reserved namespaces can't be recreated, and reserved SEO keys already
+    // have definitions on every store — attempting either is a guaranteed error
+    const copyable = defs.filter(
+      (d) =>
+        d.namespace !== "app" &&
+        !String(d.namespace || "").startsWith("app--") &&
+        d.namespace !== "global",
+    );
+    if (!copyable.length) continue;
+    onLog(`${copyable.length} ${ownerType} definition(s)…`);
+
+    for (const d of copyable) {
+      if (!hasQuota()) {
+        onLog("Quota reached — stopping metafields.");
+        return;
+      }
+      try {
+        const data = await gql(target, M_METAFIELD_DEF_CREATE, {
+          definition: {
+            name: d.name,
+            namespace: d.namespace,
+            key: d.key,
+            type: d.type.name,
+            description: d.description || "",
+            ownerType,
+            validations: (d.validations || []).map((v) => ({
+              name: v.name,
+              value: v.value,
+            })),
+          },
+        });
+        const errs = data?.metafieldDefinitionCreate?.userErrors;
+        if (errs?.length) {
+          counters.skipped++;
+          onLog(`↪︎ Exists: ${ownerType} ${d.namespace}.${d.key}`);
+        } else {
+          counters.created++;
+          consume();
+          onLog(`✓ Definition: ${ownerType} ${d.namespace}.${d.key}`);
+        }
+      } catch (err) {
+        counters.failed++;
+        onLog(
+          `✕ ${ownerType} ${d.key} — ${String(err.message).slice(0, 100)}`,
+        );
+      }
+      await sleep(140);
+    }
   }
 }
 
@@ -1361,7 +1580,7 @@ const Q_TARGET_REDIRECT_BY_PATH = `#graphql
   }`;
 
 async function migrateRedirects(ctx) {
-  const { source, target, onLog, counters, hasQuota, consume } = ctx;
+  const { source, target, onLog, counters, consume } = ctx;
   const redirects = await fetchAll(
     source,
     Q_REDIRECTS,
@@ -1372,7 +1591,7 @@ async function migrateRedirects(ctx) {
   onLog(`Total ${redirects.length} redirects found. Importing…`);
 
   for (const r of redirects) {
-    if (!hasQuota()) {
+    if (ctx.stopOnQuota()) {
       onLog("Quota reached — stopping redirects.");
       break;
     }
@@ -1414,6 +1633,12 @@ async function migrateRedirects(ctx) {
         );
       }
       await sleep(120);
+      continue;
+    }
+
+    if (!ctx.canCreate()) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (quota reached, not created): ${r.path}`);
       continue;
     }
 
@@ -1459,9 +1684,9 @@ const Q_BLOG_ARTICLES = `#graphql
         pageInfo { hasNextPage endCursor }
         edges { node {
           id title handle body summary tags isPublished publishedAt templateSuffix
-          seo { title description }
           author { name }
           image { url altText }
+          metafields(first: 50) { edges { node { namespace key value type } } }
         } }
       }
     }
@@ -1521,7 +1746,7 @@ const Q_TARGET_ARTICLE = `#graphql
   }`;
 
 async function migrateBlogPosts(ctx) {
-  const { source, target, onLog, counters, hasQuota, consume } = ctx;
+  const { source, target, onLog, counters, consume } = ctx;
   const blogs = await fetchAll(source, Q_BLOGS, "blogs", {}, (n) =>
     onLog(`Fetched ${n} blogs…`),
   );
@@ -1556,7 +1781,16 @@ async function migrateBlogPosts(ctx) {
     }
     if (!targetBlogId) continue;
 
-    const articles = await fetchAllArticles(source, blog.id);
+    // a failure reading one blog's articles must not abort the whole module
+    let articles = [];
+    try {
+      articles = await fetchAllArticles(source, blog.id);
+    } catch (err) {
+      onLog(
+        `✕ Could not read articles of ${blog.title} — ${String(err.message).slice(0, 120)}`,
+      );
+      continue;
+    }
     onLog(`${articles.length} article(s) in ${blog.title}…`);
 
     // map existing target articles by handle (for sync updates)
@@ -1578,10 +1812,11 @@ async function migrateBlogPosts(ctx) {
       /* ignore */
     }
     for (const a of articles) {
-      if (!hasQuota()) {
+      if (ctx.stopOnQuota()) {
         onLog("Quota reached — stopping blog posts.");
         return;
       }
+      const articleMf = metafieldsInput(a);
       const article = {
         blogId: targetBlogId,
         title: a.title,
@@ -1591,16 +1826,10 @@ async function migrateBlogPosts(ctx) {
         tags: a.tags || [],
         isPublished: a.isPublished,
         templateSuffix: a.templateSuffix || null,
-        publishedAt: a.publishedAt || undefined,
-        seo:
-          a.seo && (a.seo.title || a.seo.description)
-            ? {
-                title: a.seo.title || undefined,
-                description: a.seo.description || undefined,
-              }
-            : undefined,
+        publishDate: a.publishedAt || undefined,
         author: a.author?.name ? { name: a.author.name } : undefined,
       };
+      if (articleMf.length) article.metafields = articleMf;
       if (a.image?.url) {
         article.image = { url: a.image.url, altText: a.image.altText || "" };
       }
@@ -1614,10 +1843,11 @@ async function migrateBlogPosts(ctx) {
         }
         try {
           // articleUpdate doesn't take blogId; drop it from the payload
-          const { blogId, ...articleNoBlorg } = article;
+          const articleNoBlog = { ...article };
+          delete articleNoBlog.blogId;
           const upd = await gql(target, M_ARTICLE_UPDATE, {
             id: existingArticleId,
-            article: articleNoBlorg,
+            article: articleNoBlog,
           });
           const uerrs = upd?.articleUpdate?.userErrors;
           if (uerrs?.length) {
@@ -1633,6 +1863,13 @@ async function migrateBlogPosts(ctx) {
             `✕ Update error: ${a.title} — ${String(err.message).slice(0, 120)}`,
           );
         }
+        await sleep(160);
+        continue;
+      }
+
+      if (!ctx.canCreate()) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (quota reached, not created): ${a.title}`);
         await sleep(160);
         continue;
       }
@@ -1708,6 +1945,20 @@ const RESOURCE_MENU_TYPES = new Set([
   "SHOP_POLICY",
 ]);
 
+// Resource-bound item urls are absolute and point at the SOURCE store
+// (https://source.myshopify.com/collections/x). Strip the origin so the link
+// resolves against the TARGET storefront instead of sending shoppers back to
+// the source. External HTTP links the merchant authored are left untouched.
+function relativizeUrl(url) {
+  if (!url) return "/";
+  try {
+    const u = new URL(url);
+    return `${u.pathname}${u.search}${u.hash}` || "/";
+  } catch {
+    return url.startsWith("/") ? url : "/";
+  }
+}
+
 function mapMenuItem(item) {
   const isResource = RESOURCE_MENU_TYPES.has(item.type);
   const node = {
@@ -1717,7 +1968,7 @@ function mapMenuItem(item) {
   };
   // FRONTPAGE / SEARCH don't take a url; everything else uses the source url
   if (node.type !== "FRONTPAGE" && node.type !== "SEARCH") {
-    node.url = item.url || "/";
+    node.url = isResource ? relativizeUrl(item.url) : item.url || "/";
   }
   if (item.items?.length) {
     node.items = item.items.map(mapMenuItem);
@@ -2156,6 +2407,285 @@ async function migrateDiscounts(ctx) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  THEME (published theme → new UNPUBLISHED theme on target)
+//
+//  Copies the source store's live/published theme — all Liquid/JSON templates,
+//  sections, snippets, config, locales and assets — so templateSuffix references
+//  copied with products/collections/pages/articles actually resolve on target.
+//
+//  Shopify has no "create empty theme" API: themeCreate REQUIRES a source zip.
+//  So we bootstrap the target theme from Dawn's public zip, overwrite every file
+//  with the SOURCE theme's files, then delete any bootstrap-only leftovers — the
+//  final theme equals the source. It is left UNPUBLISHED; the merchant reviews
+//  and publishes it, so the target store's live storefront is never touched.
+//
+//  This is an always-on bundled step (not a credited migration type).
+// ═════════════════════════════════════════════════════════════════════════════
+const THEME_BOOTSTRAP_ZIP =
+  "https://github.com/Shopify/dawn/archive/refs/heads/main.zip";
+
+const Q_SOURCE_MAIN_THEME = `#graphql
+  query MainTheme {
+    themes(first: 1, roles: [MAIN]) {
+      nodes { id name }
+    }
+  }`;
+
+const Q_TARGET_THEMES = `#graphql
+  query TargetThemes($cursor: String) {
+    themes(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes { id name role }
+    }
+  }`;
+
+const Q_THEME_PROCESSING = `#graphql
+  query ThemeProcessing($id: ID!) {
+    theme(id: $id) { id processing }
+  }`;
+
+// full file bodies (for reading the SOURCE theme)
+const Q_THEME_FILES = `#graphql
+  query ThemeFiles($id: ID!, $cursor: String) {
+    theme(id: $id) {
+      files(first: 50, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          filename
+          body {
+            __typename
+            ... on OnlineStoreThemeFileBodyText { content }
+            ... on OnlineStoreThemeFileBodyBase64 { contentBase64 }
+            ... on OnlineStoreThemeFileBodyUrl { url }
+          }
+        }
+      }
+    }
+  }`;
+
+// filenames only (for finding bootstrap leftovers to delete on TARGET)
+const Q_THEME_FILENAMES = `#graphql
+  query ThemeFilenames($id: ID!, $cursor: String) {
+    theme(id: $id) {
+      files(first: 50, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { filename }
+      }
+    }
+  }`;
+
+const M_THEME_CREATE = `#graphql
+  mutation ThemeCreate($name: String!, $source: URL!) {
+    themeCreate(name: $name, source: $source) {
+      theme { id name }
+      userErrors { field message }
+    }
+  }`;
+
+const M_THEME_FILES_UPSERT = `#graphql
+  mutation ThemeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+    themeFilesUpsert(themeId: $themeId, files: $files) {
+      userErrors { field message code }
+    }
+  }`;
+
+const M_THEME_FILES_DELETE = `#graphql
+  mutation ThemeFilesDelete($themeId: ID!, $files: [String!]!) {
+    themeFilesDelete(themeId: $themeId, files: $files) {
+      userErrors { field message code }
+    }
+  }`;
+
+// map a source OnlineStoreThemeFile to an upsert input; URL-bodied assets are
+// re-fetched by Shopify from the source CDN (pass-through, no download here)
+function themeFileUpsertInput(node) {
+  const b = node?.body;
+  if (!b || !node.filename) return null;
+  if (b.__typename === "OnlineStoreThemeFileBodyText" && b.content != null) {
+    return { filename: node.filename, body: { type: "TEXT", value: b.content } };
+  }
+  if (b.__typename === "OnlineStoreThemeFileBodyBase64" && b.contentBase64 != null) {
+    return {
+      filename: node.filename,
+      body: { type: "BASE64", value: b.contentBase64 },
+    };
+  }
+  if (b.__typename === "OnlineStoreThemeFileBodyUrl" && b.url != null) {
+    return { filename: node.filename, body: { type: "URL", value: b.url } };
+  }
+  return null;
+}
+
+// wait out the async bootstrap import so upserts don't race theme processing
+async function waitForThemeReady(admin, themeId, onLog) {
+  for (let i = 0; i < 30; i++) {
+    try {
+      const d = await gql(admin, Q_THEME_PROCESSING, { id: themeId });
+      if (d?.theme && d.theme.processing === false) return;
+    } catch {
+      /* transient — retry */
+    }
+    await sleep(2000);
+  }
+  onLog("  ⚠ Theme still processing after wait — continuing anyway.");
+}
+
+async function migrateThemes(ctx) {
+  const { source, target, onLog, counters } = ctx;
+
+  // 1. source published theme
+  let src = null;
+  try {
+    const d = await gql(source, Q_SOURCE_MAIN_THEME);
+    src = d?.themes?.nodes?.[0] || null;
+  } catch (err) {
+    onLog(
+      `✕ Theme: could not read source theme — ${String(err.message).slice(0, 120)}`,
+    );
+    return;
+  }
+  if (!src) {
+    onLog("↪︎ Theme: no published theme on source — skipped.");
+    return;
+  }
+
+  const targetName = `${src.name} (migrated)`;
+
+  // 2. idempotency — skip if we already created this theme on the target
+  try {
+    let cursor = null;
+    do {
+      const d = await gql(target, Q_TARGET_THEMES, { cursor });
+      const conn = d?.themes;
+      for (const t of conn?.nodes ?? []) {
+        if (t.name === targetName) {
+          onLog(`↪︎ Theme exists on target: "${targetName}" — skipped.`);
+          return;
+        }
+      }
+      cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+    } while (cursor);
+  } catch {
+    /* couldn't list — fall through and attempt create */
+  }
+
+  // 3. create target theme (unpublished) from the bootstrap zip
+  let newThemeId = null;
+  try {
+    const d = await gql(target, M_THEME_CREATE, {
+      name: targetName,
+      source: THEME_BOOTSTRAP_ZIP,
+    });
+    const errs = d?.themeCreate?.userErrors;
+    if (errs?.length) {
+      onLog(`✕ Theme create failed — ${errs[0].message}`);
+      return;
+    }
+    newThemeId = d?.themeCreate?.theme?.id || null;
+  } catch (err) {
+    onLog(`✕ Theme create error — ${String(err.message).slice(0, 140)}`);
+    return;
+  }
+  if (!newThemeId) {
+    onLog("✕ Theme create returned no id — skipped.");
+    return;
+  }
+  onLog(`✓ Theme created (unpublished): "${targetName}" — copying files…`);
+
+  // 4. wait for the bootstrap import to finish processing
+  await waitForThemeReady(target, newThemeId, onLog);
+
+  // 5. read every file from the source theme
+  const srcFiles = [];
+  try {
+    let cursor = null;
+    do {
+      const d = await gql(source, Q_THEME_FILES, { id: src.id, cursor });
+      const conn = d?.theme?.files;
+      for (const n of conn?.nodes ?? []) srcFiles.push(n);
+      cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+      if (cursor) await sleep(250);
+    } while (cursor);
+  } catch (err) {
+    onLog(
+      `✕ Theme: reading source files failed — ${String(err.message).slice(0, 120)}`,
+    );
+    return;
+  }
+
+  const inputs = srcFiles.map(themeFileUpsertInput).filter(Boolean);
+  const sourceFilenames = new Set(inputs.map((f) => f.filename));
+  onLog(`  ${inputs.length} source theme files to copy…`);
+
+  // 6. overwrite the bootstrap files with the source files (small batches)
+  let upserted = 0;
+  let fileIssues = 0;
+  for (let i = 0; i < inputs.length; i += 5) {
+    const batch = inputs.slice(i, i + 5);
+    try {
+      const d = await gql(target, M_THEME_FILES_UPSERT, {
+        themeId: newThemeId,
+        files: batch,
+      });
+      const errs = d?.themeFilesUpsert?.userErrors;
+      if (errs?.length) {
+        fileIssues += batch.length;
+        onLog(`  ⚠ Some theme files failed — ${errs[0].message}`);
+      } else {
+        upserted += batch.length;
+      }
+    } catch (err) {
+      fileIssues += batch.length;
+      onLog(`  ⚠ Theme file batch error — ${String(err.message).slice(0, 100)}`);
+    }
+    await sleep(400);
+  }
+  onLog(
+    `  copied ${upserted} files${fileIssues ? `, ${fileIssues} had issues` : ""}.`,
+  );
+
+  // 7. delete bootstrap-only leftovers (files on target not present in source)
+  try {
+    const targetFilenames = [];
+    let cursor = null;
+    do {
+      const d = await gql(target, Q_THEME_FILENAMES, {
+        id: newThemeId,
+        cursor,
+      });
+      const conn = d?.theme?.files;
+      for (const n of conn?.nodes ?? []) targetFilenames.push(n.filename);
+      cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+      if (cursor) await sleep(250);
+    } while (cursor);
+
+    const leftovers = targetFilenames.filter((f) => !sourceFilenames.has(f));
+    for (let i = 0; i < leftovers.length; i += 10) {
+      const batch = leftovers.slice(i, i + 10);
+      try {
+        await gql(target, M_THEME_FILES_DELETE, {
+          themeId: newThemeId,
+          files: batch,
+        });
+      } catch {
+        /* best-effort cleanup */
+      }
+      await sleep(300);
+    }
+    if (leftovers.length) {
+      onLog(`  removed ${leftovers.length} bootstrap file(s) not in source.`);
+    }
+  } catch {
+    /* cleanup is best-effort — leftover base files don't break the theme */
+  }
+
+  counters.created++;
+  onLog(
+    `✓ Theme sync complete: "${targetName}" — review and publish it in the target admin.`,
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  ORCHESTRATOR
 // ═════════════════════════════════════════════════════════════════════════════
 const RUNNERS = {
@@ -2173,8 +2703,10 @@ const RUNNERS = {
   customers: migrateCustomers,
 };
 
-// Order matters: definitions/collections before products is fine here because
-// we use live lookups; metafield defs first so product fields stick.
+// Order matters: metafield/metaobject definitions first so product fields
+// stick; products before collections so manual-collection membership (#7) can
+// resolve its members by handle on the target; menus after the resources they
+// link to. All cross-references use live handle/SKU lookups, not stored maps.
 const RUN_ORDER = [
   "metafields",
   "metaobjects",
@@ -2233,11 +2765,29 @@ export async function runMigration({
     counters,
     mode,
     hasQuota: () => hasQuota(currentType),
+    // In migrate mode, exhausting quota ends the module — there is nothing left
+    // to do. In sync mode updates cost nothing, so keep scanning the remaining
+    // source items to update the ones that already exist; only creates are
+    // withheld (guard the create path with canCreate()).
+    stopOnQuota: () => !hasQuota(currentType) && mode !== "sync",
+    canCreate: () => hasQuota(currentType),
     consume: () => consume(currentType),
     setType: (t) => {
       currentType = t;
     },
   };
+
+  // Themes are an always-on bundled step (not a credited type): copy the
+  // source's published theme into a new UNPUBLISHED theme on the target BEFORE
+  // other data, so templateSuffix references resolve. Never publishes and never
+  // edits the target's live theme. Skips cheaply if already copied.
+  currentType = "themes";
+  onLog("── THEME ──");
+  try {
+    await migrateThemes(ctx);
+  } catch (err) {
+    onLog(`✕ theme module failed: ${String(err.message).slice(0, 160)}`);
+  }
 
   const ordered = RUN_ORDER.filter((t) => types.includes(t));
   for (const t of ordered) {
