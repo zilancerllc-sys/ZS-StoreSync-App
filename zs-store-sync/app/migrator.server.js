@@ -15,6 +15,26 @@
 
 import { customerRef } from "./redact.server";
 
+// Namespaces (metafields) and types (metaobjects) that Shopify or another app
+// owns. They already exist on every store and creating them is always refused
+// — "Not authorized. This type is reserved for use by another application."
+// Attempting them turned otherwise-clean runs into "partial" and put errors in
+// the log that no merchant can act on.
+//   app / app--*      another app's private namespace
+//   global            legacy reserved namespace (SEO keys live here)
+//   shopify / shopify--*  Shopify's own standard definitions, e.g.
+//                     shopify--color-pattern, shopify--flavor
+function isReservedNamespace(value) {
+  const s = String(value || "");
+  return (
+    s === "app" ||
+    s.startsWith("app--") ||
+    s === "global" ||
+    s === "shopify" ||
+    s.startsWith("shopify--")
+  );
+}
+
 // ── GraphQL helper with basic throttle/retry handling ────────────────────────
 async function gql(admin, query, variables = {}) {
   let attempt = 0;
@@ -1283,6 +1303,19 @@ async function migrateFiles(ctx) {
       onLog(`↪︎ Skipped (exists): ${key}`);
       continue;
     }
+    // Shopify accepts an IMAGE or generic FILE straight from a URL, but a
+    // VIDEO or MODEL_3D has to be pushed through stagedUploadsCreate — handing
+    // it another store's CDN URL is always rejected ("Invalid video url").
+    // Counting that as a failure told merchants something was broken and left
+    // clean runs sitting at "partial"; say what actually has to happen instead.
+    // EXTERNAL_VIDEO (YouTube/Vimeo) is just a link, so it still goes through.
+    if (contentType === "VIDEO" || contentType === "MODEL_3D") {
+      counters.skipped++;
+      onLog(
+        `↪︎ Skipped ${contentType === "VIDEO" ? "video" : "3D model"}${key ? `: ${key}` : ""} — Shopify does not allow copying these between stores; re-upload it in the target store's Content › Files.`,
+      );
+      continue;
+    }
     try {
       const data = await gql(target, M_FILE_CREATE, {
         files: [
@@ -1385,6 +1418,14 @@ async function migrateMetaobjects(ctx) {
   onLog(`Total ${defs.length} metaobject definitions found.`);
 
   for (const def of defs) {
+    // Shopify's own standard metaobject types (shopify--color-pattern,
+    // shopify--flavor, …) are present on every store and cannot be created by
+    // an app. This path had no reserved-type filter at all, so every run
+    // carrying them logged an error and finished "partial".
+    if (isReservedNamespace(def.type)) {
+      onLog(`↪︎ Standard definition (already on every store): ${def.type}`);
+      continue;
+    }
     // create the definition on target ("taken" = already exists → fine)
     try {
       const ddata = await gql(target, M_METAOBJECT_DEF_CREATE, {
@@ -1512,12 +1553,7 @@ async function migrateMetafields(ctx) {
 
     // app-reserved namespaces can't be recreated, and reserved SEO keys already
     // have definitions on every store — attempting either is a guaranteed error
-    const copyable = defs.filter(
-      (d) =>
-        d.namespace !== "app" &&
-        !String(d.namespace || "").startsWith("app--") &&
-        d.namespace !== "global",
-    );
+    const copyable = defs.filter((d) => !isReservedNamespace(d.namespace));
     if (!copyable.length) continue;
     onLog(`${copyable.length} ${ownerType} definition(s)…`);
 
