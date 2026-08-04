@@ -13,6 +13,8 @@
 //    const result = await runMigration({ source, target, types, mode, onLog });
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { customerRef } from "./redact.server";
+
 // ── GraphQL helper with basic throttle/retry handling ────────────────────────
 async function gql(admin, query, variables = {}) {
   let attempt = 0;
@@ -1634,7 +1636,7 @@ async function migrateCustomers(ctx) {
         });
         if (r?.customers?.edges?.length) {
           counters.skipped++;
-          onLog(`↪︎ Skipped (exists): ${c.email}`);
+          onLog(`↪︎ Skipped (exists): ${customerRef(c)}`);
           continue;
         }
       } catch {
@@ -1658,16 +1660,16 @@ async function migrateCustomers(ctx) {
       const errs = data?.customerCreate?.userErrors;
       if (errs?.length) {
         counters.skipped++;
-        onLog(`↪︎ Skipped: ${c.email || c.id} — ${errText(errs)}`);
+        onLog(`↪︎ Skipped: ${customerRef(c)} — ${errText(errs)}`);
       } else {
         counters.created++;
         consume();
-        onLog(`✓ Customer: ${c.email || `${c.firstName} ${c.lastName}`}`);
+        onLog(`✓ Customer: ${customerRef(c)}`);
       }
     } catch (err) {
       counters.failed++;
       onLog(
-        `✕ Customer error: ${c.email || c.id} — ${String(err.message).slice(0, 120)}`,
+        `✕ Customer error: ${customerRef(c)} — ${String(err.message).slice(0, 120)}`,
       );
     }
     await sleep(200);

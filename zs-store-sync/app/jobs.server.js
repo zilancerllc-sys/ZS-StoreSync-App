@@ -10,6 +10,7 @@ import db from "./db.server";
 import { unauthenticated } from "./shopify.server";
 import { runMigration } from "./migrator.server";
 import { consumeQuota } from "./credits.server";
+import { redactPII } from "./redact.server";
 
 // a "running" job older than this is considered dead (server restart etc.)
 const STALE_MS = 2 * 60 * 60 * 1000;
@@ -96,7 +97,10 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode }) {
   const logs = [];
   let dirty = false;
   const onLog = (msg) => {
-    logs.push(`[${new Date().toISOString().slice(11, 19)}] ${msg}`);
+    // Single chokepoint: job logs are persisted and shown on History, so every
+    // line is scrubbed here rather than at each of the ~40 call sites. This
+    // also covers PII echoed back inside Shopify userError / error messages.
+    logs.push(`[${new Date().toISOString().slice(11, 19)}] ${redactPII(msg)}`);
     dirty = true;
   };
 
