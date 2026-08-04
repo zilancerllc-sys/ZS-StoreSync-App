@@ -19,7 +19,12 @@ primary_region = 'sin'
 [http_service]
   internal_port = 3000
   force_https = true
-  auto_stop_machines = 'stop'
+  # 'suspend' rather than 'stop': a stopped machine has to boot the VM and
+  # start the container again, which took longer than fly-proxy waits (it gives
+  # up after ~8s), so waking an idle machine served "failed to connect to
+  # machine" to whoever triggered it. Suspend restores from a memory snapshot
+  # instead. Fly falls back to stop on its own if a machine can't be suspended.
+  auto_stop_machines = 'suspend'
   auto_start_machines = true
   min_machines_running = 1
   processes = ['app']
