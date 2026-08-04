@@ -331,11 +331,13 @@ const pageStyles = `
   .zs-note svg{flex-shrink:0;margin-top:2px;}
   .zs-conn-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--zs-muted);margin:18px 0 10px;}
   .zs-conn-list{display:flex;flex-direction:column;gap:8px;}
-  .zs-conn{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1.5px solid var(--zs-border);border-radius:var(--zs-r-sm);cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s;position:relative;}
+  /* No cursor:pointer here any more — the row is a container; the store
+     details inside it are the button that selects the source. */
+  .zs-conn{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1.5px solid var(--zs-border);border-radius:var(--zs-r-sm);transition:border-color .15s,background .15s,box-shadow .15s;position:relative;}
   .zs-conn:hover{border-color:var(--zs-camel);background:var(--zs-cream-soft);}
   .zs-conn.sel{border-color:var(--zs-clay);background:var(--zs-clay-soft);box-shadow:0 0 0 3px rgba(169,139,118,.12);}
   .zs-conn.unauth{opacity:.92;}
-  .zs-conn-left{display:flex;align-items:center;gap:11px;min-width:0;}
+  .zs-conn-left{display:flex;align-items:center;gap:11px;min-width:0;background:none;border:none;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;flex:1;}
   .zs-conn-ico{width:36px;height:36px;border-radius:10px;background:var(--zs-sage-soft);color:var(--zs-sage-deep);display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative;}
   .zs-conn.sel .zs-conn-ico{background:var(--zs-clay);color:#fff;}
   .zs-conn-name{font-size:14px;font-weight:600;color:var(--zs-dark);display:flex;align-items:center;gap:8px;}
@@ -353,7 +355,7 @@ const pageStyles = `
   .zs-confirm-yes{background:#9a3412;color:#fff;border:none;padding:5px 11px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;}
   .zs-confirm-no{background:#fff;color:var(--zs-muted);border:1px solid var(--zs-border);padding:5px 11px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;}
   .zs-types{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px;}
-  .zs-type-chk{display:flex;align-items:center;gap:9px;padding:12px;border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);cursor:pointer;transition:all .15s;user-select:none;}
+  .zs-type-chk{display:flex;align-items:center;gap:9px;padding:12px;border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);cursor:pointer;transition:all .15s;user-select:none;background:none;font:inherit;color:inherit;text-align:left;width:100%;}
   .zs-type-chk:hover{border-color:var(--zs-camel);}
   .zs-type-chk.on{border-color:var(--zs-clay);background:var(--zs-clay-soft);}
   .zs-type-chk.locked{opacity:.45;cursor:not-allowed;}
@@ -562,7 +564,7 @@ export default function Migrate() {
               <div className="zs-code-hint">
                 <KeyRound size={14} />
                 <span>
-                  The source store's owner finds its connection code in ZS
+                  The source store&apos;s owner finds its connection code in ZS
                   StoreSync → Settings on that store.
                 </span>
               </div>
@@ -615,11 +617,20 @@ export default function Migrate() {
                         <div
                           key={c.id}
                           className={`zs-conn ${isSel ? "sel" : ""} ${c.authorized ? "" : "unauth"}`}
-                          onClick={() =>
-                            !isConfirming && setSelectedSource(c.sourceShop)
-                          }
                         >
-                          <div className="zs-conn-left">
+                          {/* The row itself is not the control: it already
+                              contains buttons, and nesting interactive
+                              elements is invalid. The store's details are the
+                              button, so selecting a source works by keyboard
+                              without swallowing the actions on the right. */}
+                          <button
+                            type="button"
+                            className="zs-conn-left"
+                            aria-pressed={isSel}
+                            onClick={() =>
+                              !isConfirming && setSelectedSource(c.sourceShop)
+                            }
+                          >
                             <div className="zs-conn-ico">
                               {isSel ? (
                                 <Check size={17} />
@@ -642,12 +653,12 @@ export default function Migrate() {
                                   : "Never used"}
                               </div>
                             </div>
-                          </div>
+                          </button>
 
-                          <div
-                            className="zs-conn-right"
-                            onClick={(e) => e.stopPropagation()}
-                          >
+                          {/* No stopPropagation needed any more — the row is a
+                              plain container, so these clicks were never going
+                              to bubble into a selection. */}
+                          <div className="zs-conn-right">
                             {isConfirming ? (
                               <div className="zs-confirm">
                                 <span className="zs-confirm-txt">
@@ -720,9 +731,11 @@ export default function Migrate() {
                   const left = remaining[t.id] ?? 0;
                   const lim = limits[t.id] ?? 0;
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={t.id}
                       className={`zs-type-chk ${on ? "on" : ""} ${locked ? "locked" : ""}`}
+                      aria-pressed={on}
                       onClick={() => toggleType(t.id)}
                     >
                       <div className="ico">{t.icon}</div>
@@ -746,7 +759,7 @@ export default function Migrate() {
                           </div>
                         )}
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>

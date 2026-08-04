@@ -7,7 +7,7 @@ import { getUsage } from "../credits.server";
 import { getVerifiedConnection } from "../connection.server";
 import { previewCounts } from "../migrator.server";
 import { brandStyles } from "./zs-styles.js";
-import { Eye, Loader2, AlertCircle, Package, Layers } from "lucide-react";
+import { Eye, Loader2, AlertCircle } from "lucide-react";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -74,7 +74,7 @@ const pageStyles = `
   .zs-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
   .zs-select{padding:12px 14px;border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);font-size:14px;font-family:inherit;background:var(--zs-cream-soft);color:var(--zs-dark);min-width:240px;}
   .zs-chk-row{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0;}
-  .zs-chk{font-size:13px;font-weight:600;padding:8px 14px;border:1px solid var(--zs-border);border-radius:20px;cursor:pointer;user-select:none;transition:all .15s;}
+  .zs-chk{font-size:13px;font-weight:600;padding:8px 14px;border:1px solid var(--zs-border);border-radius:20px;cursor:pointer;user-select:none;transition:all .15s;background:none;font-family:inherit;color:inherit;}
   .zs-chk.on{background:var(--zs-clay-soft);border-color:var(--zs-clay);color:var(--zs-clay-deep);}
   .zs-chk.lock{opacity:.4;cursor:not-allowed;}
   .zs-btn{background:var(--zs-clay);color:#fff;border:none;padding:12px 22px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px;box-shadow:var(--zs-shadow-clay);}
@@ -164,13 +164,15 @@ export default function Preview() {
                           ? ` · ${lim}/mo +overage`
                           : ` · ${left}/${lim}`;
                       return (
-                        <div
+                        <button
+                          type="button"
                           key={t.id}
                           className={`zs-chk ${picked.includes(t.id) ? "on" : ""} ${locked ? "lock" : ""}`}
+                          aria-pressed={picked.includes(t.id)}
                           onClick={() => toggle(t.id)}
                         >
                           {t.name}{meta}
-                        </div>
+                        </button>
                       );
                     })}
                   </div>

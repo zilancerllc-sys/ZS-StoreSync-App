@@ -141,7 +141,7 @@ export default function Settings() {
                   .
                 </li>
                 <li>
-                  Go to <b>New Migration</b> and enter this store's domain.
+                  Go to <b>New Migration</b> and enter this store&apos;s domain.
                 </li>
                 <li>
                   When asked, paste this connection code to authorize the
@@ -172,7 +172,7 @@ export default function Settings() {
             <div className="zs-note" style={{ marginTop: 16 }}>
               <Info size={16} />
               <span>
-                Tip: The store you migrate <b>into</b> doesn't need a code —
+                Tip: The store you migrate <b>into</b> doesn&apos;t need a code —
                 only the
                 <b> source</b> store (the one being copied from) requires it.
               </span>

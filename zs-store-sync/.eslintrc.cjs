@@ -50,6 +50,10 @@ module.exports = {
       },
       rules: {
         "react/no-unknown-property": ["error", { ignore: ["variant"] }],
+        // This codebase types props through TypeScript (npm run typecheck),
+        // not the runtime prop-types package, which isn't a dependency. Leaving
+        // the rule on only produced noise that hid the real findings.
+        "react/prop-types": "off",
       },
     },
 
@@ -84,6 +88,10 @@ module.exports = {
         ".graphqlrc.{js,ts}",
         "shopify.server.{js,ts}",
         "**/*.server.{js,ts}",
+        // Route modules are server code too — their loaders and actions read
+        // process.env — even though the component half also ships to the
+        // browser. Without this every `process.env` in a route is a no-undef.
+        "app/routes/**/*.{js,jsx}",
       ],
       env: {
         node: true,

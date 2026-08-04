@@ -269,10 +269,10 @@ const pageStyles = `
 
   /* ── Toggle ── */
   .zs-toggle-wrap { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 26px; flex-wrap: wrap; }
-  .zs-toggle-label { font-size: 13px; font-weight: 600; color: #b4ada5; transition: color .15s; cursor: pointer; user-select: none; }
+  .zs-toggle-label { font-size: 13px; font-weight: 600; color: #b4ada5; transition: color .15s; cursor: pointer; user-select: none; background: none; border: none; font-family: inherit; padding: 0; }
   .zs-toggle-label.active { color: var(--zs-dark); }
   .zs-toggle-cb { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
-  .zs-toggle-track { width: 52px; height: 28px; border-radius: 20px; background: var(--zs-clay); cursor: pointer; position: relative; flex-shrink: 0; display: inline-block; transition: background .2s; }
+  .zs-toggle-track { width: 52px; height: 28px; border-radius: 20px; background: var(--zs-clay); cursor: pointer; position: relative; flex-shrink: 0; display: inline-block; transition: background .2s; border: none; padding: 0; }
   .zs-toggle-knob { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .22s cubic-bezier(.2,.7,.2,1); box-shadow: 0 2px 4px rgba(0,0,0,.2); pointer-events: none; }
   .zs-toggle-track.annual .zs-toggle-knob { transform: translateX(24px); }
   .zs-save-badge { font-size: 11px; font-weight: 700; color: #3a7020; background: #eaf4e3; padding: 4px 10px; border-radius: 20px; }
@@ -724,30 +724,40 @@ export default function Plan() {
                 Plans that grow <em>with your store</em>
               </h1>
               <p className="zs-pricing-sub">
-                Start free, upgrade when you're ready. Migrate and sync
+                Start free, upgrade when you&apos;re ready. Migrate and sync
                 products, collections, pages, files, and more — billed securely
                 through Shopify.
               </p>
 
+              {/* These were <label>s with click handlers and no control to
+                  label — invisible to keyboard and announced as nothing. The
+                  middle one is the real control, exposed as a switch; the two
+                  words either side are ordinary buttons that set it. */}
               <div className="zs-toggle-wrap">
-                <label
+                <button
+                  type="button"
                   className={`zs-toggle-label ${!annual ? "active" : ""}`}
                   onClick={() => setAnnual(false)}
                 >
                   Monthly
-                </label>
-                <label
+                </button>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={annual}
+                  aria-label="Bill annually"
                   className={`zs-toggle-track ${annual ? "annual" : ""}`}
                   onClick={() => setAnnual((v) => !v)}
                 >
                   <span className="zs-toggle-knob" />
-                </label>
-                <label
+                </button>
+                <button
+                  type="button"
                   className={`zs-toggle-label ${annual ? "active" : ""}`}
                   onClick={() => setAnnual(true)}
                 >
                   Annual
-                </label>
+                </button>
                 <span className="zs-save-badge">Save up to {maxSavings}%</span>
               </div>
             </div>
@@ -759,7 +769,6 @@ export default function Plan() {
                 const isFree = planPrice[planId] === 0;
                 const meta = PLAN_META[planId] || {};
                 const { price, period, billed } = priceLabel(planId);
-                const submitting = submittingPlan === planId;
 
                 return (
                   <div

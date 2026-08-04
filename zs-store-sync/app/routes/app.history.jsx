@@ -98,7 +98,9 @@ const pageStyles = `
   .zs-reveal{opacity:0;animation:zsFadeUp .5s cubic-bezier(.2,.7,.2,1) forwards;}
 
   .zs-job{background:var(--zs-white);border:1px solid var(--zs-border);border-radius:var(--zs-r-md);margin-bottom:10px;overflow:hidden;box-shadow:var(--zs-shadow-sm);}
-  .zs-job-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;cursor:pointer;gap:12px;}
+  /* A real <button> so the row is reachable by keyboard and announced as an
+     expandable control; these reset the browser's button chrome. */
+  .zs-job-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;cursor:pointer;gap:12px;width:100%;background:none;border:none;font:inherit;color:inherit;text-align:left;}
   .zs-job-head:hover{background:var(--zs-cream-soft);}
   .zs-job-left{display:flex;align-items:center;gap:12px;min-width:0;}
   .zs-job-ico{width:40px;height:40px;border-radius:11px;background:var(--zs-clay-soft);color:var(--zs-clay-deep);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
@@ -227,9 +229,11 @@ export default function History() {
             ) : (
               jobs.map((j) => (
                 <div key={j.id} className="zs-job">
-                  <div
+                  <button
+                    type="button"
                     className="zs-job-head"
                     onClick={() => toggle(j.id)}
+                    aria-expanded={open === j.id}
                   >
                     <div className="zs-job-left">
                       <div className="zs-job-ico">
@@ -254,7 +258,7 @@ export default function History() {
                         className={`zs-chev ${open === j.id ? "open" : ""}`}
                       />
                     </div>
-                  </div>
+                  </button>
 
                   {open === j.id && (
                     <div className="zs-job-body">
