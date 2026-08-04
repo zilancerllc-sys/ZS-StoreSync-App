@@ -9,6 +9,20 @@ import {
   ArrowLeftRight, ChevronDown, CheckCircle2, AlertCircle, Clock, XCircle,
 } from "lucide-react";
 
+// Per-type stats are only useful if they parse into an object of counters —
+// anything else (old rows, truncated writes) is treated as "not recorded".
+function parseStatsJson(json) {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json);
+    return v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length
+      ? v
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -40,6 +54,9 @@ export const loader = async ({ request }) => {
       error: true,
       createdAt: true,
       finishedAt: true,
+      // Small (a few hundred bytes) unlike logJson, so it rides along with the
+      // list instead of needing a second request.
+      statsJson: true,
     },
   });
 
@@ -58,6 +75,9 @@ export const loader = async ({ request }) => {
       total: j.itemCount,
       summary: j.summary,
       error: j.error,
+      // null for runs from before statsJson existed — the UI falls back to
+      // plain type chips for those rather than showing zeroes it cannot back up.
+      stats: parseStatsJson(j.statsJson),
       createdAt: j.createdAt,
       finishedAt: j.finishedAt,
     })),
@@ -101,6 +121,24 @@ const pageStyles = `
   .zs-count .l{font-size:10px;text-transform:uppercase;color:var(--zs-muted);letter-spacing:.4px;}
   .zs-types-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
   .zs-tchip{font-size:11px;font-weight:600;background:var(--zs-sage-soft);color:var(--zs-sage-deep);padding:3px 10px;border-radius:20px;}
+
+  /* Per-type breakdown. Wrapper scrolls on its own so the five columns never
+     force the page into a horizontal scroll on a narrow admin window. */
+  .zs-bd-wrap{overflow-x:auto;margin-bottom:14px;border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);background:var(--zs-white);}
+  .zs-bd{width:100%;border-collapse:collapse;min-width:420px;}
+  .zs-bd th{text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--zs-muted);font-weight:700;padding:9px 12px;background:var(--zs-cream-tint);border-bottom:1px solid var(--zs-border);white-space:nowrap;}
+  .zs-bd th:first-child{text-align:left;}
+  .zs-bd td{padding:9px 12px;font-size:13px;text-align:right;border-bottom:1px solid var(--zs-border);font-variant-numeric:tabular-nums;}
+  .zs-bd tr:last-child td{border-bottom:none;}
+  .zs-bd td.ty{text-align:left;font-weight:600;color:var(--zs-dark);}
+  .zs-bd td.ok{color:var(--zs-sage-deep);font-weight:700;}
+  .zs-bd td.up{color:var(--zs-clay-deep);font-weight:700;}
+  .zs-bd td.sk{color:var(--zs-muted);font-weight:600;}
+  .zs-bd td.er{color:#9a3412;font-weight:700;}
+  /* A zero is context, not a result — keep it readable but out of the way. */
+  .zs-bd td.zero{color:var(--zs-border);}
+  .zs-bd tr.quiet td.ty{font-weight:500;color:var(--zs-muted);}
+  .zs-bd td.none{text-align:left;font-size:12px;color:var(--zs-muted);font-style:italic;}
   .zs-log{background:var(--zs-dark);border-radius:var(--zs-r-md);padding:14px 16px;max-height:240px;overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.7;color:rgba(255,255,255,.8);}
   .zs-log div{white-space:pre-wrap;}
   .zs-empty{padding:3rem 1.5rem;text-align:center;border:1px dashed var(--zs-border);border-radius:var(--zs-r-md);background:var(--zs-white);}
@@ -114,6 +152,23 @@ const statusIcon = (s) =>
   s === "partial" ? <AlertCircle size={13} /> :
   s === "running" ? <Clock size={13} /> :
   s === "failed" ? <XCircle size={13} /> : <Clock size={13} />;
+
+// The stored dataTypes are the internal keys ("blogPosts"); show merchants the
+// same wording the Migrate page uses when they picked them.
+const TYPE_LABEL = {
+  products: "Products",
+  collections: "Collections",
+  pages: "Pages",
+  discounts: "Discounts",
+  files: "Files",
+  menus: "Menus",
+  redirects: "Redirects",
+  metaobjects: "Metaobjects",
+  blogPosts: "Blog Posts",
+  metafields: "Metafields",
+  orders: "Orders",
+  customers: "Customers",
+};
 
 export default function History() {
   const { jobs } = useLoaderData();
@@ -203,11 +258,58 @@ export default function History() {
 
                   {open === j.id && (
                     <div className="zs-job-body">
-                      <div className="zs-types-row">
-                        {j.dataTypes.map((t) => (
-                          <span key={t} className="zs-tchip">{t}</span>
-                        ))}
-                      </div>
+                      {j.stats ? (
+                        <div className="zs-bd-wrap">
+                          <table className="zs-bd">
+                            <thead>
+                              <tr>
+                                <th>Data type</th>
+                                <th>Created</th>
+                                <th>Updated</th>
+                                <th>Skipped</th>
+                                <th>Failed</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {j.dataTypes.map((t) => {
+                                const s = j.stats[t] || {};
+                                const c = s.created || 0;
+                                const u = s.updated || 0;
+                                const k = s.skipped || 0;
+                                const f = s.failed || 0;
+                                const empty = !c && !u && !k && !f;
+                                return (
+                                  <tr key={t} className={empty ? "quiet" : ""}>
+                                    <td className="ty">{TYPE_LABEL[t] || t}</td>
+                                    {empty ? (
+                                      <td className="none" colSpan={4}>
+                                        nothing to migrate
+                                      </td>
+                                    ) : (
+                                      <>
+                                        <td className={c ? "ok" : "zero"}>{c}</td>
+                                        <td className={u ? "up" : "zero"}>{u}</td>
+                                        <td className={k ? "sk" : "zero"}>{k}</td>
+                                        <td className={f ? "er" : "zero"}>{f}</td>
+                                      </>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        // Run predates per-type tracking — show what was
+                        // selected rather than counters we do not have.
+                        <div className="zs-types-row">
+                          {j.dataTypes.map((t) => (
+                            <span key={t} className="zs-tchip">
+                              {TYPE_LABEL[t] || t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <div className="zs-counts">
                         <div className="zs-count"><div className="v">{j.created}</div><div className="l">Created</div></div>
                         <div className="zs-count"><div className="v">{j.updated}</div><div className="l">Updated</div></div>

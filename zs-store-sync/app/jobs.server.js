@@ -224,6 +224,7 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode }) {
         skippedCount: result.skipped,
         failedCount: result.failed,
         summary,
+        statsJson: JSON.stringify(result.statsByType || {}),
         logJson: safeLogsJson(logs),
         finishedAt: new Date(),
       },

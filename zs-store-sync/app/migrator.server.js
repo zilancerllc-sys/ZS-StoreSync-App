@@ -2980,14 +2980,27 @@ export async function runMigration({
   // theme the merchant already has on the target.
 
   const ordered = RUN_ORDER.filter((t) => types.includes(t));
+  // Per-type created/updated/skipped/failed, taken as the delta across each
+  // module's run. The 88 places that bump `counters` stay untouched: only the
+  // orchestrator knows which type is executing, and it already serialises them
+  // one module at a time, so before/after subtraction attributes every count
+  // correctly without threading a type through every runner.
+  const statsByType = {};
   for (const t of ordered) {
     currentType = t;
     onLog(`── ${t.toUpperCase()} ──`);
+    const before = { ...counters };
     try {
       await RUNNERS[t](ctx);
     } catch (err) {
       onLog(`✕ ${t} module failed: ${String(err.message).slice(0, 160)}`);
     }
+    statsByType[t] = {
+      created: counters.created - before.created,
+      updated: counters.updated - before.updated,
+      skipped: counters.skipped - before.skipped,
+      failed: counters.failed - before.failed,
+    };
   }
 
   const total =
@@ -3000,6 +3013,8 @@ export async function runMigration({
     total,
     consumed: consumedTotal,
     consumedByType: consumed, // { products: 5, collections: 3, ... }
+    // { products: { created, updated, skipped, failed }, collections: {…} }
+    statsByType,
     summary: `${counters.created} created · ${counters.updated} updated · ${counters.skipped} skipped · ${counters.failed} failed`,
   };
 }
