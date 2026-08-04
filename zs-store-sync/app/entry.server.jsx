@@ -4,6 +4,11 @@ import { ServerRouter } from "react-router";
 import { createReadableStreamFromReadable } from "@react-router/node";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
+import { startScheduleTicker } from "./schedules.server";
+
+// Recurring syncs need a heartbeat wherever the server runs. Safe on every
+// machine — schedules are claimed in the database, not owned by a process.
+startScheduleTicker();
 
 export const streamTimeout = 5000;
 

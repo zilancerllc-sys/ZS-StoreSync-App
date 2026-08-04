@@ -1,13 +1,34 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, useFetcher, useRevalidator } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, Link as RouterLink } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { getUsage, filterAllowedTypes } from "../credits.server";
 import { getVerifiedConnection } from "../connection.server";
 import { startMigrationJob, getActiveJob } from "../jobs.server";
+import {
+  listSchedules,
+  upsertSchedule,
+  deleteSchedule,
+} from "../schedules.server";
+// Client-safe: the component below renders cadence labels, and React Router
+// only strips server imports that stay inside loader/action.
+import {
+  planAllowsSchedule,
+  planAllowsFrequency,
+  SCHEDULE_FREQUENCIES,
+  FREQUENCY_LABEL,
+} from "../schedule-config";
 import { brandStyles } from "./zs-styles.js";
-import { Zap, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+import {
+  Zap,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Lock,
+  Trash2,
+} from "lucide-react";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -18,6 +39,7 @@ export const loader = async ({ request }) => {
     orderBy: { lastUsedAt: "desc" },
   });
   const usage = await getUsage(shop);
+  const schedules = await listSchedules(shop);
   return {
     connections: connections.map((c) => ({
       sourceShop: c.sourceShop,
@@ -27,6 +49,32 @@ export const loader = async ({ request }) => {
     limits: usage.limits,
     remaining: usage.remaining,
     allowsOverage: usage.allowsOverage,
+    plan: usage.plan,
+    canSchedule: planAllowsSchedule(usage.plan),
+    allowedFrequencies: SCHEDULE_FREQUENCIES[usage.plan] || [],
+    schedules: schedules.map((s) => ({
+      sourceShop: s.sourceShop,
+      dataTypes: s.dataTypes ? s.dataTypes.split(",") : [],
+      frequency: s.frequency,
+      hourUtc: s.hourUtc,
+      dayOfWeek: s.dayOfWeek,
+      enabled: s.enabled,
+      lastError: s.lastError,
+      // Formatted server-side: rendering a date during render would differ
+      // between SSR and the browser and break hydration on this route.
+      nextRunLabel: new Intl.DateTimeFormat("en-US", {
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZone: "UTC",
+      }).format(s.nextRunAt),
+      lastRunLabel: s.lastRunAt
+        ? new Intl.DateTimeFormat("en-US", {
+            dateStyle: "medium",
+            timeStyle: "short",
+            timeZone: "UTC",
+          }).format(s.lastRunAt)
+        : null,
+    })),
   };
 };
 
@@ -34,8 +82,48 @@ export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const form = await request.formData();
+  const intent = String(form.get("intent") || "run");
   const sourceShop = String(form.get("sourceShop") || "").trim();
   const types = String(form.get("types") || "").split(",").filter(Boolean);
+
+  // ── Automatic sync: save or remove the schedule ───────────────────────────
+  if (intent === "schedule" || intent === "unschedule") {
+    const conn = await getVerifiedConnection(shop, sourceShop);
+    if (!conn) return { ok: false, error: "That store pairing isn't verified." };
+
+    if (intent === "unschedule") {
+      await deleteSchedule(shop, sourceShop);
+      return { ok: true, scheduleRemoved: true };
+    }
+
+    const usage = await getUsage(shop);
+    const frequency = String(form.get("frequency") || "");
+    if (!planAllowsSchedule(usage.plan)) {
+      return {
+        ok: false,
+        error: "Automatic sync isn't included on the Free plan. Upgrade to schedule syncs.",
+      };
+    }
+    if (!planAllowsFrequency(usage.plan, frequency)) {
+      return {
+        ok: false,
+        error: `The ${usage.plan} plan doesn't include ${FREQUENCY_LABEL[frequency] || frequency} syncs.`,
+      };
+    }
+    const { allowed } = await filterAllowedTypes(shop, types);
+    if (allowed.length === 0)
+      return { ok: false, error: "Pick at least one data type your plan includes." };
+
+    await upsertSchedule({
+      ownerShop: shop,
+      sourceShop,
+      dataTypes: allowed,
+      frequency,
+      hourUtc: Math.min(23, Math.max(0, Number(form.get("hourUtc")) || 0)),
+      dayOfWeek: Math.min(6, Math.max(0, Number(form.get("dayOfWeek")) || 0)),
+    });
+    return { ok: true, scheduleSaved: true };
+  }
 
   if (!sourceShop || types.length === 0)
     return { ok: false, error: "Pick a source and data types." };
@@ -140,6 +228,23 @@ const pageStyles = `
   .zs-log{margin-top:14px;background:var(--zs-dark);border-radius:var(--zs-r-md);padding:14px 16px;max-height:240px;overflow:auto;font-family:ui-monospace,monospace;font-size:12px;line-height:1.7;color:rgba(255,255,255,.8);}
   .zs-log div{white-space:pre-wrap;}
   .zs-spin{animation:zsRot 1s linear infinite;}@keyframes zsRot{to{transform:rotate(360deg);}}
+  .zs-auto-head{display:flex;gap:12px;align-items:flex-start;margin-bottom:16px;}
+  .zs-auto-ico{width:40px;height:40px;border-radius:11px;background:var(--zs-clay-soft);color:var(--zs-clay-deep);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .zs-auto-head h3{font-family:var(--zs-font-display);font-size:17px;font-weight:600;margin:2px 0 3px;color:var(--zs-dark);}
+  .zs-auto-head p{font-size:12.5px;color:var(--zs-muted);margin:0;line-height:1.55;max-width:560px;}
+  .zs-locked{display:flex;gap:9px;align-items:flex-start;background:var(--zs-cream-tint);border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);padding:13px 15px;font-size:13px;color:var(--zs-clay-deep);line-height:1.55;}
+  .zs-locked svg{flex-shrink:0;margin-top:2px;}
+  .zs-locked a{color:var(--zs-clay-deep);font-weight:700;}
+  .zs-sched-state{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border:1px solid var(--zs-border);border-left:3px solid var(--zs-sage-deep);border-radius:0 var(--zs-r-sm) var(--zs-r-sm) 0;padding:12px 14px;margin-bottom:14px;font-size:13px;color:var(--zs-dark);background:var(--zs-cream-soft);}
+  .zs-sched-state.off{border-left-color:var(--zs-muted);opacity:.75;}
+  .zs-sched-meta{font-size:12px;color:var(--zs-muted);margin-top:3px;}
+  .zs-btn-link{background:none;border:none;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--zs-muted);cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:4px 0;}
+  .zs-btn-link:hover{color:#9a3412;}
+  .zs-sched-form{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;}
+  .zs-field{display:flex;flex-direction:column;gap:5px;}
+  .zs-field>span{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--zs-muted);}
+  .zs-field .zs-select{min-width:150px;}
+  .zs-sched-hint{font-size:12px;color:var(--zs-muted);margin-top:11px;line-height:1.55;}
 `;
 
 const TYPES = [
@@ -156,7 +261,10 @@ const TYPES = [
 ];
 
 export default function Sync() {
-  const { connections, allowedTypes, remaining, limits, allowsOverage } = useLoaderData();
+  const {
+    connections, allowedTypes, remaining, limits, allowsOverage,
+    plan, canSchedule, allowedFrequencies, schedules,
+  } = useLoaderData();
   const fetcher = useFetcher();
   const jobFetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -288,10 +396,206 @@ export default function Sync() {
                 </>
               )}
             </div>
+
+            <AutoSyncCard
+              src={src}
+              picked={picked}
+              connections={connections}
+              canSchedule={canSchedule}
+              allowedFrequencies={allowedFrequencies}
+              schedules={schedules}
+              plan={plan}
+            />
           </div>
         </div>
       </div>
     </s-page>
+  );
+}
+
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// ─── Automatic sync ──────────────────────────────────────────────────────────
+// Set once and the same delta sync runs on its own. Everything is re-checked at
+// run time, so a downgrade or an unpaired store pauses the schedule instead of
+// failing quietly.
+function AutoSyncCard({
+  src,
+  picked,
+  connections,
+  canSchedule,
+  allowedFrequencies,
+  schedules,
+  plan,
+}) {
+  const scheduleFetcher = useFetcher();
+  const existing = schedules.find((s) => s.sourceShop === src) || null;
+
+  const [frequency, setFrequency] = useState(
+    existing?.frequency || allowedFrequencies[0] || "daily",
+  );
+  const [hourUtc, setHourUtc] = useState(existing?.hourUtc ?? 3);
+  const [dayOfWeek, setDayOfWeek] = useState(existing?.dayOfWeek ?? 1);
+
+  // Switching source store swaps which schedule is being edited.
+  useEffect(() => {
+    setFrequency(existing?.frequency || allowedFrequencies[0] || "daily");
+    setHourUtc(existing?.hourUtc ?? 3);
+    setDayOfWeek(existing?.dayOfWeek ?? 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
+
+  if (connections.length === 0) return null;
+  const saving = scheduleFetcher.state !== "idle";
+
+  return (
+    <div className="zs-card" style={{ marginTop: 22 }}>
+      <div className="zs-auto-head">
+        <div className="zs-auto-ico">
+          <Clock size={19} />
+        </div>
+        <div>
+          <h3>Automatic sync</h3>
+          <p>
+            Run this sync on a schedule, without opening the app. Only new items
+            are created — the same as pressing Sync yourself.
+          </p>
+        </div>
+      </div>
+
+      {!canSchedule ? (
+        <div className="zs-locked">
+          <Lock size={15} />
+          <span>
+            Automatic sync isn&apos;t included on the {plan} plan.{" "}
+            <RouterLink to="/app/plan">See plans</RouterLink> — Starter syncs
+            weekly, Growth daily, Pro every 6 hours.
+          </span>
+        </div>
+      ) : (
+        <>
+          {existing && (
+            <div className={`zs-sched-state ${existing.enabled ? "on" : "off"}`}>
+              <div>
+                <b>{FREQUENCY_LABEL[existing.frequency] || existing.frequency}</b>
+                {" · "}
+                {existing.dataTypes.length} data type
+                {existing.dataTypes.length === 1 ? "" : "s"}
+                <div className="zs-sched-meta">
+                  Next run {existing.nextRunLabel} UTC
+                  {existing.lastRunLabel ? ` · last ran ${existing.lastRunLabel} UTC` : ""}
+                </div>
+              </div>
+              <scheduleFetcher.Form method="post">
+                <input type="hidden" name="intent" value="unschedule" />
+                <input type="hidden" name="sourceShop" value={src} />
+                <button className="zs-btn-link" disabled={saving}>
+                  <Trash2 size={13} /> Turn off
+                </button>
+              </scheduleFetcher.Form>
+            </div>
+          )}
+
+          {existing?.lastError && (
+            <div className="zs-banner err" style={{ marginBottom: 12 }}>
+              <AlertCircle size={16} /> {existing.lastError}
+            </div>
+          )}
+
+          <scheduleFetcher.Form method="post" className="zs-sched-form">
+            <input type="hidden" name="intent" value="schedule" />
+            <input type="hidden" name="sourceShop" value={src} />
+            <input type="hidden" name="types" value={picked.join(",")} />
+
+            <label className="zs-field">
+              <span>How often</span>
+              <select
+                className="zs-select"
+                name="frequency"
+                value={frequency}
+                onChange={(e) => setFrequency(e.target.value)}
+              >
+                {allowedFrequencies.map((f) => (
+                  <option key={f} value={f}>
+                    {FREQUENCY_LABEL[f]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {frequency === "weekly" && (
+              <label className="zs-field">
+                <span>Day</span>
+                <select
+                  className="zs-select"
+                  name="dayOfWeek"
+                  value={dayOfWeek}
+                  onChange={(e) => setDayOfWeek(Number(e.target.value))}
+                >
+                  {DAYS.map((d, i) => (
+                    <option key={d} value={i}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {frequency !== "every6h" && (
+              <label className="zs-field">
+                <span>Time (UTC)</span>
+                <select
+                  className="zs-select"
+                  name="hourUtc"
+                  value={hourUtc}
+                  onChange={(e) => setHourUtc(Number(e.target.value))}
+                >
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <option key={h} value={h}>
+                      {String(h).padStart(2, "0")}:00
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            <button className="zs-btn" disabled={saving || picked.length === 0}>
+              {saving ? (
+                <>
+                  <Loader2 size={15} className="zs-spin" /> Saving…
+                </>
+              ) : (
+                <>
+                  <Clock size={15} /> {existing ? "Update schedule" : "Turn on"}
+                </>
+              )}
+            </button>
+          </scheduleFetcher.Form>
+
+          <div className="zs-sched-hint">
+            Uses the data types selected above ({picked.length ? picked.join(", ") : "none yet"}).
+            Runs are billed against your monthly quota just like manual ones, and
+            appear in History.
+          </div>
+
+          {scheduleFetcher.data?.error && (
+            <div className="zs-banner err">
+              <AlertCircle size={16} /> {scheduleFetcher.data.error}
+            </div>
+          )}
+          {scheduleFetcher.data?.scheduleSaved && (
+            <div className="zs-banner ok">
+              <CheckCircle2 size={16} /> Automatic sync is on.
+            </div>
+          )}
+          {scheduleFetcher.data?.scheduleRemoved && (
+            <div className="zs-banner ok">
+              <CheckCircle2 size={16} /> Automatic sync turned off.
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

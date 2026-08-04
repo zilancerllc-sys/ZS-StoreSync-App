@@ -128,6 +128,36 @@ model Subscription {
 }
 
 
+// ── An automatic, recurring sync for one pairing ─────────────────────────────
+model SyncSchedule {
+  id          String   @id @default(cuid())
+  ownerShop   String   // the store data is copied INTO
+  sourceShop  String   // the store data is copied FROM
+  dataTypes   String   @default("")  // comma separated, same shape as MigrationJob
+
+  // "weekly" | "daily" | "every6h" — which are allowed depends on the plan
+  frequency   String   @default("daily")
+  hourUtc     Int      @default(3)   // 0-23, ignored by every6h
+  dayOfWeek   Int      @default(1)   // 0=Sun … 6=Sat, weekly only
+
+  enabled     Boolean  @default(true)
+
+  // The claim marker. A runner takes a schedule by moving nextRunAt forward in
+  // the same statement that checks it is due, so two machines ticking at once
+  // cannot both start the run.
+  nextRunAt   DateTime
+  lastRunAt   DateTime?
+  lastJobId   String?
+  lastError   String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([ownerShop, sourceShop])
+  @@index([enabled, nextRunAt])
+  @@index([ownerShop])
+}
+
 // Stores a unique, shareable connection code for each shop. A shop's owner
 
 model ShopSecret {

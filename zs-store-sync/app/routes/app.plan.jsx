@@ -461,6 +461,7 @@ function buildFeatures(planId, L) {
         text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
         ok: true,
       },
+      { text: "Automatic sync", ok: false },
     ];
 
   if (planId === "starter")
@@ -482,6 +483,7 @@ function buildFeatures(planId, L) {
         text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
         ok: true,
       },
+      { text: "Automatic sync — weekly", ok: true },
     ];
 
   if (planId === "growth")
@@ -503,6 +505,7 @@ function buildFeatures(planId, L) {
         text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
         ok: true,
       },
+      { text: "Automatic sync — daily", ok: true },
     ];
 
   if (planId === "pro")
@@ -524,6 +527,7 @@ function buildFeatures(planId, L) {
         text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
         ok: true,
       },
+      { text: "Automatic sync — every 6 hours", ok: true },
     ];
 
   return [];
