@@ -2971,10 +2971,18 @@ export async function runMigration({
 // ═════════════════════════════════════════════════════════════════════════════
 //  PREVIEW (counts only — no writes)
 // ═════════════════════════════════════════════════════════════════════════════
+// Only these have a *Count field on QueryRoot (verified against the 2025-10
+// schema). files, menus, metaobjects, metafields and blogPosts have none —
+// blogsCount exists but counts blogs, not the articles this app migrates — so
+// they are reported as "counted during the run" rather than a bogus number.
 const COUNT_QUERIES = {
   products: `#graphql { productsCount { count } }`,
   collections: `#graphql { collectionsCount { count } }`,
-  // pages / files don't expose a count field uniformly; fetch first page size
+  pages: `#graphql { pagesCount { count } }`,
+  discounts: `#graphql { discountNodesCount { count } }`,
+  redirects: `#graphql { urlRedirectsCount { count } }`,
+  orders: `#graphql { ordersCount { count } }`,
+  customers: `#graphql { customersCount { count } }`,
 };
 
 export async function previewCounts({ source, target, types }) {
@@ -2990,10 +2998,12 @@ export async function previewCounts({ source, target, types }) {
           target: tg[key]?.count ?? 0,
         };
       } catch {
-        result[t] = { source: "—", target: "—" };
+        // Most likely a missing scope (orders/customers need Protected
+        // Customer Data approval). Say so instead of showing a bare dash.
+        result[t] = { source: null, target: null, note: "unavailable" };
       }
     } else {
-      result[t] = { source: "—", target: "—" };
+      result[t] = { source: null, target: null, note: "counted during run" };
     }
   }
   return result;

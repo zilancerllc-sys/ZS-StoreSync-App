@@ -277,6 +277,16 @@ export const action = async ({ request }) => {
       types: allowed,
       limits: migrateLimits,
     });
+    // null = the database rejected a second concurrent run. The getActiveJob
+    // check above can be passed by two requests at once (two tabs, a double
+    // submit); this is the check that cannot be raced.
+    if (!jobId) {
+      return {
+        ok: false,
+        error:
+          "A migration or sync is already running for this store. Wait for it to finish (see History).",
+      };
+    }
 
     return { ok: true, started: true, jobId, blocked };
   }
@@ -317,6 +327,8 @@ const pageStyles = `
   .zs-btn-ghost:hover{background:var(--zs-clay-soft);}
   .zs-code-hint{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:12px;color:var(--zs-muted);}
   .zs-code-hint svg{color:var(--zs-camel);flex-shrink:0;}
+  .zs-note{display:flex;gap:10px;align-items:flex-start;background:var(--zs-cream-tint);border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);padding:13px 15px;font-size:13px;color:var(--zs-clay-deep);line-height:1.55;}
+  .zs-note svg{flex-shrink:0;margin-top:2px;}
   .zs-conn-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--zs-muted);margin:18px 0 10px;}
   .zs-conn-list{display:flex;flex-direction:column;gap:8px;}
   .zs-conn{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1.5px solid var(--zs-border);border-radius:var(--zs-r-sm);cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s;position:relative;}
@@ -738,6 +750,19 @@ export default function Migrate() {
                   );
                 })}
               </div>
+              {picked.includes("orders") && (
+                <div className="zs-note" style={{ marginTop: 14 }}>
+                  <AlertCircle size={16} />
+                  <span>
+                    Shopify only lets apps read the <b>last 60 days</b> of
+                    orders, so older orders cannot be copied — your plan&apos;s
+                    order allowance caps how many are migrated, not how far back
+                    they go. Orders are recreated with line items, addresses, note
+                    and tags; payment, fulfilment and refund records stay on the
+                    original store.
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Step 3 */}

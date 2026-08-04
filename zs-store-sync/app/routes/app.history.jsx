@@ -1,9 +1,9 @@
-import { useState } from "react";
-import { useLoaderData, Link as RouterLink } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { useLoaderData, useFetcher, Link as RouterLink } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { failStaleJobs, parseLogsJson } from "../jobs.server";
+import { failStaleJobs } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import {
   ArrowLeftRight, ChevronDown, CheckCircle2, AlertCircle, Clock, XCircle,
@@ -16,10 +16,31 @@ export const loader = async ({ request }) => {
   // jobs left "running" by a server restart are marked failed
   await failStaleJobs(shop);
 
+  // logJson is deliberately NOT selected: each row can hold up to 100 KB of
+  // log, so sending 50 of them made this page a multi-megabyte response for a
+  // list where the logs are hidden until a row is expanded. The component
+  // fetches them from /app/jobs/:id on demand instead.
   const jobs = await db.migrationJob.findMany({
     where: { shop },
     orderBy: { createdAt: "desc" },
     take: 50,
+    select: {
+      id: true,
+      sourceShop: true,
+      targetShop: true,
+      mode: true,
+      dataTypes: true,
+      status: true,
+      createdCount: true,
+      updatedCount: true,
+      skippedCount: true,
+      failedCount: true,
+      itemCount: true,
+      summary: true,
+      error: true,
+      createdAt: true,
+      finishedAt: true,
+    },
   });
 
   return {
@@ -37,7 +58,6 @@ export const loader = async ({ request }) => {
       total: j.itemCount,
       summary: j.summary,
       error: j.error,
-      logs: parseLogsJson(j.logJson),
       createdAt: j.createdAt,
       finishedAt: j.finishedAt,
     })),
@@ -99,6 +119,38 @@ export default function History() {
   const { jobs } = useLoaderData();
   const [open, setOpen] = useState(null);
 
+  // Logs are fetched per job the first time its row is expanded, then cached
+  // for the rest of the visit. /app/jobs/:id is already scoped to the
+  // authenticated shop, so this cannot reach another merchant's job.
+  const logFetcher = useFetcher();
+  const [logsById, setLogsById] = useState({});
+  const requestedRef = useRef(null);
+
+  const toggle = (id) => {
+    const next = open === id ? null : id;
+    setOpen(next);
+    // No "is the fetcher idle" guard: opening a second row while the first is
+    // still loading must still fetch, otherwise that row shows "Loading log…"
+    // forever. React Router replaces the in-flight request, and the effect
+    // below files each response under its own job id.
+    if (next && logsById[next] === undefined) {
+      requestedRef.current = next;
+      logFetcher.load(`/app/jobs/${next}`);
+    }
+  };
+
+  useEffect(() => {
+    if (logFetcher.state !== "idle") return;
+    const job = logFetcher.data?.job;
+    const id = job?.id ?? requestedRef.current;
+    if (!id) return;
+    // job is undefined when the request failed (404, network). Cache an empty
+    // log rather than leaving the row stuck on "Loading log…".
+    setLogsById((prev) =>
+      prev[id] === undefined ? { ...prev, [id]: job?.logs || [] } : prev,
+    );
+  }, [logFetcher.state, logFetcher.data]);
+
   return (
     <s-page heading="Migration History">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
@@ -122,7 +174,7 @@ export default function History() {
                 <div key={j.id} className="zs-job">
                   <div
                     className="zs-job-head"
-                    onClick={() => setOpen(open === j.id ? null : j.id)}
+                    onClick={() => toggle(j.id)}
                   >
                     <div className="zs-job-left">
                       <div className="zs-job-ico">
@@ -168,10 +220,14 @@ export default function History() {
                           Error: {j.error}
                         </div>
                       )}
-                      {j.logs.length > 0 && (
-                        <div className="zs-log">
-                          {j.logs.map((l, i) => <div key={i}>{l}</div>)}
-                        </div>
+                      {logsById[j.id] === undefined ? (
+                        <div className="zs-log">Loading log…</div>
+                      ) : (
+                        logsById[j.id].length > 0 && (
+                          <div className="zs-log">
+                            {logsById[j.id].map((l, i) => <div key={i}>{l}</div>)}
+                          </div>
+                        )
                       )}
                     </div>
                   )}

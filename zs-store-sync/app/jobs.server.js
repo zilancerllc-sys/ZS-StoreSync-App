@@ -74,6 +74,9 @@ export async function getActiveJob(shop) {
 }
 
 // ─── Start a job and return its id immediately ────────────────────────────────
+// Returns the new job's id, or null when a run is already in flight for this
+// shop. Callers must handle null — see the partial unique index created in
+// migration 20260804150000_one_running_job_per_shop.
 export async function startMigrationJob({
   shop,
   sourceShop,
@@ -81,17 +84,26 @@ export async function startMigrationJob({
   types,
   limits,
 }) {
-  const job = await db.migrationJob.create({
-    data: {
-      shop,
-      sourceShop,
-      targetShop: shop,
-      mode,
-      dataTypes: types.join(","),
-      status: "running",
-      startedAt: new Date(),
-    },
-  });
+  let job;
+  try {
+    job = await db.migrationJob.create({
+      data: {
+        shop,
+        sourceShop,
+        targetShop: shop,
+        mode,
+        dataTypes: types.join(","),
+        status: "running",
+        startedAt: new Date(),
+      },
+    });
+  } catch (err) {
+    // P2002 = unique constraint violation. The database refused a second
+    // concurrent run for this shop, which is the outcome we want: the caller's
+    // getActiveJob() check can pass for two requests at once, this cannot.
+    if (err?.code === "P2002") return null;
+    throw err;
+  }
 
   // fire-and-forget: the runner keeps going after this request responds
   runJob(job.id, { shop, sourceShop, types, limits, mode }).catch((err) => {

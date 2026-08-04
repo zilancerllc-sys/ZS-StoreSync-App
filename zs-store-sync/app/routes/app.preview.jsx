@@ -84,6 +84,7 @@ const pageStyles = `
   .zs-table td{padding:12px;border-bottom:1px solid var(--zs-border);font-size:14px;}
   .zs-table td.num{font-family:var(--zs-font-display);font-weight:600;}
   .zs-diff{font-size:12px;font-weight:600;color:var(--zs-sage-deep);}
+  .zs-nocount{font-size:12.5px;color:var(--zs-muted);font-style:italic;}
   .zs-banner.err{display:flex;gap:9px;align-items:center;background:#fbeaea;color:#9a3412;border:1px solid #f3d2d2;padding:13px 15px;border-radius:var(--zs-r-sm);font-size:13px;margin-top:14px;}
   .zs-spin{animation:zsRot 1s linear infinite;}@keyframes zsRot{to{transform:rotate(360deg);}}
   @keyframes zsFadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
@@ -203,16 +204,32 @@ export default function Preview() {
                   </thead>
                   <tbody>
                     {Object.entries(data.counts).map(([type, c]) => {
-                      const diff =
-                        typeof c.source === "number" && typeof c.target === "number"
-                          ? Math.max(c.source - c.target, 0)
-                          : "—";
+                      const counted =
+                        typeof c.source === "number" &&
+                        typeof c.target === "number";
                       return (
                         <tr key={type}>
                           <td style={{ textTransform: "capitalize" }}>{type}</td>
-                          <td className="num">{c.source}</td>
-                          <td className="num">{c.target}</td>
-                          <td><span className="zs-diff">+{diff}</span></td>
+                          {counted ? (
+                            <>
+                              <td className="num">{c.source}</td>
+                              <td className="num">{c.target}</td>
+                              <td>
+                                <span className="zs-diff">
+                                  +{Math.max(c.source - c.target, 0)}
+                                </span>
+                              </td>
+                            </>
+                          ) : (
+                            // Shopify exposes no count for this type (or the
+                            // scope isn't granted) — say which, rather than
+                            // showing three dashes that read as a failure.
+                            <td colSpan={3} className="zs-nocount">
+                              {c.note === "unavailable"
+                                ? "Count unavailable — needs Protected Customer Data approval"
+                                : "No count API — totals are reported during the run"}
+                            </td>
+                          )}
                         </tr>
                       );
                     })}

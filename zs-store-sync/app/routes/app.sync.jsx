@@ -106,6 +106,14 @@ export const action = async ({ request }) => {
     types: allowed,
     limits: migrateLimits,
   });
+  // null = the database rejected a second concurrent run (see app.migrate.jsx).
+  if (!jobId) {
+    return {
+      ok: false,
+      error:
+        "A migration or sync is already running for this store. Wait for it to finish (see History).",
+    };
+  }
 
   return { ok: true, started: true, jobId };
 };

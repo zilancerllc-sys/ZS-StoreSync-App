@@ -422,6 +422,14 @@ const faqs = [
     q: "Is there a free trial?",
     a: "The Free plan is yours forever with no credit card required — use it to try the app before upgrading. Paid plans are billed from day one through Shopify.",
   },
+  {
+    q: "How much order history can be migrated?",
+    a: "Shopify only exposes the last 60 days of orders to apps, so that is the window ZS StoreSync can copy — regardless of your plan's order allowance, which caps how many of those orders are migrated rather than how far back they go. Older orders cannot be read by any app without Shopify granting the separate read_all_orders permission. Orders are recreated with their line items, addresses, note and tags; payment, fulfilment and refund records stay on the original store.",
+  },
+  {
+    q: "Why do Orders and Customers sometimes fail to migrate?",
+    a: "Both are Protected Customer Data, which Shopify releases to an app only after a separate approval. If that approval is not yet active for your store, those two data types are skipped and the job log says so — every other data type still migrates normally.",
+  },
 ];
 
 // Plan order for upgrade/downgrade comparison
@@ -450,7 +458,7 @@ function buildFeatures(planId, L) {
       { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
       { text: `${fmt(L.metafields)} Metafields`, ok: true },
       {
-        text: `${fmt(L.orders)} Orders, ${fmt(L.customers)} Customers`,
+        text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
         ok: true,
       },
     ];
@@ -471,7 +479,7 @@ function buildFeatures(planId, L) {
       { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
       { text: `${fmt(L.metafields)} Metafields`, ok: true },
       {
-        text: `${fmt(L.orders)} Orders, ${fmt(L.customers)} Customers`,
+        text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
         ok: true,
       },
     ];
@@ -492,7 +500,7 @@ function buildFeatures(planId, L) {
       { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
       { text: `${fmt(L.metafields)} Metafields`, ok: true },
       {
-        text: `${fmt(L.orders)} Orders, ${fmt(L.customers)} Customers`,
+        text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
         ok: true,
       },
     ];
@@ -513,7 +521,7 @@ function buildFeatures(planId, L) {
       { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
       { text: `${fmt(L.metafields)} Metafields`, ok: true },
       {
-        text: `${fmt(L.orders)} Orders, ${fmt(L.customers)} Customers`,
+        text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
         ok: true,
       },
     ];

@@ -85,6 +85,11 @@ model MigrationJob {
 
   @@index([shop])
   @@index([shop, createdAt])
+  // NOTE: migration 20260804150000_one_running_job_per_shop also creates a
+  // PARTIAL unique index, `MigrationJob_one_running_per_shop` on (shop) WHERE
+  // status = 'running', which enforces one in-flight run per store. Prisma's
+  // schema language cannot express a partial index, so it does not appear
+  // here — do not "fix the drift" by dropping it.
 }
 
 // ── Per-shop billing / quota state ──────────────────────────────────────────

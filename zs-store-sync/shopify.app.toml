@@ -10,7 +10,12 @@ embedded = true
 scopes = "read_products,write_products,read_content,write_content,read_files,write_files,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_discounts,write_discounts,read_online_store_navigation,write_online_store_navigation,read_customers,write_customers,read_orders,write_orders,read_draft_orders,write_draft_orders"
 
 [webhooks]
-api_version = "2026-07"
+# Must track the ApiVersion the app code is built against (app/shopify.server.js
+# uses ApiVersion.October25). Declaring a newer version here made Shopify send
+# payloads in a format the handlers were never written for — app_subscriptions
+# /update in particular reads status, name, admin_graphql_api_id and
+# current_period_end straight off the payload.
+api_version = "2025-10"
 
   [webhooks.privacy_compliance]
   customer_data_request_url = "/webhooks/customers/data_request"

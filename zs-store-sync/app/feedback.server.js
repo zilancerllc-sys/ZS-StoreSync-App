@@ -69,8 +69,24 @@ async function sendFeedbackEmail({ shop, rating, message }) {
   }
 }
 
+// A shop may submit at most this many ratings per window. The form is a
+// plain authenticated POST, so without this one store could fill the table and
+// the team inbox by holding down the submit button.
+const RATE_LIMIT_COUNT = 3;
+const RATE_LIMIT_MS = 60 * 60 * 1000;
+
 // Persist feedback and, when there's a written message, email the team.
 export async function recordFeedback({ shop, rating, message }) {
+  const recent = await db.feedback.count({
+    where: { shop, createdAt: { gt: new Date(Date.now() - RATE_LIMIT_MS) } },
+  });
+  if (recent >= RATE_LIMIT_COUNT) {
+    return {
+      ok: false,
+      error: "Thanks — you've already sent feedback recently. Try again later.",
+    };
+  }
+
   const r = Math.max(1, Math.min(5, Number(rating) || 0));
   const text = (message || "").trim().slice(0, 4000) || null;
 
