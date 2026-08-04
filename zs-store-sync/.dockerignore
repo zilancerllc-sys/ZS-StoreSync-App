@@ -1,3 +1,17 @@
 .cache
 build
 node_modules
+
+# Secrets — the Dockerfile does `COPY . .`, so anything not listed here is
+# baked into the image. Prisma also auto-loads a .env found next to the app
+# at runtime, which would silently override the Fly secrets.
+.env
+.env.*
+
+# Local-only / regenerated at build time
+.git
+.gitignore
+.shopify
+.react-router
+prisma/dev.sqlite
+prisma/dev.sqlite-journal

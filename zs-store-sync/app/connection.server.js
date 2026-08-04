@@ -2,6 +2,7 @@
 //  ZS StoreSync — Connection code (pairing) helpers
 //  Save as: app/connection.server.js
 // ═════════════════════════════════════════════════════════════════════════════
+import { randomInt } from "node:crypto";
 import db from "./db.server";
 
 // Characters that are unambiguous (no 0/O, 1/I/L) for codes humans read & type.
@@ -9,12 +10,26 @@ const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 function randomCode() {
   // Format: XXXX-XXXX (e.g. ZS7K-92QT)
+  //
+  // SECURITY: this code is the only gate protecting a source store's catalog,
+  // customers and orders, so it must come from a CSPRNG. Math.random() is a
+  // seeded PRNG whose internal state can be recovered from observed output —
+  // and anyone can farm output by hitting "Regenerate code" on their own store.
   const pick = () =>
-    Array.from(
-      { length: 4 },
-      () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)],
-    ).join("");
+    Array.from({ length: 4 }, () => ALPHABET[randomInt(ALPHABET.length)]).join(
+      "",
+    );
   return `${pick()}-${pick()}`;
+}
+
+// Accept whatever the merchant pastes — "zs7k 92qt", "ZS7K92QT", "zs7k-92qt"
+// all normalize to the stored "ZS7K-92QT". Only stripping whitespace (as this
+// used to) rejected a code typed with a space instead of the dash.
+function normalizeCode(input) {
+  const bare = String(input)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  return bare.length === 8 ? `${bare.slice(0, 4)}-${bare.slice(4)}` : bare;
 }
 
 // pick a code that isn't already taken; throws only in the astronomically
@@ -63,7 +78,7 @@ export async function regenerateConnectionCode(shop) {
 // shop owner can see in their own Settings. Normalizes case & spacing.
 export async function verifyConnectionCode(sourceShop, code) {
   if (!sourceShop || !code) return false;
-  const normalized = String(code).trim().toUpperCase().replace(/\s+/g, "");
+  const normalized = normalizeCode(code);
   const rec = await db.shopSecret.findUnique({ where: { shop: sourceShop } });
   if (!rec) return false;
   return rec.connectionCode === normalized;
