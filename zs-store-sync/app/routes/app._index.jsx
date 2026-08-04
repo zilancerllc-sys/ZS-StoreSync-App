@@ -58,7 +58,15 @@ export const loader = async ({ request }) => {
 
   const planName = PLAN_LABEL[usage.plan] ?? "Free Plan";
 
+  // Setup isn't finished until a source store is paired AND still authorized.
+  // Almost every merchant who reaches that point goes on to migrate, so the
+  // dashboard leads with it until they do.
+  const readyConnections = await db.storeConnection.count({
+    where: { ownerShop: shop, codeVerified: true, authorized: true },
+  });
+
   return {
+    needsSetup: readyConnections === 0,
     stats: {
       totalJobs: await db.migrationJob.count({ where: { shop } }),
       itemsMigrated: totalMigrated._sum.createdCount || 0,
@@ -115,6 +123,11 @@ const pageStyles = `
   .zs-section-wrap{width:100vw;position:relative;left:50%;right:50%;margin-left:-50vw;margin-right:-50vw;padding:1.5rem;box-sizing:border-box;}
   .zs-wrap{max-width:1400px;margin:0 auto;width:100%;}
   .zs-stack>*+*{margin-top:30px;}
+  .zs-setup-cta{display:flex;align-items:center;gap:16px;background:var(--zs-clay-soft);border:1px solid var(--zs-clay);border-radius:var(--zs-r-lg,20px);padding:18px 22px;flex-wrap:wrap;}
+  .zs-setup-ico{width:42px;height:42px;border-radius:12px;background:var(--zs-clay);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .zs-setup-txt{flex:1;min-width:230px;}
+  .zs-setup-txt h3{font-family:var(--zs-font-display);font-size:17px;font-weight:600;margin:0 0 3px;color:var(--zs-clay-deep);}
+  .zs-setup-txt p{font-size:13px;color:var(--zs-clay-deep);margin:0;line-height:1.55;opacity:.85;}
   @keyframes zsFadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
   .zs-reveal{opacity:0;animation:zsFadeUp .6s cubic-bezier(.2,.7,.2,1) forwards;}
   .zs-d1{animation-delay:.04s;}.zs-d2{animation-delay:.12s;}.zs-d3{animation-delay:.20s;}.zs-d4{animation-delay:.28s;}.zs-d5{animation-delay:.36s;}.zs-d6{animation-delay:.44s;}
@@ -636,7 +649,7 @@ function FeedbackModal({ onClose }) {
 }
 
 export default function Index() {
-  const { stats, plan, jobs } = useLoaderData();
+  const { stats, plan, jobs, needsSetup } = useLoaderData();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // Session-only dismissal — the banner returns on the next page load.
   const [feedbackDismissed, setFeedbackDismissed] = useState(false);
@@ -749,11 +762,32 @@ export default function Index() {
                 <h1>Move your store&apos;s <em>content</em>,<br />store to store.</h1>
                 <p className="zs-hero-lead">Copy products, collections, pages, discounts, files, menus, redirects, blog posts, metaobjects & metafields from one Shopify store into another — duplicates skipped, changes synced, no spreadsheets, no developer.</p>
                 <div className="zs-hero-btns">
-                  <RouterLink to="/app/migrate" className="zs-btn-primary">Start a Migration <span>→</span></RouterLink>
+                  {/* Before a source store is paired, "Start a Migration" leads
+                      to a page that can't do anything yet — the setup walkthrough
+                      is the only useful next click. */}
+                  {needsSetup ? (
+                    <RouterLink to="/app/start" className="zs-btn-primary">Set Up Your First Migration <span>→</span></RouterLink>
+                  ) : (
+                    <RouterLink to="/app/migrate" className="zs-btn-primary">Start a Migration <span>→</span></RouterLink>
+                  )}
                   <RouterLink to="/app/preview" className="zs-btn-ghost-white">Preview First</RouterLink>
                 </div>
               </div>
             </div>
+
+            {needsSetup && (
+              <div className="zs-setup-cta zs-reveal zs-d2">
+                <div className="zs-setup-ico"><Rocket size={20} /></div>
+                <div className="zs-setup-txt">
+                  <h3>Connect the store you&apos;re copying from</h3>
+                  <p>
+                    Migrations need a second store paired with this one. It takes
+                    three steps — we&apos;ll walk you through each.
+                  </p>
+                </div>
+                <RouterLink to="/app/start" className="zs-btn-primary">Get started <span>→</span></RouterLink>
+              </div>
+            )}
 
             <div className="zs-reveal zs-d2">
               <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">How It Works</div><h2 className="zs-sec-title">Migrate in 4 Steps</h2></div></div>

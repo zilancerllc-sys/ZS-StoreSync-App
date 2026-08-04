@@ -100,6 +100,7 @@ export default function App() {
       <SupportChat shop={shop} />
       <s-app-nav>
         <s-link href="/app">Dashboard</s-link>
+        <s-link href="/app/start">Get Started</s-link>
         <s-link href="/app/migrate">New Migration</s-link>
         <s-link href="/app/sync">Sync Changes</s-link>
         <s-link href="/app/preview">Preview</s-link>
