@@ -81,6 +81,10 @@ model MigrationJob {
   // {"products":{"created":120,"updated":0,"skipped":2,"failed":1}, ...}
   // Null for jobs that ran before this column existed.
   statsJson     String?  @db.Text
+  // Set when a SyncSchedule started this run; null for manual runs. The result
+  // is only known when the runner finishes, so this is how completion knows
+  // whether anyone asked to be emailed about it.
+  scheduleId    String?
 
   startedAt     DateTime?
   finishedAt    DateTime?
@@ -89,6 +93,7 @@ model MigrationJob {
 
   @@index([shop])
   @@index([shop, createdAt])
+  @@index([scheduleId])
   // NOTE: migration 20260804150000_one_running_job_per_shop also creates a
   // PARTIAL unique index, `MigrationJob_one_running_per_shop` on (shop) WHERE
   // status = 'running', which enforces one in-flight run per store. Prisma's
@@ -141,6 +146,11 @@ model SyncSchedule {
   dayOfWeek   Int      @default(1)   // 0=Sun … 6=Sat, weekly only
 
   enabled     Boolean  @default(true)
+
+  // Emailed when a scheduled run creates something or fails, and when the
+  // schedule pauses itself. Seeded from Shopify's shop.email, editable.
+  notify      Boolean  @default(true)
+  notifyEmail String?
 
   // The claim marker. A runner takes a schedule by moving nextRunAt forward in
   // the same statement that checks it is due, so two machines ticking at once

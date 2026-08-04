@@ -11,6 +11,7 @@ import { unauthenticated } from "./shopify.server";
 import { runMigration } from "./migrator.server";
 import { consumeQuota } from "./credits.server";
 import { redactPII } from "./redact.server";
+import { notifyScheduledRun, shouldNotifyForJob } from "./notify.server";
 
 // A "running" job whose row hasn't been touched in this long is considered
 // dead (machine stopped, deploy, crash). This keys off updatedAt, not
@@ -83,6 +84,7 @@ export async function startMigrationJob({
   mode, // "migrate" | "sync"
   types,
   limits,
+  scheduleId = null, // set only when a SyncSchedule started this run
 }) {
   let job;
   try {
@@ -95,6 +97,7 @@ export async function startMigrationJob({
         dataTypes: types.join(","),
         status: "running",
         startedAt: new Date(),
+        scheduleId,
       },
     });
   } catch (err) {
@@ -106,14 +109,39 @@ export async function startMigrationJob({
   }
 
   // fire-and-forget: the runner keeps going after this request responds
-  runJob(job.id, { shop, sourceShop, types, limits, mode }).catch((err) => {
+  runJob(job.id, { shop, sourceShop, types, limits, mode, scheduleId }).catch((err) => {
     console.error(`Migration job ${job.id} crashed:`, err);
   });
 
   return job.id;
 }
 
-async function runJob(jobId, { shop, sourceShop, types, limits, mode }) {
+// ─── Tell the merchant, but only when there is something to tell ─────────────
+// Manual runs are never mailed about: the merchant is watching the screen. A
+// scheduled run is mailed only when it failed or actually created something,
+// so a nightly sync over an unchanged catalogue stays silent.
+async function notifyIfScheduled(scheduleId, jobId) {
+  if (!scheduleId) return;
+  try {
+    const [schedule, job] = await Promise.all([
+      db.syncSchedule.findUnique({ where: { id: scheduleId } }),
+      db.migrationJob.findUnique({ where: { id: jobId } }),
+    ]);
+    if (!schedule?.notify || !schedule.notifyEmail) return;
+    if (!shouldNotifyForJob(job)) return;
+    await notifyScheduledRun({
+      to: schedule.notifyEmail,
+      shop: job.shop,
+      sourceShop: job.sourceShop,
+      job,
+    });
+  } catch (err) {
+    // Never let mail failure change the outcome of a run.
+    console.error("[schedules] notify failed:", err);
+  }
+}
+
+async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId }) {
   const logs = [];
   let dirty = false;
   const onLog = (msg) => {
@@ -233,6 +261,7 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode }) {
       where: { ownerShop: shop, sourceShop },
       data: { lastUsedAt: new Date() },
     });
+    await notifyIfScheduled(scheduleId, jobId);
   } catch (err) {
     clearInterval(flusher);
     // Bill whatever the run managed to create before it died.
@@ -248,5 +277,8 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode }) {
         },
       })
       .catch(() => {});
+    // A scheduled run that died is exactly the case the merchant cannot see
+    // for themselves, so this path always notifies.
+    await notifyIfScheduled(scheduleId, jobId);
   }
 }

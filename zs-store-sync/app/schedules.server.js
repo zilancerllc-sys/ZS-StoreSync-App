@@ -19,6 +19,7 @@ import {
   computeNextRun,
   planAllowsFrequency,
 } from "./schedule-config";
+import { notifySchedulePaused } from "./notify.server";
 
 // ─── Read/write helpers used by the UI ───────────────────────────────────────
 export async function getSchedule(ownerShop, sourceShop) {
@@ -42,6 +43,8 @@ export async function upsertSchedule({
   hourUtc,
   dayOfWeek,
   enabled = true,
+  notify = true,
+  notifyEmail = null,
 }) {
   const nextRunAt = computeNextRun({ frequency, hourUtc, dayOfWeek });
   const data = {
@@ -52,6 +55,10 @@ export async function upsertSchedule({
     enabled,
     nextRunAt,
     lastError: null,
+    notify,
+    // Only overwrite a stored address when a new one was supplied, so editing
+    // the cadence doesn't silently blank the recipient.
+    ...(notifyEmail ? { notifyEmail } : {}),
   };
   return db.syncSchedule.upsert({
     where: { ownerShop_sourceShop: { ownerShop, sourceShop } },
@@ -64,6 +71,24 @@ export async function deleteSchedule(ownerShop, sourceShop) {
   return db.syncSchedule.deleteMany({ where: { ownerShop, sourceShop } });
 }
 
+// Turning a schedule off is the one outcome the merchant has to know about —
+// it will not run again until they act. Skips (quota, authorization) stay
+// silent because the next slot usually fixes itself.
+async function pauseSchedule(schedule, reason) {
+  await db.syncSchedule.update({
+    where: { id: schedule.id },
+    data: { enabled: false, lastError: reason },
+  });
+  if (schedule.notify && schedule.notifyEmail) {
+    await notifySchedulePaused({
+      to: schedule.notifyEmail,
+      shop: schedule.ownerShop,
+      sourceShop: schedule.sourceShop,
+      reason,
+    }).catch(() => {});
+  }
+}
+
 // ─── Run one schedule, if it is still valid ──────────────────────────────────
 // Returns a short reason string for the log; never throws.
 async function runSchedule(schedule) {
@@ -74,25 +99,16 @@ async function runSchedule(schedule) {
   // schedule was created.
   const usage = await getUsage(ownerShop);
   if (!planAllowsFrequency(usage.plan, schedule.frequency)) {
-    await db.syncSchedule.update({
-      where: { id: schedule.id },
-      data: {
-        enabled: false,
-        lastError: `Paused — the ${usage.plan} plan does not include ${FREQUENCY_LABEL[schedule.frequency] || schedule.frequency} syncs.`,
-      },
-    });
+    await pauseSchedule(
+      schedule,
+      `Paused — the ${usage.plan} plan does not include ${FREQUENCY_LABEL[schedule.frequency] || schedule.frequency} syncs.`,
+    );
     return "plan no longer allows this cadence";
   }
 
   const conn = await getVerifiedConnection(ownerShop, sourceShop);
   if (!conn) {
-    await db.syncSchedule.update({
-      where: { id: schedule.id },
-      data: {
-        enabled: false,
-        lastError: "Paused — this store pairing was removed.",
-      },
-    });
+    await pauseSchedule(schedule, "Paused — this store pairing was removed.");
     return "pairing removed";
   }
 
@@ -138,6 +154,7 @@ async function runSchedule(schedule) {
     mode: "sync",
     types: allowed,
     limits,
+    scheduleId: schedule.id,
   });
 
   // null means a run was already in flight for this shop; the schedule simply

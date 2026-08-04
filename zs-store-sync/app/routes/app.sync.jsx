@@ -60,6 +60,8 @@ export const loader = async ({ request }) => {
       dayOfWeek: s.dayOfWeek,
       enabled: s.enabled,
       lastError: s.lastError,
+      notify: s.notify,
+      notifyEmail: s.notifyEmail,
       // Formatted server-side: rendering a date during render would differ
       // between SSR and the browser and break hydration on this route.
       nextRunLabel: new Intl.DateTimeFormat("en-US", {
@@ -78,8 +80,10 @@ export const loader = async ({ request }) => {
   };
 };
 
+const Q_SHOP_EMAIL = `#graphql { shop { email } }`;
+
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const form = await request.formData();
   const intent = String(form.get("intent") || "run");
@@ -114,6 +118,18 @@ export const action = async ({ request }) => {
     if (allowed.length === 0)
       return { ok: false, error: "Pick at least one data type your plan includes." };
 
+    // Whatever the merchant typed wins; otherwise seed from the store's own
+    // contact address so notifications work without them filling anything in.
+    let notifyEmail = String(form.get("notifyEmail") || "").trim();
+    if (!notifyEmail) {
+      try {
+        const res = await admin.graphql(Q_SHOP_EMAIL);
+        notifyEmail = (await res.json())?.data?.shop?.email || "";
+      } catch {
+        // Not worth failing the save over — the schedule still runs, silently.
+      }
+    }
+
     await upsertSchedule({
       ownerShop: shop,
       sourceShop,
@@ -121,6 +137,8 @@ export const action = async ({ request }) => {
       frequency,
       hourUtc: Math.min(23, Math.max(0, Number(form.get("hourUtc")) || 0)),
       dayOfWeek: Math.min(6, Math.max(0, Number(form.get("dayOfWeek")) || 0)),
+      notify: form.get("notify") === "on",
+      notifyEmail: notifyEmail || null,
     });
     return { ok: true, scheduleSaved: true };
   }
@@ -245,6 +263,9 @@ const pageStyles = `
   .zs-field>span{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--zs-muted);}
   .zs-field .zs-select{min-width:150px;}
   .zs-sched-hint{font-size:12px;color:var(--zs-muted);margin-top:11px;line-height:1.55;}
+  .zs-check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--zs-dark);cursor:pointer;padding-bottom:11px;}
+  .zs-check input{width:16px;height:16px;accent-color:var(--zs-clay);cursor:pointer;}
+  .zs-field input.zs-input{min-width:230px;flex:none;}
 `;
 
 const TYPES = [
@@ -436,12 +457,16 @@ function AutoSyncCard({
   );
   const [hourUtc, setHourUtc] = useState(existing?.hourUtc ?? 3);
   const [dayOfWeek, setDayOfWeek] = useState(existing?.dayOfWeek ?? 1);
+  const [notify, setNotify] = useState(existing?.notify ?? true);
+  const [notifyEmail, setNotifyEmail] = useState(existing?.notifyEmail ?? "");
 
   // Switching source store swaps which schedule is being edited.
   useEffect(() => {
     setFrequency(existing?.frequency || allowedFrequencies[0] || "daily");
     setHourUtc(existing?.hourUtc ?? 3);
     setDayOfWeek(existing?.dayOfWeek ?? 1);
+    setNotify(existing?.notify ?? true);
+    setNotifyEmail(existing?.notifyEmail ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src]);
 
@@ -559,6 +584,30 @@ function AutoSyncCard({
               </label>
             )}
 
+            <label className="zs-check">
+              <input
+                type="checkbox"
+                name="notify"
+                checked={notify}
+                onChange={(e) => setNotify(e.target.checked)}
+              />
+              <span>Email me the results</span>
+            </label>
+
+            {notify && (
+              <label className="zs-field">
+                <span>Send to</span>
+                <input
+                  className="zs-input"
+                  type="email"
+                  name="notifyEmail"
+                  value={notifyEmail}
+                  placeholder="your store's contact email"
+                  onChange={(e) => setNotifyEmail(e.target.value)}
+                />
+              </label>
+            )}
+
             <button className="zs-btn" disabled={saving || picked.length === 0}>
               {saving ? (
                 <>
@@ -575,7 +624,8 @@ function AutoSyncCard({
           <div className="zs-sched-hint">
             Uses the data types selected above ({picked.length ? picked.join(", ") : "none yet"}).
             Runs are billed against your monthly quota just like manual ones, and
-            appear in History.
+            appear in History. You&apos;ll only be emailed when a run adds
+            something or fails — a sync that finds nothing new stays quiet.
           </div>
 
           {scheduleFetcher.data?.error && (

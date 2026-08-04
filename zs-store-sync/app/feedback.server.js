@@ -11,26 +11,15 @@
 //                     (default: "ZS StoreSync <feedback@zilancer.com>")
 // ═════════════════════════════════════════════════════════════════════════════
 import db from "./db.server";
+// One Resend call site for the whole app, so sender config and error handling
+// don't drift between team mail and merchant mail.
+import { sendEmail, esc } from "./notify.server";
 
 const FEEDBACK_TO = process.env.FEEDBACK_TO || "contact@zilancer.com";
-const FEEDBACK_FROM =
-  process.env.FEEDBACK_FROM || "ZS StoreSync <feedback@zilancer.com>";
-
-// Minimal HTML escaping so merchant text can't break the email markup.
-function esc(s = "") {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 // Send a feedback notification via Resend. Returns true on success, false if
 // email is not configured or the request failed (never throws).
 async function sendFeedbackEmail({ shop, rating, message }) {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return false;
-
   const stars = "★".repeat(rating) + "☆".repeat(5 - rating);
   const subject = `ZS StoreSync feedback — ${rating}/5 from ${shop}`;
   const html = `
@@ -43,30 +32,12 @@ async function sendFeedbackEmail({ shop, rating, message }) {
       }</div>
     </div>`;
 
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: FEEDBACK_FROM,
-        to: [FEEDBACK_TO],
-        reply_to: FEEDBACK_TO,
-        subject,
-        html,
-      }),
-    });
-    if (!res.ok) {
-      console.error("[feedback] Resend error", res.status, await res.text());
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error("[feedback] Resend request failed", err);
-    return false;
-  }
+  return sendEmail({
+    to: FEEDBACK_TO,
+    replyTo: FEEDBACK_TO,
+    subject,
+    html,
+  });
 }
 
 // A shop may submit at most this many ratings per window. The form is a
