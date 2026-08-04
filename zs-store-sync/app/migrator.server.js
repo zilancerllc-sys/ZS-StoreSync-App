@@ -2892,6 +2892,11 @@ export async function runMigration({
   limits = {},
   mode = "migrate",
   onLog = () => {},
+  // Fired for every item that consumes quota, as it happens. The caller uses
+  // this to bill quota incrementally: a run that dies part-way (machine
+  // restart, deploy, crash) must still be charged for what it already created,
+  // otherwise the whole run is free.
+  onConsume = () => {},
 }) {
   const counters = { created: 0, updated: 0, skipped: 0, failed: 0 };
   // per-type consumed counters — only items actually CREATED consume quota;
@@ -2908,6 +2913,7 @@ export async function runMigration({
   // record one successfully created item of the current type
   const consume = (type) => {
     consumed[type] = (consumed[type] || 0) + 1;
+    onConsume(type);
   };
 
   // the orchestrator tracks the current type so each runner checks its own quota

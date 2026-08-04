@@ -12,8 +12,16 @@ import { runMigration } from "./migrator.server";
 import { consumeQuota } from "./credits.server";
 import { redactPII } from "./redact.server";
 
-// a "running" job older than this is considered dead (server restart etc.)
-const STALE_MS = 2 * 60 * 60 * 1000;
+// A "running" job whose row hasn't been touched in this long is considered
+// dead (machine stopped, deploy, crash). This keys off updatedAt, not
+// startedAt: the runner heartbeats the row every HEARTBEAT_MS, so a genuinely
+// long migration stays alive while an abandoned one is caught quickly. Keying
+// off startedAt got this backwards — it declared healthy long runs dead at two
+// hours, and left killed ones showing "running" for two hours.
+const STALE_MS = 10 * 60 * 1000;
+
+// How often the runner touches its row while it has nothing new to log.
+const HEARTBEAT_MS = 30 * 1000;
 
 // ─── Log serialization that can never produce invalid JSON ────────────────────
 // The old code sliced the JSON string, which could cut mid-token and make the
@@ -44,7 +52,7 @@ export async function failStaleJobs(shop) {
     where: {
       shop,
       status: "running",
-      startedAt: { lt: new Date(Date.now() - STALE_MS) },
+      updatedAt: { lt: new Date(Date.now() - STALE_MS) },
     },
     data: {
       status: "failed",
@@ -104,21 +112,89 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode }) {
     dirty = true;
   };
 
-  // flush logs to the job row every 2s so polling clients see live progress
+  // ── Quota billed as the run progresses, not at the end ──────────────────────
+  // Charging only after runMigration() resolved meant an interrupted run was
+  // free: a job killed after creating 2,900 products consumed no quota at all.
+  // Items are counted here as they are created and flushed periodically, so
+  // whatever a dead run produced has already been billed.
+  const pendingQuota = {};
+  let flushingQuota = false;
+  const onConsume = (type) => {
+    pendingQuota[type] = (pendingQuota[type] || 0) + 1;
+  };
+  const flushQuota = async () => {
+    if (flushingQuota) return; // never let two flushes overlap
+    const batch = {};
+    let any = false;
+    for (const [type, n] of Object.entries(pendingQuota)) {
+      if (n > 0) {
+        batch[type] = n;
+        pendingQuota[type] = 0;
+        any = true;
+      }
+    }
+    if (!any) return;
+    flushingQuota = true;
+    try {
+      await consumeQuota(shop, batch);
+    } catch {
+      // Put it back rather than dropping it — the next flush (or the final one
+      // in the finally block) retries. Better to bill late than never.
+      for (const [type, n] of Object.entries(batch)) {
+        pendingQuota[type] = (pendingQuota[type] || 0) + n;
+      }
+    } finally {
+      flushingQuota = false;
+    }
+  };
+
+  // Flush logs every 2s so polling clients see live progress, and touch the row
+  // at least every HEARTBEAT_MS so failStaleJobs can tell "still working" from
+  // "machine went away".
+  //
+  // Both writes are updateMany guarded on status:"running" rather than a plain
+  // update. clearInterval() stops new ticks but cannot recall a write already
+  // in flight, and such a write landing after the final "completed" update
+  // would revive the job as running (or roll its log back). The guard makes a
+  // late write match zero rows instead.
+  let lastWriteAt = Date.now();
   const flusher = setInterval(() => {
-    if (!dirty) return;
-    dirty = false;
-    db.migrationJob
-      .update({ where: { id: jobId }, data: { logJson: safeLogsJson(logs) } })
-      .catch(() => {});
+    flushQuota();
+    if (dirty) {
+      dirty = false;
+      lastWriteAt = Date.now();
+      db.migrationJob
+        .updateMany({
+          where: { id: jobId, status: "running" },
+          data: { logJson: safeLogsJson(logs) },
+        })
+        .catch(() => {});
+    } else if (Date.now() - lastWriteAt >= HEARTBEAT_MS) {
+      lastWriteAt = Date.now();
+      // No content change — this exists purely to bump updatedAt.
+      db.migrationJob
+        .updateMany({
+          where: { id: jobId, status: "running" },
+          data: { status: "running" },
+        })
+        .catch(() => {});
+    }
   }, 2000);
 
   try {
     const { admin: source } = await unauthenticated.admin(sourceShop);
     const { admin: target } = await unauthenticated.admin(shop);
 
-    const result = await runMigration({ source, target, types, limits, mode, onLog });
-    await consumeQuota(shop, result.consumedByType);
+    const result = await runMigration({
+      source,
+      target,
+      types,
+      limits,
+      mode,
+      onLog,
+      onConsume,
+    });
+    await flushQuota();
 
     const summary =
       mode === "sync"
@@ -146,6 +222,8 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode }) {
     });
   } catch (err) {
     clearInterval(flusher);
+    // Bill whatever the run managed to create before it died.
+    await flushQuota();
     await db.migrationJob
       .update({
         where: { id: jobId },
