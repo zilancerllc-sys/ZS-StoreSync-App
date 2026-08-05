@@ -18,6 +18,7 @@ import {
   planAllowsFrequency,
   SCHEDULE_FREQUENCIES,
   FREQUENCY_LABEL,
+  normalizeNotifyEmail,
 } from "../schedule-config";
 import { brandStyles } from "./zs-styles.js";
 import {
@@ -118,15 +119,39 @@ export const action = async ({ request }) => {
     if (allowed.length === 0)
       return { ok: false, error: "Pick at least one data type your plan includes." };
 
+    const notify = form.get("notify") === "on";
+
     // Whatever the merchant typed wins; otherwise seed from the store's own
     // contact address so notifications work without them filling anything in.
-    let notifyEmail = String(form.get("notifyEmail") || "").trim();
-    if (!notifyEmail) {
-      try {
-        const res = await admin.graphql(Q_SHOP_EMAIL);
-        notifyEmail = (await res.json())?.data?.shop?.email || "";
-      } catch {
-        // Not worth failing the save over — the schedule still runs, silently.
+    const typed = String(form.get("notifyEmail") || "").trim();
+    let notifyEmail = null;
+    if (notify) {
+      if (typed) {
+        notifyEmail = normalizeNotifyEmail(typed);
+        // Reject rather than store junk: an unusable address means the merchant
+        // silently gets no mail and never finds out why.
+        if (!notifyEmail) {
+          return {
+            ok: false,
+            error: `"${typed.slice(0, 80)}" isn't a valid email address.`,
+          };
+        }
+      } else {
+        try {
+          const res = await admin.graphql(Q_SHOP_EMAIL);
+          notifyEmail = normalizeNotifyEmail(
+            (await res.json())?.data?.shop?.email,
+          );
+        } catch {
+          // Not worth failing the save over — the schedule still runs, silently.
+        }
+        if (!notifyEmail) {
+          return {
+            ok: false,
+            error:
+              "We couldn't read your store's contact email. Enter the address to notify.",
+          };
+        }
       }
     }
 
@@ -137,8 +162,8 @@ export const action = async ({ request }) => {
       frequency,
       hourUtc: Math.min(23, Math.max(0, Number(form.get("hourUtc")) || 0)),
       dayOfWeek: Math.min(6, Math.max(0, Number(form.get("dayOfWeek")) || 0)),
-      notify: form.get("notify") === "on",
-      notifyEmail: notifyEmail || null,
+      notify,
+      notifyEmail,
     });
     return { ok: true, scheduleSaved: true };
   }

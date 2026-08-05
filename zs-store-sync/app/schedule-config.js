@@ -32,6 +32,33 @@ export function planAllowsFrequency(plan, frequency) {
   return (SCHEDULE_FREQUENCIES[plan] || []).includes(frequency);
 }
 
+// ─── Notification address ────────────────────────────────────────────────────
+// The recipient is merchant-supplied, so it is validated on the server before
+// anything is stored — an unchecked value meant a typo silently produced no
+// mail at all, and left the app willing to send to whatever was typed.
+//
+// Deliberately NOT restricted to the store's own domain: wanting results at a
+// personal or shared inbox is the normal case, and blocking it would break the
+// feature for most merchants to deter an attack that costs the attacker a paid
+// plan, a second store they control, and yields four templated emails a day.
+// Every notification names the sending store and says how to turn it off.
+// A practical character set rather than the full RFC grammar: the first
+// attempt allowed "anything but whitespace and @" in the local part, which let
+// input like "<script>@x.com" through — harmless where the value is used, but
+// exactly the unusable address this check exists to catch. Quoted local parts
+// and apostrophes are rejected along with it; neither reaches a real inbox
+// often enough to be worth the looser rule.
+const EMAIL_RE =
+  /^[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}$/;
+const EMAIL_MAX = 254; // RFC 5321
+
+// Returns the cleaned address, or null when it isn't usable.
+export function normalizeNotifyEmail(input) {
+  const s = String(input ?? "").trim().toLowerCase();
+  if (!s || s.length > EMAIL_MAX) return null;
+  return EMAIL_RE.test(s) ? s : null;
+}
+
 // ─── When should this schedule fire next? ────────────────────────────────────
 // Always strictly in the future, so a claim can never re-fire immediately —
 // that property is what stops a due schedule spinning in a loop.
