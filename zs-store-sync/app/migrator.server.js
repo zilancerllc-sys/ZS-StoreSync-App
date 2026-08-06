@@ -2151,6 +2151,19 @@ const M_BLOG_CREATE = `#graphql
     }
   }`;
 
+// Shopify fetches an article's featured image itself, from the source store's
+// CDN, while the mutation runs. When that fetch times out it rejects the whole
+// article — so a slow image silently costs the merchant the entire post. The
+// text is worth far more than the picture, so callers retry without the image
+// when this is what went wrong.
+function isImageFetchError(errs) {
+  return (errs || []).some((e) =>
+    /image upload failed|failed to download|image .*(timeout|could not be)/i.test(
+      String(e?.message || ""),
+    ),
+  );
+}
+
 const M_ARTICLE_CREATE = `#graphql
   mutation CreateArticle($article: ArticleCreateInput!) {
     articleCreate(article: $article) {
@@ -2298,11 +2311,32 @@ async function migrateBlogPosts(ctx) {
           // articleUpdate doesn't take blogId; drop it from the payload
           const articleNoBlog = { ...article };
           delete articleNoBlog.blogId;
-          const upd = await gql(target, M_ARTICLE_UPDATE, {
+          let upd = await gql(target, M_ARTICLE_UPDATE, {
             id: existingArticleId,
             article: articleNoBlog,
           });
-          const uerrs = upd?.articleUpdate?.userErrors;
+          let uerrs = upd?.articleUpdate?.userErrors;
+
+          // Same trade as the create path: keep the post's text up to date
+          // even when its image can't be re-fetched.
+          if (uerrs?.length && articleNoBlog.image && isImageFetchError(uerrs)) {
+            const noImage = { ...articleNoBlog };
+            delete noImage.image;
+            upd = await gql(target, M_ARTICLE_UPDATE, {
+              id: existingArticleId,
+              article: noImage,
+            });
+            uerrs = upd?.articleUpdate?.userErrors;
+            if (!uerrs?.length) {
+              counters.updated++;
+              onLog(
+                `↻ Updated: ${a.title} — ⚠ featured image left as it was, Shopify couldn't fetch the new one.`,
+              );
+              await sleep(160);
+              continue;
+            }
+          }
+
           if (uerrs?.length) {
             counters.failed++;
             onLog(`✕ Update failed: ${a.title} — ${errText(uerrs)}`);
@@ -2328,8 +2362,30 @@ async function migrateBlogPosts(ctx) {
       }
 
       try {
-        const data = await gql(target, M_ARTICLE_CREATE, { article });
-        const errs = data?.articleCreate?.userErrors;
+        let data = await gql(target, M_ARTICLE_CREATE, { article });
+        let errs = data?.articleCreate?.userErrors;
+
+        // Losing a whole post because its picture was slow to download is the
+        // wrong trade. Try again without the image and tell the merchant which
+        // posts need one re-attached.
+        if (errs?.length && article.image && isImageFetchError(errs)) {
+          const articleNoImage = { ...article };
+          delete articleNoImage.image;
+          data = await gql(target, M_ARTICLE_CREATE, {
+            article: articleNoImage,
+          });
+          errs = data?.articleCreate?.userErrors;
+          if (!errs?.length) {
+            counters.created++;
+            consume();
+            onLog(
+              `✓ Article: ${a.title} — ⚠ featured image skipped, Shopify couldn't fetch it in time; re-add it in the target store.`,
+            );
+            await sleep(160);
+            continue;
+          }
+        }
+
         if (errs?.length) {
           counters.skipped++;
           onLog(`↪︎ Skipped article: ${a.title} — ${errText(errs)}`);
