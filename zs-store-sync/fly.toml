@@ -29,6 +29,21 @@ primary_region = 'sin'
   min_machines_running = 1
   processes = ['app']
 
+  # Without a check, fly-proxy has nothing to tell it a restarting machine is
+  # not ready yet, so every deploy sent a few requests into a container whose
+  # server had not started — "instance refused connection". /healthz answers as
+  # soon as the server is listening and touches nothing else.
+  #
+  # grace_period covers the whole cold start (image pull, migrate deploy, boot),
+  # which has been running around 40s; too short and Fly would count failures
+  # against a machine that is simply still starting.
+  [[http_service.checks]]
+    interval = '10s'
+    timeout = '2s'
+    grace_period = '45s'
+    method = 'GET'
+    path = '/healthz'
+
 [[vm]]
   memory = '1gb'
   cpus = 1
