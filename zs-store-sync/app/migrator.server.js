@@ -3083,13 +3083,20 @@ export async function runMigration({
 // blogsCount exists but counts blogs, not the articles this app migrates — so
 // they are reported as "counted during the run" rather than a bogus number.
 const COUNT_QUERIES = {
-  products: `#graphql { productsCount { count } }`,
-  collections: `#graphql { collectionsCount { count } }`,
-  pages: `#graphql { pagesCount { count } }`,
-  discounts: `#graphql { discountNodesCount { count } }`,
-  redirects: `#graphql { urlRedirectsCount { count } }`,
-  orders: `#graphql { ordersCount { count } }`,
-  customers: `#graphql { customersCount { count } }`,
+  products: `#graphql
+  { productsCount { count } }`,
+  collections: `#graphql
+  { collectionsCount { count } }`,
+  pages: `#graphql
+  { pagesCount { count } }`,
+  discounts: `#graphql
+  { discountNodesCount { count } }`,
+  redirects: `#graphql
+  { urlRedirectsCount { count } }`,
+  orders: `#graphql
+  { ordersCount { count } }`,
+  customers: `#graphql
+  { customersCount { count } }`,
 };
 
 export async function previewCounts({ source, target, types }) {

@@ -41,7 +41,8 @@ const PROMO_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000;
 // merchant's first fortnight is: welcome, feedback, then quiet.
 const FIRST_PROMO_DELAY_MS = 9 * 24 * 60 * 60 * 1000;
 
-const Q_SHOP_EMAIL = `#graphql { shop { email } }`;
+const Q_SHOP_EMAIL = `#graphql
+  { shop { email } }`;
 
 // Three apps is enough to be useful in an email; the full six is a wall.
 function pickApps(offset = 0, count = 3) {
@@ -78,6 +79,25 @@ export async function onAppInstalled({ shop, admin }) {
           ...(email ? { email } : {}),
         },
       });
+
+      // A row can exist without a welcome ever going out — the address wasn't
+      // readable at install time. Send it on the next visit rather than
+      // leaving that merchant permanently un-greeted.
+      if (!existing.welcomeSentAt && email && existing.optedIn) {
+        const late = await sendWelcomeEmail({
+          to: email,
+          shop,
+          token: existing.unsubscribeToken,
+          apps: pickApps(0),
+        });
+        if (late) {
+          await db.merchantContact.update({
+            where: { shop },
+            data: { welcomeSentAt: new Date() },
+          });
+        }
+        return { welcomed: late, reason: "welcome was still outstanding" };
+      }
       return { welcomed: false, reason: "already known" };
     }
 

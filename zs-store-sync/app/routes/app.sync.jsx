@@ -81,7 +81,8 @@ export const loader = async ({ request }) => {
   };
 };
 
-const Q_SHOP_EMAIL = `#graphql { shop { email } }`;
+const Q_SHOP_EMAIL = `#graphql
+  { shop { email } }`;
 
 export const action = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
