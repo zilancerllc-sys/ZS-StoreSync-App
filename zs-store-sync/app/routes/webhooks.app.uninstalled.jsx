@@ -1,6 +1,7 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { setPlan } from "../credits.server";
+import { onAppUninstalled } from "../lifecycle.server";
 
 export const action = async ({ request }) => {
   const { shop, session, topic } = await authenticate.webhook(request);
@@ -16,6 +17,9 @@ export const action = async ({ request }) => {
   // Shopify cancels subscriptions on uninstall — drop the plan now so a
   // reinstall never resumes a paid plan without an active subscription.
   await setPlan(shop, "free", null);
+
+  // Stop the welcome/feedback/update sequence for a store that has left.
+  await onAppUninstalled(shop);
 
   // Other stores can no longer pull from this shop until it re-authorizes.
   await db.storeConnection.updateMany({

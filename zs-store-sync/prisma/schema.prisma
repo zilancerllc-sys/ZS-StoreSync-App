@@ -168,6 +168,40 @@ model SyncSchedule {
   @@index([ownerShop])
 }
 
+// ── Lifecycle email state for one merchant ───────────────────────────────────
+// Shopify's Partner Program Agreement 2.1.2 forbids emailing a merchant whose
+// address came from Shopify without consent first, so optedIn gates everything
+// except the welcome mail (which is part of onboarding the service). Every
+// send carries an unsubscribe link built from unsubscribeToken — a random
+// value, so the link works without a logged-in session and reveals nothing.
+model MerchantContact {
+  id               String   @id @default(cuid())
+  shop             String   @unique
+  email            String?
+  optedIn          Boolean  @default(true)
+  unsubscribeToken String   @unique
+
+  installedAt      DateTime @default(now())
+  welcomeSentAt    DateTime?
+  // Due timestamps double as claim markers, exactly like SyncSchedule: the
+  // runner moves them forward in the same UPDATE that checks they are due, so
+  // two machines ticking together cannot both send.
+  feedbackDueAt    DateTime?
+  feedbackSentAt   DateTime?
+  nextPromoAt      DateTime?
+  lastPromoAt      DateTime?
+  promoCount       Int      @default(0)
+  unsubscribedAt   DateTime?
+  // Set on app/uninstalled — an uninstalled store must stop hearing from us.
+  uninstalledAt    DateTime?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([optedIn, feedbackDueAt])
+  @@index([optedIn, nextPromoAt])
+}
+
 // Stores a unique, shareable connection code for each shop. A shop's owner
 
 model ShopSecret {

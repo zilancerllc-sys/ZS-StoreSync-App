@@ -20,6 +20,9 @@ import {
   planAllowsFrequency,
 } from "./schedule-config";
 import { notifySchedulePaused } from "./notify.server";
+// The lifecycle mailer needs the same "run something later" heartbeat, and
+// one timer is easier to reason about than two.
+import { runDueLifecycleEmails } from "./lifecycle.server";
 
 // ─── Read/write helpers used by the UI ───────────────────────────────────────
 export async function getSchedule(ownerShop, sourceShop) {
@@ -221,6 +224,12 @@ export function startScheduleTicker() {
         if (r.length) console.log("[schedules]", JSON.stringify(r));
       },
       (err) => console.error("[schedules] tick failed:", err),
+    );
+    runDueLifecycleEmails().then(
+      (r) => {
+        if (r.length) console.log("[lifecycle]", JSON.stringify(r));
+      },
+      (err) => console.error("[lifecycle] tick failed:", err),
     );
   }, TICK_MS);
   // Do not hold the process open on shutdown.

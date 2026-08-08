@@ -6,8 +6,10 @@ import {
   getConnectionCode,
   regenerateConnectionCode,
 } from "../connection.server";
+import { getEmailPreference, setEmailPreference } from "../lifecycle.server";
 import { brandStyles } from "./zs-styles.js";
 import {
+  Mail,
   KeyRound,
   Copy,
   Check,
@@ -21,16 +23,42 @@ import {
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const code = await getConnectionCode(session.shop);
-  return { shop: session.shop, code };
+  const pref = await getEmailPreference(session.shop);
+  return {
+    shop: session.shop,
+    code,
+    // No row yet means the store installed before lifecycle mail existed;
+    // treat that as on, matching the default for new installs.
+    emailOptedIn: pref ? pref.optedIn : true,
+    notifyEmail: pref?.email || null,
+  };
 };
 
 // ─── Action: regenerate code ──────────────────────────────────────────────────
+const Q_SHOP_EMAIL = `#graphql { shop { email } }`;
+
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const form = await request.formData();
   if (form.get("intent") === "regenerate") {
     const code = await regenerateConnectionCode(session.shop);
     return { ok: true, code };
+  }
+  if (form.get("intent") === "email-pref") {
+    const optedIn = form.get("optedIn") === "on";
+    // A store that installed before lifecycle mail existed has no address on
+    // file yet, so fetch it while we have an authenticated client.
+    let email = null;
+    if (optedIn) {
+      try {
+        const res = await admin.graphql(Q_SHOP_EMAIL);
+        email = (await res.json())?.data?.shop?.email || null;
+      } catch {
+        // Saving the preference still matters; the address can come later.
+      }
+    }
+    await setEmailPreference(session.shop, optedIn, email);
+    return { ok: true, prefSaved: true };
   }
   return { ok: false };
 };
@@ -65,10 +93,15 @@ const pageStyles = `
   .zs-spin{animation:zsRot 1s linear infinite;}@keyframes zsRot{to{transform:rotate(360deg);}}
   @keyframes zsFadeUp{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}
   .zs-reveal{animation:zsFadeUp .5s ease forwards;}
+  .zs-pref{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:18px;}
+  .zs-pref-check{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--zs-dark);cursor:pointer;}
+  .zs-pref-check input{width:17px;height:17px;accent-color:var(--zs-clay);cursor:pointer;flex-shrink:0;}
+  .zs-pref-ok{display:flex;align-items:center;gap:6px;margin-top:12px;font-size:13px;font-weight:600;color:var(--zs-sage-deep);}
 `;
 
 export default function Settings() {
-  const { shop, code: initialCode } = useLoaderData();
+  const { shop, code: initialCode, emailOptedIn, notifyEmail } = useLoaderData();
+  const prefFetcher = useFetcher();
   const fetcher = useFetcher();
   const [copied, setCopied] = useState(false);
 
@@ -167,6 +200,53 @@ export default function Settings() {
                   )}
                 </button>
               </fetcher.Form>
+            </div>
+
+            <div className="zs-card" style={{ marginTop: 20 }}>
+              <div className="zs-card-head">
+                <div className="ico">
+                  <Mail size={22} />
+                </div>
+                <div>
+                  <h3>Email from ZS StoreSync</h3>
+                  <p>
+                    Occasional product updates and the odd request for feedback.
+                    Nothing more than twice a month.
+                  </p>
+                </div>
+              </div>
+
+              <prefFetcher.Form method="post" className="zs-pref">
+                <input type="hidden" name="intent" value="email-pref" />
+                <label className="zs-pref-check">
+                  <input
+                    type="checkbox"
+                    name="optedIn"
+                    defaultChecked={emailOptedIn}
+                  />
+                  <span>
+                    Send me product updates and tips
+                    {notifyEmail ? ` at ${notifyEmail}` : ""}
+                  </span>
+                </label>
+                <button className="zs-regen-btn" disabled={prefFetcher.state !== "idle"}>
+                  {prefFetcher.state !== "idle" ? "Saving…" : "Save"}
+                </button>
+              </prefFetcher.Form>
+
+              <div className="zs-note" style={{ marginTop: 14 }}>
+                <Info size={16} />
+                <span>
+                  This doesn&apos;t affect email you asked for yourself — the
+                  results of a scheduled sync still arrive either way.
+                </span>
+              </div>
+
+              {prefFetcher.data?.prefSaved && (
+                <div className="zs-pref-ok">
+                  <Check size={15} /> Saved
+                </div>
+              )}
             </div>
 
             <div className="zs-note" style={{ marginTop: 16 }}>

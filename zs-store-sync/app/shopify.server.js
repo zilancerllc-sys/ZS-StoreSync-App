@@ -7,6 +7,7 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
+import { onAppInstalled } from "./lifecycle.server";
 import { BillingInterval } from "@shopify/shopify-app-react-router/server";
 
 const shopify = shopifyApp({
@@ -18,6 +19,18 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
+  hooks: {
+    // Runs once per successful install/auth. Wrapped so a mail failure can
+    // never break a merchant's install — onAppInstalled swallows its own
+    // errors, and this catch is the belt to that pair of braces.
+    afterAuth: async ({ session, admin }) => {
+      try {
+        await onAppInstalled({ shop: session.shop, admin });
+      } catch (err) {
+        console.error("[lifecycle] afterAuth failed:", err);
+      }
+    },
+  },
   webhooks: {
     APP_SUBSCRIPTIONS_UPDATE: {
       deliveryMethod: DeliveryMethod.Http,

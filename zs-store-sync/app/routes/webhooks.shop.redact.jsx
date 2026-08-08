@@ -18,6 +18,8 @@ export const action = async ({ request }) => {
   // previously left behind after a redact.
   await db.shopSecret.deleteMany({ where: { shop } });
   await db.feedback.deleteMany({ where: { shop } });
+  // Holds the merchant's email address, so it goes with everything else.
+  await db.merchantContact.deleteMany({ where: { shop } });
 
   // Jobs where this shop was the SOURCE belong to a different merchant, so the
   // rows stay (that merchant's own migration history). Their logs, however,
