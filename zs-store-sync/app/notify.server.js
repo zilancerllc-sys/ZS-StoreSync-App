@@ -16,7 +16,12 @@
 // ═════════════════════════════════════════════════════════════════════════════
 
 const FROM =
-  process.env.FEEDBACK_FROM || "ZS StoreSync <feedback@zilancer.com>";
+  process.env.FEEDBACK_FROM || "ZS StoreSync <noreply@zilancer.com>";
+
+// Sending from noreply@ means a merchant who hits Reply gets a bounce, which
+// is a poor way to treat someone answering a mail that asked for feedback.
+// Every merchant email therefore carries a Reply-To that a human reads.
+const REPLY_TO = process.env.MAIL_REPLY_TO || "contact@zilancer.com";
 
 // Minimal HTML escaping so shop names and error text can't break the markup.
 export function esc(s = "") {
@@ -110,6 +115,7 @@ export async function notifyScheduledRun({ to, shop, sourceShop, job }) {
 
   return sendEmail({
     to,
+    replyTo: REPLY_TO,
     subject,
     html: shell(failed ? "A scheduled sync failed" : "Your scheduled sync ran", body),
   });
@@ -119,6 +125,7 @@ export async function notifyScheduledRun({ to, shop, sourceShop, job }) {
 export async function notifySchedulePaused({ to, shop, sourceShop, reason }) {
   return sendEmail({
     to,
+    replyTo: REPLY_TO,
     subject: `Automatic sync paused — ${shop}`,
     html: shell(
       "Automatic sync has been paused",
@@ -239,6 +246,7 @@ export async function sendWelcomeEmail({ to, shop, token, apps }) {
 
   return sendEmail({
     to,
+    replyTo: REPLY_TO,
     subject: `Welcome to ZS StoreSync — here's how to start`,
     html: mailShell(body, { token, promotional: false }),
   });
@@ -247,25 +255,32 @@ export async function sendWelcomeEmail({ to, shop, token, apps }) {
 // ─── 2. Feedback nudge, two days in ──────────────────────────────────────────
 // Points at the in-app rating widget rather than asking for a public review by
 // email: it is the flow Shopify sanctions, and it already exists in the app.
-export async function sendFeedbackEmail({ to, shop, token }) {
+// Deliberately does not name the store — the merchant knows which one they
+// installed, and the domain added nothing but clutter.
+export async function sendFeedbackEmail({ to, token }) {
   const body = `
-    <h2 style="margin:0 0 12px;font-size:21px;">How's ZS StoreSync working out?</h2>
+    <h2 style="margin:0 0 14px;font-size:21px;">How's ZS StoreSync working out?</h2>
     <p style="font-size:15px;line-height:1.65;margin:0 0 16px;">
-      You installed ZS StoreSync on <b>${esc(shop)}</b> a couple of days ago.
-      If you've run a migration, we'd like to know how it went — and if you got
-      stuck, we'd rather hear that.
+      You installed ZS StoreSync a few days ago, and we&rsquo;d love to hear how
+      your migration experience went.
     </p>
-    <p style="font-size:15px;line-height:1.65;margin:0 0 20px;">
-      There's a short rating box on the dashboard. It takes a few seconds, and
-      anything you write comes straight to us.
+    <p style="font-size:15px;line-height:1.65;margin:0 0 22px;">
+      Did everything go smoothly, or did you run into any issues along the way?
+      Your honest feedback helps us identify areas where we can improve and make
+      ZS StoreSync easier to use.
     </p>
-    <p style="margin:0 0 20px;">${button(`${APP_URL}/app`, "Leave feedback")}</p>
-    <p style="font-size:14px;line-height:1.65;color:#6b6259;margin:0;">
-      Prefer to just reply to this email? That works too.
+    <p style="margin:0 0 22px;">${button(`${APP_URL}/app`, "Share your feedback")}</p>
+    <p style="font-size:15px;line-height:1.65;margin:0 0 16px;">
+      You&rsquo;ll find a short feedback box on your dashboard. It only takes a
+      few seconds, and anything you share goes directly to our team.
+    </p>
+    <p style="font-size:15px;line-height:1.65;margin:0;">
+      Thank you for using ZS StoreSync!
     </p>`;
 
   return sendEmail({
     to,
+    replyTo: REPLY_TO,
     subject: `How's ZS StoreSync working out?`,
     html: mailShell(body, { token, promotional: true }),
   });
@@ -281,6 +296,7 @@ export async function sendPromoEmail({ to, token, apps, headline, intro }) {
 
   return sendEmail({
     to,
+    replyTo: REPLY_TO,
     subject: headline,
     html: mailShell(body, { token, promotional: true }),
   });

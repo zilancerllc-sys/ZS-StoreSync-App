@@ -244,7 +244,6 @@ export async function runDueLifecycleEmails(now = new Date()) {
 
     const sent = await sendFeedbackEmail({
       to: c.email,
-      shop: c.shop,
       token: c.unsubscribeToken,
     }).catch(() => false);
     results.push({ shop: c.shop, kind: "feedback", sent });
