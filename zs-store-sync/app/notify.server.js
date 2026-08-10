@@ -1,5 +1,5 @@
 // ═════════════════════════════════════════════════════════════════════════════
-//  ZS StoreSync — outbound email
+//  Outbound email (shared across the Zilancer apps)
 //
 //  Two audiences with different rules:
 //    • the team   — merchant feedback (see feedback.server.js)
@@ -10,13 +10,23 @@
 //  filtered to spam. Only three things are worth an email: something was
 //  created, the run failed, or the schedule stopped and needs a human.
 //
+//  This file is copied verbatim into the other Zilancer apps: everything that
+//  differs between them comes from the environment or from the caller, so
+//  there is nothing to find-and-replace.
+//
 //  Environment:
-//    RESEND_API_KEY   Resend key. Unset = mail is skipped, never an error.
-//    FEEDBACK_FROM    Verified sender.
+//    RESEND_API_KEY     Resend key. Unset = mail is skipped, never an error.
+//    APP_NAME           Shown to merchants, e.g. "ZS StoreSync".
+//    FEEDBACK_FROM      Verified sender.
+//    MAIL_REPLY_TO      Where replies go.
+//    MAIL_FROM_ADDRESS  Postal address, required by CAN-SPAM.
+//    SHOPIFY_APP_URL    Base URL for links back into the app.
 // ═════════════════════════════════════════════════════════════════════════════
 
+export const APP_NAME = process.env.APP_NAME || "ZS StoreSync";
+
 const FROM =
-  process.env.FEEDBACK_FROM || "ZS StoreSync <noreply@zilancer.com>";
+  process.env.FEEDBACK_FROM || `${APP_NAME} <noreply@zilancer.com>`;
 
 // Sending from noreply@ means a merchant who hits Reply gets a bounce, which
 // is a poor way to treat someone answering a mail that asked for feedback.
@@ -71,7 +81,7 @@ function shell(heading, bodyHtml) {
       ${bodyHtml}
       <p style="margin:22px 0 0;font-size:12px;color:#8a7d70;">
         You're getting this because automatic sync is on for this store.
-        Turn it off in ZS StoreSync → Sync Changes.
+        Turn it off in ${esc(APP_NAME)} → Sync Changes.
       </p>
     </div>`;
 }
@@ -212,8 +222,8 @@ function mailShell(bodyHtml, { token, promotional }) {
         promotional
           ? `You're receiving this because product updates are switched on for your store.
              <a href="${esc(unsubscribeUrl(token))}" style="color:#8C6E58;">Unsubscribe</a> —
-             or turn them off in ZS StoreSync → Settings.<br>${esc(POSTAL_ADDRESS)}`
-          : `Sent because ZS StoreSync was installed on your store.
+             or turn them off in ${esc(APP_NAME)} → Settings.<br>${esc(POSTAL_ADDRESS)}`
+          : `Sent because ${esc(APP_NAME)} was installed on your store.
              <a href="${esc(unsubscribeUrl(token))}" style="color:#8C6E58;">Unsubscribe from non-essential email</a>.<br>${esc(POSTAL_ADDRESS)}`
       }
     </div>
@@ -221,33 +231,42 @@ function mailShell(bodyHtml, { token, promotional }) {
 }
 
 // ─── 1. Welcome, on install ──────────────────────────────────────────────────
-export async function sendWelcomeEmail({ to, shop, token, apps }) {
+// blurb / steps / cta / closing are the only app-specific parts, and they come
+// from the COPY block at the top of lifecycle.server.js.
+export async function sendWelcomeEmail({
+  to,
+  shop,
+  token,
+  apps,
+  blurb = "",
+  steps = [],
+  cta = { path: "/app", label: "Open the app" },
+  closing = "",
+}) {
+  const NUMBER = ["", "one", "two", "three", "four", "five", "six"];
+  const stepList = steps.length
+    ? `<div style="background:#faf7f1;border:1px solid #ece5db;border-radius:12px;padding:16px 18px;margin:0 0 20px;">
+         <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Getting set up takes ${NUMBER[steps.length] || steps.length} steps</div>
+         <div style="font-size:14px;line-height:1.9;color:#6b6259;">
+           ${steps.map((t, i) => `${i + 1}. ${esc(t)}`).join("<br>")}
+         </div>
+       </div>`
+    : "";
+
   const body = `
-    <h2 style="margin:0 0 12px;font-size:22px;">Welcome to ZS StoreSync</h2>
+    <h2 style="margin:0 0 12px;font-size:22px;">Welcome to ${esc(APP_NAME)}</h2>
     <p style="font-size:15px;line-height:1.65;margin:0 0 16px;">
-      Thanks for installing on <b>${esc(shop)}</b>. ZS StoreSync copies products, collections, pages,
-      files, blogs, menus, discounts and more from one Shopify store into
-      another — no spreadsheets, no developer, and nothing stored on our servers.
+      Thanks for installing on <b>${esc(shop)}</b>. ${esc(blurb)}
     </p>
-    <div style="background:#faf7f1;border:1px solid #ece5db;border-radius:12px;padding:16px 18px;margin:0 0 20px;">
-      <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Getting set up takes three steps</div>
-      <div style="font-size:14px;line-height:1.9;color:#6b6259;">
-        1. Tell us which store you're copying <b>from</b><br>
-        2. Install ZS StoreSync there too<br>
-        3. Paste that store's connection code
-      </div>
-    </div>
-    <p style="margin:0 0 22px;">${button(`${APP_URL}/app/start`, "Set up your first migration")}</p>
-    <p style="font-size:14px;line-height:1.65;color:#6b6259;margin:0;">
-      Re-run a migration whenever you like — anything that already exists is
-      skipped, so nothing gets duplicated.
-    </p>
+    ${stepList}
+    <p style="margin:0 0 22px;">${button(`${APP_URL}${cta.path}`, cta.label)}</p>
+    ${closing ? `<p style="font-size:14px;line-height:1.65;color:#6b6259;margin:0;">${esc(closing)}</p>` : ""}
     ${appsSection(apps)}`;
 
   return sendEmail({
     to,
     replyTo: REPLY_TO,
-    subject: `Welcome to ZS StoreSync — here's how to start`,
+    subject: `Welcome to ${APP_NAME} — here's how to start`,
     html: mailShell(body, { token, promotional: false }),
   });
 }
@@ -257,17 +276,17 @@ export async function sendWelcomeEmail({ to, shop, token, apps }) {
 // email: it is the flow Shopify sanctions, and it already exists in the app.
 // Deliberately does not name the store — the merchant knows which one they
 // installed, and the domain added nothing but clutter.
-export async function sendFeedbackEmail({ to, token }) {
+export async function sendFeedbackEmail({ to, token, experience = "experience" }) {
   const body = `
-    <h2 style="margin:0 0 14px;font-size:21px;">How's ZS StoreSync working out?</h2>
+    <h2 style="margin:0 0 14px;font-size:21px;">How's ${esc(APP_NAME)} working out?</h2>
     <p style="font-size:15px;line-height:1.65;margin:0 0 16px;">
-      You installed ZS StoreSync a few days ago, and we&rsquo;d love to hear how
-      your migration experience went.
+      You installed ${esc(APP_NAME)} a few days ago, and we&rsquo;d love to hear
+      how your ${esc(experience)} went.
     </p>
     <p style="font-size:15px;line-height:1.65;margin:0 0 22px;">
       Did everything go smoothly, or did you run into any issues along the way?
       Your honest feedback helps us identify areas where we can improve and make
-      ZS StoreSync easier to use.
+      ${esc(APP_NAME)} easier to use.
     </p>
     <p style="margin:0 0 22px;">${button(`${APP_URL}/app`, "Share your feedback")}</p>
     <p style="font-size:15px;line-height:1.65;margin:0 0 16px;">
@@ -275,13 +294,13 @@ export async function sendFeedbackEmail({ to, token }) {
       few seconds, and anything you share goes directly to our team.
     </p>
     <p style="font-size:15px;line-height:1.65;margin:0;">
-      Thank you for using ZS StoreSync!
+      Thank you for using ${esc(APP_NAME)}!
     </p>`;
 
   return sendEmail({
     to,
     replyTo: REPLY_TO,
-    subject: `How's ZS StoreSync working out?`,
+    subject: `How's ${APP_NAME} working out?`,
     html: mailShell(body, { token, promotional: true }),
   });
 }
@@ -291,8 +310,8 @@ export async function sendPromoEmail({ to, token, apps, headline, intro }) {
   const body = `
     <h2 style="margin:0 0 12px;font-size:21px;">${esc(headline)}</h2>
     <p style="font-size:15px;line-height:1.65;margin:0 0 18px;">${esc(intro)}</p>
-    <p style="margin:0 0 6px;">${button(`${APP_URL}/app`, "Open ZS StoreSync")}</p>
-    ${appsSection(apps, "Other apps that pair well with StoreSync")}`;
+    <p style="margin:0 0 6px;">${button(`${APP_URL}/app`, `Open ${APP_NAME}`)}</p>
+    ${appsSection(apps, "Other apps from the same studio")}`;
 
   return sendEmail({
     to,

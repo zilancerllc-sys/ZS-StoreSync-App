@@ -29,6 +29,45 @@ import {
   sendPromoEmail,
 } from "./notify.server";
 
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║  COPY — the only part that differs per app. Everything else in this file  ║
+// ║  and all of notify.server.js is shared verbatim across the studio's apps. ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+const COPY = {
+  // One sentence: what this app does for the merchant. Follows "Thanks for
+  // installing on <store>."
+  welcomeBlurb:
+    "ZS StoreSync copies products, collections, pages, files, blogs, menus, " +
+    "discounts and more from one Shopify store into another — no spreadsheets, " +
+    "no developer, and nothing stored on our servers.",
+
+  // Numbered getting-started steps. Leave empty to omit the box entirely.
+  welcomeSteps: [
+    "Tell us which store you're copying from",
+    "Install ZS StoreSync there too",
+    "Paste that store's connection code",
+  ],
+
+  // Where the welcome button goes, relative to SHOPIFY_APP_URL.
+  welcomeCta: { path: "/app/start", label: "Set up your first migration" },
+
+  // Optional line under the button.
+  welcomeClosing:
+    "Re-run a migration whenever you like — anything that already exists is " +
+    "skipped, so nothing gets duplicated.",
+
+  // Completes "we'd love to hear how your ___ went" in the feedback email.
+  feedbackExperience: "migration experience",
+
+  // The recurring product update.
+  promoHeadline: "Getting more out of ZS StoreSync",
+  promoIntro:
+    "A quick reminder of what the app can do beyond a one-off migration: " +
+    "scheduled syncs keep a second store up to date on their own, Preview " +
+    "shows what a run would change before it touches anything, and every " +
+    "run is logged so you can see exactly what moved.",
+};
+
 const FEEDBACK_DELAY_MS = 2 * 24 * 60 * 60 * 1000;
 
 // A week between product updates was the original plan. Fortnightly is the
@@ -89,6 +128,10 @@ export async function onAppInstalled({ shop, admin }) {
           shop,
           token: existing.unsubscribeToken,
           apps: pickApps(0),
+          blurb: COPY.welcomeBlurb,
+          steps: COPY.welcomeSteps,
+          cta: COPY.welcomeCta,
+          closing: COPY.welcomeClosing,
         });
         if (late) {
           await db.merchantContact.update({
@@ -119,6 +162,10 @@ export async function onAppInstalled({ shop, admin }) {
       shop,
       token: contact.unsubscribeToken,
       apps: pickApps(0),
+      blurb: COPY.welcomeBlurb,
+      steps: COPY.welcomeSteps,
+      cta: COPY.welcomeCta,
+      closing: COPY.welcomeClosing,
     });
     if (sent) {
       await db.merchantContact.update({
@@ -245,6 +292,7 @@ export async function runDueLifecycleEmails(now = new Date()) {
     const sent = await sendFeedbackEmail({
       to: c.email,
       token: c.unsubscribeToken,
+      experience: COPY.feedbackExperience,
     }).catch(() => false);
     results.push({ shop: c.shop, kind: "feedback", sent });
   }
@@ -274,12 +322,8 @@ export async function runDueLifecycleEmails(now = new Date()) {
       to: c.email,
       token: c.unsubscribeToken,
       apps: pickApps(c.promoCount * 3),
-      headline: "Getting more out of ZS StoreSync",
-      intro:
-        "A quick reminder of what the app can do beyond a one-off migration: " +
-        "scheduled syncs keep a second store up to date on their own, Preview " +
-        "shows what a run would change before it touches anything, and every " +
-        "run is logged so you can see exactly what moved.",
+      headline: COPY.promoHeadline,
+      intro: COPY.promoIntro,
     }).catch(() => false);
     results.push({ shop: c.shop, kind: "promo", sent });
   }
