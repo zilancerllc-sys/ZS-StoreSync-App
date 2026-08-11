@@ -1,0 +1,70 @@
+name: Regenerate lock file (Linux)
+
+# Temporary helper. package-lock.json has to be generated on Linux: npm on
+# Windows drops the linux-only optional dependencies, and `npm ci` in the
+# Docker build then fails with "Missing: @emnapi/... from lock file".
+#
+# Run it from the Actions tab (Run workflow). It regenerates the lock on the
+# same Node major the image uses and commits it back, which in turn triggers
+# the normal Deploy. Delete this file once the dependency work is done.
+
+on:
+  workflow_dispatch:
+    inputs:
+      audit_fix:
+        description: "Also run `npm audit fix` (patch advisories within semver)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  relock:
+    name: Regenerate package-lock.json
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zs-store-sync
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # A full install, not --package-lock-only: we want the lock to record
+      # what actually resolves on linux-x64, which is what the image installs.
+      - name: Install to regenerate the lock
+        run: npm install --no-audit --no-fund
+
+      # Opt-in: patches advisories that resolve inside the existing semver
+      # ranges. Never --force — that pulls majors, which is a decision to make
+      # deliberately with the changelog open, not from a checkbox.
+      - name: Patch advisories
+        if: ${{ inputs.audit_fix }}
+        # `npm audit fix` exits non-zero when anything is left that only
+        # --force would move. That's a report, not a failure — the patches it
+        # did apply are already in the lock, and stopping here would throw
+        # them away. What's left is printed by the audit step below.
+        run: npm audit fix --no-fund || true
+
+      - name: Prove `npm ci` now works from it
+        run: |
+          rm -rf node_modules
+          npm ci --no-audit --no-fund
+
+      - name: Show what production still carries
+        run: npm audit --omit=dev || true
+
+      - name: Commit the lock if it changed
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "lock file already correct — nothing to do"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: regenerate package-lock.json on linux"
+          git push

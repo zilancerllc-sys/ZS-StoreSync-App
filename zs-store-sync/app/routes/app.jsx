@@ -95,8 +95,10 @@ export const loader = async ({ request }) => {
 export default function App() {
   const { apiKey, shop } = useLoaderData();
 
+  // v2's AppProvider takes only children and apiKey, and always injects App
+  // Bridge — the `embedded` prop it used to need is gone.
   return (
-    <AppProvider embedded apiKey={apiKey}>
+    <AppProvider apiKey={apiKey}>
       <SupportChat shop={shop} />
       <s-app-nav>
         <s-link href="/app">Dashboard</s-link>
