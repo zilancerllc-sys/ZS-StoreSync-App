@@ -26,7 +26,6 @@ import { RECOMMENDED_APPS } from "./recommended-apps";
 import {
   sendWelcomeEmail,
   sendFeedbackEmail,
-  sendPromoEmail,
 } from "./notify.server";
 
 // ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -59,13 +58,6 @@ const COPY = {
   // Completes "we'd love to hear how your ___ went" in the feedback email.
   feedbackExperience: "migration experience",
 
-  // The recurring product update.
-  promoHeadline: "Getting more out of ZS StoreSync",
-  promoIntro:
-    "A quick reminder of what the app can do beyond a one-off migration: " +
-    "scheduled syncs keep a second store up to date on their own, Preview " +
-    "shows what a run would change before it touches anything, and every " +
-    "run is logged so you can see exactly what moved.",
 };
 
 const FEEDBACK_DELAY_MS = 2 * 24 * 60 * 60 * 1000;
@@ -74,11 +66,6 @@ const FEEDBACK_DELAY_MS = 2 * 24 * 60 * 60 * 1000;
 // setting here because a weekly promo to a list this size buys unsubscribes and
 // spam reports, and a poor sender reputation would start costing delivery of
 // the sync notifications too — mail merchants actually asked for.
-const PROMO_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000;
-
-// First product update waits a week after the feedback nudge, so a new
-// merchant's first fortnight is: welcome, feedback, then quiet.
-const FIRST_PROMO_DELAY_MS = 9 * 24 * 60 * 60 * 1000;
 
 const Q_SHOP_EMAIL = `#graphql
   { shop { email } }`;
@@ -151,7 +138,7 @@ export async function onAppInstalled({ shop, admin }) {
         unsubscribeToken: randomBytes(24).toString("base64url"),
         installedAt: now,
         feedbackDueAt: new Date(now.getTime() + FEEDBACK_DELAY_MS),
-        nextPromoAt: new Date(now.getTime() + FIRST_PROMO_DELAY_MS),
+        nextPromoAt: null,
       },
     });
 
@@ -243,9 +230,7 @@ export async function setEmailPreference(shop, optedIn, email = null) {
       ? {
           optedIn: true,
           unsubscribedAt: null,
-          // Re-subscribing restarts the product updates from the normal
-          // interval rather than firing one immediately.
-          nextPromoAt: new Date(now.getTime() + PROMO_INTERVAL_MS),
+          nextPromoAt: null,
           feedbackDueAt: contact.feedbackSentAt
             ? null
             : new Date(contact.installedAt.getTime() + FEEDBACK_DELAY_MS),
@@ -295,37 +280,6 @@ export async function runDueLifecycleEmails(now = new Date()) {
       experience: COPY.feedbackExperience,
     }).catch(() => false);
     results.push({ shop: c.shop, kind: "feedback", sent });
-  }
-
-  // ── Product updates ──
-  const duePromo = await db.merchantContact.findMany({
-    where: {
-      optedIn: true,
-      uninstalledAt: null,
-      nextPromoAt: { lte: now },
-      email: { not: null },
-    },
-    take: 25,
-  });
-
-  for (const c of duePromo) {
-    const next = new Date(now.getTime() + PROMO_INTERVAL_MS);
-    const claimed = await db.merchantContact.updateMany({
-      where: { id: c.id, nextPromoAt: { lte: now } },
-      data: { nextPromoAt: next, lastPromoAt: now, promoCount: { increment: 1 } },
-    });
-    if (claimed.count !== 1) continue;
-
-    // Rotate which apps are shown so a merchant isn't sent the same three
-    // every fortnight.
-    const sent = await sendPromoEmail({
-      to: c.email,
-      token: c.unsubscribeToken,
-      apps: pickApps(c.promoCount * 3),
-      headline: COPY.promoHeadline,
-      intro: COPY.promoIntro,
-    }).catch(() => false);
-    results.push({ shop: c.shop, kind: "promo", sent });
   }
 
   return results;
