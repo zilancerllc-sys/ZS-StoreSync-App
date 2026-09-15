@@ -4,6 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { MessageCircle } from "lucide-react";
 import { authenticate } from "../shopify.server";
+import { syncAffiliate } from "../lib/affiliate.server";
 
 const TAWK_SRC = "https://embed.tawk.to/6a538d517c60fa1d457184bb/1jtb60286";
 
@@ -88,7 +89,12 @@ function SupportChat({ shop }) {
 }
 
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+
+  // Affiliate commissions: report this shop's subscriptions if it was referred.
+  // Fire-and-forget and self-throttled — never slows or breaks the page load.
+  void syncAffiliate({ admin, shop: session.shop, request });
+
   return { apiKey: process.env.SHOPIFY_API_KEY || "", shop: session.shop };
 };
 

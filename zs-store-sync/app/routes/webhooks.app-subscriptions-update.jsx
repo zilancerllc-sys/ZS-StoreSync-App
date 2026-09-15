@@ -1,6 +1,7 @@
-import { authenticate } from "../shopify.server";
+import { authenticate, unauthenticated } from "../shopify.server";
 import { setPlan } from "../credits.server";
 import db from "../db.server";
+import { isAffiliateEnabled, syncAffiliate } from "../lib/affiliate.server";
 
 // The subscription "name" Shopify stores is the PLAN KEY passed to
 // billing.request (e.g. "starter", "starter_annual") — not the display name
@@ -16,6 +17,14 @@ const NAME_TO_PLAN = {
 
 export const action = async ({ request }) => {
   const { shop, payload } = await authenticate.webhook(request);
+
+  // Affiliate commissions follow the real subscription state. Fire-and-forget.
+  if (isAffiliateEnabled()) {
+    unauthenticated
+      .admin(shop)
+      .then(({ admin }) => syncAffiliate({ admin, shop, force: true }))
+      .catch((err) => console.error("[affiliate] webhook sync skipped:", err?.message));
+  }
 
   const sub = payload?.app_subscription;
   const status = sub?.status;

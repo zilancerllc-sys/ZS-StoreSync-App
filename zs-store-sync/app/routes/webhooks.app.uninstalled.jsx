@@ -2,11 +2,15 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { setPlan } from "../credits.server";
 import { onAppUninstalled } from "../lifecycle.server";
+import { syncAffiliateAfterUninstall } from "../lib/affiliate.server";
 
 export const action = async ({ request }) => {
   const { shop, session, topic } = await authenticate.webhook(request);
 
   console.log(`Received ${topic} webhook for ${shop}`);
+
+  // Uninstalling cancels the subscription — stop any affiliate commission.
+  void syncAffiliateAfterUninstall(shop);
 
   // Webhook requests can trigger multiple times and after an app has already been uninstalled.
   // If this webhook already ran, the session may have been deleted previously.

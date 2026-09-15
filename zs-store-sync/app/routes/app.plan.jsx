@@ -13,6 +13,7 @@ import {
 } from "../credits.server";
 import { brandStyles } from "./zs-styles.js";
 import { Lock, Undo, Zap, MessageCircle, Check } from "lucide-react";
+import AffiliateReferralCard from "../components/AffiliateReferralCard";
 
 const APP_HANDLE = "zs-storesync";
 
@@ -892,6 +893,8 @@ export default function Plan() {
                 );
               })}
             </div>
+
+            <AffiliateReferralCard />
 
             {/* Trust strip */}
             <div className="zs-trust zs-reveal zs-d3">
