@@ -24,7 +24,11 @@ primary_region = 'sin'
   # up after ~8s), so waking an idle machine served "failed to connect to
   # machine" to whoever triggered it. Suspend restores from a memory snapshot
   # instead. Fly falls back to stop on its own if a machine can't be suspended.
-  auto_stop_machines = 'suspend'
+  # Never stop or suspend the machine. The app's ticker only runs while the
+  # machine does, and that ticker is the only thing keeping the Supabase free
+  # project from pausing after 7 idle days -- a paused project takes the app
+  # down. min_machines_running alone did not hold a machine up on ZS Bundles.
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
   processes = ['app']
