@@ -9,7 +9,7 @@ import db from "../db.server";
 import { requireOwnerShop } from "../lib/owner.server";
 import { downloadFile } from "../lib/download";
 import { brandStyles } from "./zs-styles.js";
-import { Download, Store, Users, XCircle } from "lucide-react";
+import { Download, XCircle } from "lucide-react";
 
 export const loader = async ({ request }) => {
   // Cross-shop data — owner store only. See lib/owner.server.js.
@@ -119,7 +119,7 @@ export default function StoresPage() {
 
             {/* ── Download ──────────────────────────────────────────────── */}
             <div className="zs-stores-card">
-              <div className="zs-stores-card-title">// Download</div>
+              <div className="zs-stores-card-title">{"// Download"}</div>
               <p style={{ fontSize: 13, color: "var(--zs-muted)", lineHeight: 1.6, margin: "0 0 16px" }}>
                 CSV includes: shop domain, owner name, owner email, install date, uninstall date, plan, and email opt-in.
                 Opens directly in Microsoft Excel or Google Sheets.

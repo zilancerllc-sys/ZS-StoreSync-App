@@ -194,22 +194,13 @@ export const action = async ({ request }) => {
   const usedSoFar = usage.usage;
   const allowsOverage = usage.allowsOverage;
 
+  // An exhausted type is NOT a reason to refuse a sync: updating existing
+  // items costs no quota, and the engine withholds creates past the limit
+  // (canCreate). Refusing here blocked free updates for the rest of the month.
   const migrateLimits = {};
-  const exhaustedTypes = [];
   for (const t of allowed) {
     const rem = Math.max((planLimits[t] || 0) - (usedSoFar[t] || 0), 0);
-    if (allowsOverage) {
-      migrateLimits[t] = Infinity;
-    } else {
-      if (rem <= 0) exhaustedTypes.push(t);
-      migrateLimits[t] = rem;
-    }
-  }
-  if (!allowsOverage && exhaustedTypes.length > 0) {
-    return {
-      ok: false,
-      error: `Monthly limit reached for: ${exhaustedTypes.join(", ")}. Upgrade your plan.`,
-    };
+    migrateLimits[t] = allowsOverage ? Infinity : rem;
   }
 
   const srcSession = await db.session.findFirst({

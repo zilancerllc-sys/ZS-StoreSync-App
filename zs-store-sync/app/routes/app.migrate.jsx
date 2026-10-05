@@ -241,7 +241,11 @@ export const action = async ({ request }) => {
       }
     }
 
-    if (!allowsOverage && exhaustedTypes.length > 0) {
+    // Run whatever still has quota; refuse only when nothing does. Blocking
+    // the whole run over one exhausted type stopped e.g. a pages migration
+    // because the month's products were used up.
+    const runnable = allowed.filter((t) => !exhaustedTypes.includes(t));
+    if (runnable.length === 0) {
       return {
         ok: false,
         error: `Monthly limit reached for: ${exhaustedTypes.join(", ")}. Upgrade your plan for more.`,
@@ -274,7 +278,7 @@ export const action = async ({ request }) => {
       shop,
       sourceShop,
       mode: "migrate",
-      types: allowed,
+      types: runnable,
       limits: migrateLimits,
     });
     // null = the database rejected a second concurrent run. The getActiveJob
@@ -288,7 +292,7 @@ export const action = async ({ request }) => {
       };
     }
 
-    return { ok: true, started: true, jobId, blocked };
+    return { ok: true, started: true, jobId, blocked: [...blocked, ...exhaustedTypes] };
   }
 
   return { ok: false, error: "Unknown action." };
@@ -816,6 +820,13 @@ export default function Migrate() {
               {result?.error && (
                 <div className="zs-banner err">
                   <AlertCircle size={16} /> {result.error}
+                </div>
+              )}
+
+              {result?.started && result.blocked?.length > 0 && (
+                <div className="zs-banner info">
+                  <AlertCircle size={16} /> Not included in this run (plan or
+                  monthly limit): {result.blocked.join(", ")}.
                 </div>
               )}
 
