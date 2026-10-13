@@ -2693,6 +2693,18 @@ function relativizeUrl(url) {
   }
 }
 
+// Links to customer account pages (Orders, Profile) point at the source
+// store's own account pages by id; the target has its own and Shopify
+// rejects any other. Such links are dropped rather than failing the menu.
+function mapMenuItems(items) {
+  return (items || [])
+    .filter((i) => i.type !== "CUSTOMER_ACCOUNT_PAGE")
+    .map(mapMenuItem);
+}
+
+// Menus Shopify creates and manages on every store itself.
+const SYSTEM_MENU_HANDLES = new Set(["customer-account-main-menu"]);
+
 function mapMenuItem(item) {
   const isResource = RESOURCE_MENU_TYPES.has(item.type);
   const node = {
@@ -2705,7 +2717,7 @@ function mapMenuItem(item) {
     node.url = isResource ? relativizeUrl(item.url) : item.url || "/";
   }
   if (item.items?.length) {
-    node.items = item.items.map(mapMenuItem);
+    node.items = mapMenuItems(item.items);
   }
   return node;
 }
@@ -2728,6 +2740,11 @@ async function migrateMenus(ctx) {
   }
 
   for (const m of menus) {
+    if (SYSTEM_MENU_HANDLES.has(m.handle)) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped: ${m.title} — Shopify manages this menu on each store`);
+      continue;
+    }
     if (ctx.stopOnQuota()) {
       onLog("Quota reached — stopping menus.");
       break;
@@ -2749,7 +2766,7 @@ async function migrateMenus(ctx) {
           id: existingMenuId,
           title: m.title,
           handle: m.handle,
-          items: (m.items || []).map(mapMenuItem),
+          items: mapMenuItems(m.items),
         });
         const errs = data?.menuUpdate?.userErrors;
         if (errs?.length) {
@@ -2777,7 +2794,7 @@ async function migrateMenus(ctx) {
       const data = await gql(target, M_MENU_CREATE, {
         title: m.title,
         handle: m.handle,
-        items: (m.items || []).map(mapMenuItem),
+        items: mapMenuItems(m.items),
       });
       const errs = data?.menuCreate?.userErrors;
       if (errs?.length) {
