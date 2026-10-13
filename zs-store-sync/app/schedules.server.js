@@ -24,6 +24,8 @@ import { notifySchedulePaused } from "./notify.server";
 // one timer is easier to reason about than two.
 import { runDueLifecycleEmails } from "./lifecycle.server";
 
+const BUSY_RETRY_MS = 15 * 60 * 1000;
+
 // ─── Read/write helpers used by the UI ───────────────────────────────────────
 export async function getSchedule(ownerShop, sourceShop) {
   return db.syncSchedule.findUnique({
@@ -136,19 +138,14 @@ async function runSchedule(schedule) {
     return "no allowed types";
   }
 
-  // Same per-type remaining-quota maths the manual Sync page does.
+  // Same per-type remaining-quota maths the manual Sync page does. Used-up
+  // quota is not a reason to skip: updates are free, and the engine withholds
+  // creates past the limit.
   const limits = {};
   for (const t of allowed) {
     limits[t] = usage.allowsOverage
       ? Infinity
       : Math.max((usage.limits[t] || 0) - (usage.usage[t] || 0), 0);
-  }
-  if (!usage.allowsOverage && Object.values(limits).every((n) => n <= 0)) {
-    await db.syncSchedule.update({
-      where: { id: schedule.id },
-      data: { lastError: "Skipped — monthly quota is used up." },
-    });
-    return "quota exhausted";
   }
 
   const jobId = await startMigrationJob({
@@ -160,14 +157,16 @@ async function runSchedule(schedule) {
     scheduleId: schedule.id,
   });
 
-  // null means a run was already in flight for this shop; the schedule simply
-  // waits for its next slot rather than queueing up behind it.
+  // null means a run was already in flight for this shop. Waiting for the next
+  // slot cost a weekly schedule a whole week, so try again shortly instead.
   await db.syncSchedule.update({
     where: { id: schedule.id },
-    data: {
-      lastJobId: jobId,
-      lastError: jobId ? null : "Skipped — another run was already in progress.",
-    },
+    data: jobId
+      ? { lastJobId: jobId, lastError: null }
+      : {
+          lastError: "Delayed — another run was in progress; retrying in 15 minutes.",
+          nextRunAt: new Date(Date.now() + BUSY_RETRY_MS),
+        },
   });
   return jobId ? `started job ${jobId}` : "another run in progress";
 }

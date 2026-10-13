@@ -12,6 +12,10 @@ export const action = async ({ request }) => {
   await db.session.deleteMany({ where: { shop } });
   await db.storeConnection.deleteMany({ where: { ownerShop: shop } });
   await db.storeConnection.deleteMany({ where: { sourceShop: shop } });
+  // schedules hold a merchant-supplied notification email
+  await db.syncSchedule.deleteMany({
+    where: { OR: [{ ownerShop: shop }, { sourceShop: shop }] },
+  });
   await db.migrationJob.deleteMany({ where: { shop } });
   await db.subscription.deleteMany({ where: { shop } });
   // The pairing code and any submitted feedback are shop data too — these were

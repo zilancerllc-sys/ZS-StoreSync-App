@@ -114,6 +114,64 @@ async function fetchAll(admin, query, rootKey, variables = {}, onPage) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  ONLINE STORE PUBLISHING
+//
+//  productCreate / collectionCreate publish to no sales channel, so migrated
+//  items existed in the admin but were invisible on the storefront. Needs the
+//  write_publications scope; without it we log once and carry on unpublished.
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_PUBLICATIONS = `#graphql
+  query Publications {
+    publications(first: 50) { edges { node { id name } } }
+  }`;
+
+const M_PUBLISHABLE_PUBLISH = `#graphql
+  mutation Publish($id: ID!, $input: [PublicationInput!]!) {
+    publishablePublish(id: $id, input: $input) {
+      userErrors { field message }
+    }
+  }`;
+
+async function getOnlineStorePublicationId(ctx) {
+  if (ctx._onlineStorePub !== undefined) return ctx._onlineStorePub;
+  ctx._onlineStorePub = null;
+  try {
+    const d = await gql(ctx.target, Q_PUBLICATIONS);
+    const pub = (d?.publications?.edges || [])
+      .map((e) => e.node)
+      .find((n) => n.name === "Online Store");
+    ctx._onlineStorePub = pub?.id || null;
+  } catch {
+    /* scope not granted — handled below */
+  }
+  if (!ctx._onlineStorePub) {
+    ctx.onLog(
+      "  ⚠ Created items can't be published to the Online Store yet — open ZS StoreSync on this store to approve the new permission, or publish them in Shopify admin.",
+    );
+  }
+  return ctx._onlineStorePub;
+}
+
+async function publishToOnlineStore(ctx, id, label) {
+  const pubId = await getOnlineStorePublicationId(ctx);
+  if (!pubId) return;
+  try {
+    const d = await gql(ctx.target, M_PUBLISHABLE_PUBLISH, {
+      id,
+      input: [{ publicationId: pubId }],
+    });
+    const errs = d?.publishablePublish?.userErrors;
+    if (errs?.length) {
+      ctx.onLog(`  ⚠ Not published: ${label} — ${errText(errs)}`);
+    }
+  } catch (err) {
+    ctx.onLog(
+      `  ⚠ Not published: ${label} — ${String(err.message).slice(0, 100)}`,
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  PRODUCTS
 // ═════════════════════════════════════════════════════════════════════════════
 const Q_PRODUCTS = `#graphql
@@ -122,7 +180,7 @@ const Q_PRODUCTS = `#graphql
       pageInfo { hasNextPage endCursor }
       edges { node {
         id title handle descriptionHtml vendor productType tags status templateSuffix
-        isGiftCard requiresSellingPlan
+        isGiftCard requiresSellingPlan publishedAt
         seo { title description }
         options { name values }
         variants(first: 100) {
@@ -636,6 +694,11 @@ async function migrateProducts(ctx) {
         }
       }
 
+      // mirror the source: only what was live on its Online Store goes live
+      if (newProduct?.id && p.publishedAt) {
+        await publishToOnlineStore(ctx, newProduct.id, p.title);
+      }
+
       counters.created++;
       consume();
       onLog(
@@ -860,6 +923,9 @@ async function migrateCollections(ctx) {
 
         // #7 — manual collection: copy product membership by handle
         const newCollectionId = data?.collectionCreate?.collection?.id || null;
+        if (newCollectionId) {
+          await publishToOnlineStore(ctx, newCollectionId, c.title);
+        }
         if (!c.ruleSet && newCollectionId) {
           await linkCollectionProducts(ctx, newCollectionId, c);
         }
@@ -1195,8 +1261,8 @@ async function migratePages(ctx) {
       const data = await gql(target, M_PAGE_CREATE, { page: pageBody });
       const errs = data?.pageCreate?.userErrors;
       if (errs?.length) {
-        counters.skipped++;
-        onLog(`↪︎ Skipped: ${pg.title} — ${errText(errs)}`);
+        counters.failed++;
+        onLog(`✕ Failed: ${pg.title} — ${errText(errs)}`);
       } else {
         counters.created++;
         consume();
@@ -1362,6 +1428,122 @@ const Q_METAOBJECT_DEFS = `#graphql
     }
   }`;
 
+const Q_SOURCE_METAOBJECT_DEF = `#graphql
+  query SourceDef($id: ID!) {
+    metaobjectDefinition(id: $id) {
+      id type name
+      fieldDefinitions { key name type { name } required validations { name value } }
+    }
+  }`;
+
+const Q_TARGET_METAOBJECT_DEF_BY_TYPE = `#graphql
+  query TargetDefByType($type: String!) {
+    metaobjectDefinitionByType(type: $type) { id }
+  }`;
+
+// Reference definitions name their allowed metaobject type by DEFINITION ID in
+// a validation, and that id belongs to the source store — sending it as-is made
+// the target reject the whole definition. Map it to the target's definition of
+// the same type, creating that definition first when the target lacks it.
+const DEF_ID_VALIDATIONS = new Set([
+  "metaobject_definition_id",
+  "metaobject_definition_ids",
+]);
+
+async function targetDefIdFor(ctx, sourceDefId, seen = new Set()) {
+  ctx._defIdMap = ctx._defIdMap || new Map();
+  if (ctx._defIdMap.has(sourceDefId)) return ctx._defIdMap.get(sourceDefId);
+  if (seen.has(sourceDefId)) return null; // self/cyclic reference
+  seen.add(sourceDefId);
+
+  let out = null;
+  try {
+    const s = await gql(ctx.source, Q_SOURCE_METAOBJECT_DEF, { id: sourceDefId });
+    const def = s?.metaobjectDefinition;
+    if (def && !isReservedNamespace(def.type)) {
+      const t = await gql(ctx.target, Q_TARGET_METAOBJECT_DEF_BY_TYPE, {
+        type: def.type,
+      });
+      out = t?.metaobjectDefinitionByType?.id || null;
+      if (!out) out = await createTargetMetaobjectDef(ctx, def, seen);
+    }
+  } catch {
+    out = null;
+  }
+  ctx._defIdMap.set(sourceDefId, out);
+  return out;
+}
+
+async function remapValidations(ctx, validations, seen) {
+  const out = [];
+  for (const v of validations || []) {
+    if (!DEF_ID_VALIDATIONS.has(v.name)) {
+      out.push({ name: v.name, value: v.value });
+      continue;
+    }
+    if (v.name === "metaobject_definition_id") {
+      const id = await targetDefIdFor(ctx, v.value, seen);
+      if (!id) return null;
+      out.push({ name: v.name, value: id });
+    } else {
+      let ids;
+      try {
+        ids = JSON.parse(v.value);
+      } catch {
+        return null;
+      }
+      const mapped = [];
+      for (const sid of ids || []) {
+        const id = await targetDefIdFor(ctx, sid, seen);
+        if (id) mapped.push(id);
+      }
+      if (!mapped.length) return null;
+      out.push({ name: v.name, value: JSON.stringify(mapped) });
+    }
+  }
+  return out;
+}
+
+// Returns the new definition id, or null. Field definitions whose reference
+// can't be resolved are left out so the rest of the definition still lands.
+async function createTargetMetaobjectDef(ctx, def, seen = new Set()) {
+  const fieldDefinitions = [];
+  for (const fd of def.fieldDefinitions || []) {
+    const validations = await remapValidations(ctx, fd.validations, seen);
+    if (validations === null) {
+      ctx.onLog(
+        `  ⚠ ${def.type}.${fd.key} left out — its referenced type couldn't be created on this store`,
+      );
+      continue;
+    }
+    fieldDefinitions.push({
+      key: fd.key,
+      name: fd.name,
+      type: fd.type.name,
+      required: fd.required,
+      ...(validations.length ? { validations } : {}),
+    });
+  }
+  const d = await gql(ctx.target, M_METAOBJECT_DEF_CREATE, {
+    definition: { type: def.type, name: def.name, fieldDefinitions },
+  });
+  const errs = d?.metaobjectDefinitionCreate?.userErrors;
+  if (errs?.length) {
+    // lost a race with another create of the same type — look it up instead
+    if (/taken|exists|in use/i.test(errText(errs))) {
+      const t = await gql(ctx.target, Q_TARGET_METAOBJECT_DEF_BY_TYPE, {
+        type: def.type,
+      });
+      return t?.metaobjectDefinitionByType?.id || null;
+    }
+    ctx.onLog(`✕ Definition failed: ${def.type} — ${errText(errs)}`);
+    return null;
+  }
+  const id = d?.metaobjectDefinitionCreate?.metaobjectDefinition?.id || null;
+  if (id) ctx.onLog(`✓ Definition ready: ${def.type}`);
+  return id;
+}
+
 const Q_METAOBJECTS_BY_TYPE = `#graphql
   query Objs($type: String!, $cursor: String) {
     metaobjects(type: $type, first: 50, after: $cursor) {
@@ -1426,69 +1608,67 @@ async function migrateMetaobjects(ctx) {
       onLog(`↪︎ Standard definition (already on every store): ${def.type}`);
       continue;
     }
-    // create the definition on target ("taken" = already exists → fine)
-    try {
-      const ddata = await gql(target, M_METAOBJECT_DEF_CREATE, {
-        definition: {
-          type: def.type,
-          name: def.name,
-          fieldDefinitions: def.fieldDefinitions.map((fd) => ({
-            key: fd.key,
-            name: fd.name,
-            type: fd.type.name,
-            required: fd.required,
-          })),
-        },
-      });
-      const derrs = ddata?.metaobjectDefinitionCreate?.userErrors;
-      if (derrs?.length) {
-        const msg = errText(derrs) || "";
-        if (/taken|exists|in use/i.test(msg)) {
-          onLog(`↪︎ Definition exists: ${def.type}`);
-        } else {
-          onLog(`✕ Definition failed: ${def.type} — ${msg}`);
-          continue; // entries would all fail without the definition
-        }
-      } else {
-        onLog(`✓ Definition ready: ${def.type}`);
-      }
-    } catch (err) {
-      onLog(
-        `✕ Definition error: ${def.type} — ${String(err.message).slice(0, 100)}`,
-      );
-      continue;
+    // find or create the definition on target (incl. any types it references)
+    const targetDefId = await targetDefIdFor(ctx, def.id);
+    if (!targetDefId) {
+      onLog(`✕ Definition unavailable on target: ${def.type} — entries skipped`);
+      continue; // entries would all fail without the definition
     }
 
-    // then copy entries
+    // field key → type, so reference fields can be remapped to target gids
+    const fieldType = new Map(
+      (def.fieldDefinitions || []).map((fd) => [fd.key, fd.type.name]),
+    );
+
     const objs = await fetchAll(source, Q_METAOBJECTS_BY_TYPE, "metaobjects", {
       type: def.type,
     });
+    let created = 0;
+    let existed = 0;
     for (const o of objs) {
       if (!hasQuota()) {
         onLog("Quota reached — stopping metaobjects.");
         return;
       }
+      const fields = [];
+      for (const f of o.fields) {
+        if (f.value == null) continue;
+        const type = fieldType.get(f.key) || "";
+        if (REFERENCE_TYPE_RE.test(type)) {
+          const value = await remapReferenceValue(ctx, type, f.value);
+          if (value) fields.push({ key: f.key, value });
+        } else if (!hasCrossStoreGid(f.value)) {
+          fields.push({ key: f.key, value: f.value });
+        }
+      }
       try {
         const data = await gql(target, M_METAOBJECT_CREATE, {
-          metaobject: {
-            type: def.type,
-            handle: o.handle,
-            fields: o.fields
-              .filter((f) => !hasCrossStoreGid(f.value))
-              .map((f) => ({ key: f.key, value: f.value })),
-          },
+          metaobject: { type: def.type, handle: o.handle, fields },
         });
         const errs = data?.metaobjectCreate?.userErrors;
         if (errs?.length) {
-          counters.skipped++;
+          if (/taken|exists|in use/i.test(errText(errs))) {
+            counters.skipped++;
+            existed++;
+          } else {
+            counters.failed++;
+            onLog(`✕ ${def.type}/${o.handle} — ${errText(errs)}`);
+          }
         } else {
           counters.created++;
+          created++;
           consume();
         }
-      } catch {
+      } catch (err) {
         counters.failed++;
+        onLog(
+          `✕ ${def.type}/${o.handle} — ${String(err.message).slice(0, 100)}`,
+        );
       }
       await sleep(160);
+    }
+    if (objs.length) {
+      onLog(`  ${def.type}: ${created} created · ${existed} already there`);
     }
   }
 }
@@ -1562,6 +1742,14 @@ async function migrateMetafields(ctx) {
         onLog("Quota reached — stopping metafields.");
         return;
       }
+      const validations = await remapValidations(ctx, d.validations);
+      if (validations === null) {
+        counters.failed++;
+        onLog(
+          `✕ ${ownerType} ${d.namespace}.${d.key} — its metaobject type couldn't be created on this store`,
+        );
+        continue;
+      }
       try {
         const data = await gql(target, M_METAFIELD_DEF_CREATE, {
           definition: {
@@ -1576,16 +1764,16 @@ async function migrateMetafields(ctx) {
             // PINNED ones — an unpinned copy reads as "No metafields pinned"
             // even though the data is there under "View all".
             pin: d.pinnedPosition != null,
-            validations: (d.validations || []).map((v) => ({
-              name: v.name,
-              value: v.value,
-            })),
+            validations,
           },
         });
         const errs = data?.metafieldDefinitionCreate?.userErrors;
-        if (errs?.length) {
+        if (errs?.length && /taken|exists|in use/i.test(errText(errs))) {
           counters.skipped++;
           onLog(`↪︎ Exists: ${ownerType} ${d.namespace}.${d.key}`);
+        } else if (errs?.length) {
+          counters.failed++;
+          onLog(`✕ ${ownerType} ${d.namespace}.${d.key} — ${errText(errs)}`);
         } else {
           counters.created++;
           consume();
@@ -1746,8 +1934,27 @@ const Q_ORDERS = `#graphql
 
 const Q_TARGET_ORDER_BY_NAME = `#graphql
   query OrderByName($q: String!) {
-    orders(first: 1, query: $q) { edges { node { id name } } }
+    orders(first: 1, query: $q) { edges { node { id name email } } }
   }`;
+
+// The target numbers its own orders, so a source "#1001" says nothing about
+// the target's "#1001" — matching on name skipped real orders and missed
+// copies. Each copied order carries its source id as a tag instead.
+function sourceTag(prefix, gid) {
+  return `${prefix}-${String(gid).split("/").pop()}`;
+}
+
+async function alreadyCopied(ctx, o, { tagPrefix, query, root }) {
+  const r = await gql(ctx.target, query, {
+    q: `tag:${qv(sourceTag(tagPrefix, o.id))}`,
+  });
+  if (r?.[root]?.edges?.length) return true;
+  // copies made before tagging existed: same name AND same customer email
+  if (!o.name || !o.email) return false;
+  const legacy = await gql(ctx.target, query, { q: `name:${qv(o.name)}` });
+  const hit = legacy?.[root]?.edges?.[0]?.node;
+  return !!hit && hit.email?.toLowerCase() === o.email.toLowerCase();
+}
 
 const M_ORDER_CREATE = `#graphql
   mutation OrderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
@@ -1780,12 +1987,13 @@ async function migrateOrders(ctx) {
       onLog("Quota reached — stopping orders.");
       break;
     }
-    // duplicate detection by order name (e.g. "#1001")
     try {
-      const r = await gql(target, Q_TARGET_ORDER_BY_NAME, {
-        q: `name:${qv(o.name)}`,
+      const copied = await alreadyCopied(ctx, o, {
+        tagPrefix: "zss-order",
+        query: Q_TARGET_ORDER_BY_NAME,
+        root: "orders",
       });
-      if (r?.orders?.edges?.length) {
+      if (copied) {
         counters.skipped++;
         onLog(`↪︎ Skipped (exists): ${o.name}`);
         continue;
@@ -1818,7 +2026,7 @@ async function migrateOrders(ctx) {
     const order = {
       email: o.email || undefined,
       note: o.note || undefined,
-      tags: o.tags || [],
+      tags: [...(o.tags || []), sourceTag("zss-order", o.id)],
       currency: o.currencyCode || undefined,
       lineItems,
     };
@@ -1892,7 +2100,7 @@ const Q_DRAFT_ORDERS = `#graphql
 
 const Q_TARGET_DRAFT_BY_NAME = `#graphql
   query DraftByName($q: String!) {
-    draftOrders(first: 1, query: $q) { edges { node { id name } } }
+    draftOrders(first: 1, query: $q) { edges { node { id name email } } }
   }`;
 
 const M_DRAFT_ORDER_CREATE = `#graphql
@@ -1920,20 +2128,19 @@ async function migrateDraftOrders(ctx) {
       onLog("Quota reached — stopping draft orders.");
       break;
     }
-    // duplicate detection by draft order name (e.g. "#D1")
-    if (o.name) {
-      try {
-        const r = await gql(target, Q_TARGET_DRAFT_BY_NAME, {
-          q: `name:${qv(o.name)}`,
-        });
-        if (r?.draftOrders?.edges?.length) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped (exists): ${o.name}`);
-          continue;
-        }
-      } catch {
-        /* ignore lookup errors, attempt create */
+    try {
+      const copied = await alreadyCopied(ctx, o, {
+        tagPrefix: "zss-draft",
+        query: Q_TARGET_DRAFT_BY_NAME,
+        root: "draftOrders",
+      });
+      if (copied) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (exists): ${o.name}`);
+        continue;
       }
+    } catch {
+      /* ignore lookup errors, attempt create */
     }
 
     const lineItems = (o.lineItems?.edges || []).map((e) => {
@@ -1958,7 +2165,7 @@ async function migrateDraftOrders(ctx) {
     const input = {
       email: o.email || undefined,
       note: o.note2 || undefined,
-      tags: o.tags || [],
+      tags: [...(o.tags || []), sourceTag("zss-draft", o.id)],
       lineItems,
     };
     const ship = mapAddress(o.shippingAddress);
@@ -2041,7 +2248,9 @@ async function migrateRedirects(ctx) {
       const rr = await gql(target, Q_TARGET_REDIRECT_BY_PATH, {
         q: `path:${qv(r.path)}`,
       });
-      existingRedirect = rr?.urlRedirects?.edges?.[0]?.node || null;
+      // search is fuzzy ("/a" can return "/a-b") — accept exact paths only
+      const hit = rr?.urlRedirects?.edges?.[0]?.node;
+      existingRedirect = hit && hit.path === r.path ? hit : null;
     } catch {
       /* ignore */
     }
@@ -2450,6 +2659,15 @@ const M_MENU_CREATE = `#graphql
     }
   }`;
 
+// Items sent without ids replace the menu's current items wholesale.
+const M_MENU_UPDATE = `#graphql
+  mutation UpdateMenu($id: ID!, $title: String!, $handle: String, $items: [MenuItemUpdateInput!]!) {
+    menuUpdate(id: $id, title: $title, handle: $handle, items: $items) {
+      menu { id handle }
+      userErrors { field message }
+    }
+  }`;
+
 // types that need a resourceId we can't map across stores → fall back to URL
 const RESOURCE_MENU_TYPES = new Set([
   "COLLECTION",
@@ -2493,7 +2711,7 @@ function mapMenuItem(item) {
 }
 
 async function migrateMenus(ctx) {
-  const { source, target, onLog, counters, hasQuota, consume } = ctx;
+  const { source, target, onLog, counters, consume } = ctx;
   const menus = await fetchAll(source, Q_MENUS, "menus", {}, (n) =>
     onLog(`Fetched ${n} menus…`),
   );
@@ -2510,13 +2728,48 @@ async function migrateMenus(ctx) {
   }
 
   for (const m of menus) {
-    if (!hasQuota()) {
+    if (ctx.stopOnQuota()) {
       onLog("Quota reached — stopping menus.");
       break;
     }
-    if (targetMenus.has(m.handle)) {
+    // Every new store ships with "main-menu" and "footer", so create-only meant
+    // the two menus merchants care about never came across. Sync replaces the
+    // target menu's items with the source's (updates cost no quota).
+    const existingMenuId = targetMenus.get(m.handle);
+    if (existingMenuId) {
+      if (ctx.mode !== "sync") {
+        counters.skipped++;
+        onLog(
+          `↪︎ Skipped (exists): ${m.title} [${m.handle}] — run Sync Changes to replace its links with the source's`,
+        );
+        continue;
+      }
+      try {
+        const data = await gql(target, M_MENU_UPDATE, {
+          id: existingMenuId,
+          title: m.title,
+          handle: m.handle,
+          items: (m.items || []).map(mapMenuItem),
+        });
+        const errs = data?.menuUpdate?.userErrors;
+        if (errs?.length) {
+          counters.failed++;
+          onLog(`✕ Update failed: ${m.title} — ${errText(errs)}`);
+        } else {
+          counters.updated++;
+          onLog(`↻ Updated menu: ${m.title}`);
+        }
+      } catch (err) {
+        counters.failed++;
+        onLog(`✕ Menu error: ${m.title} — ${String(err.message).slice(0, 120)}`);
+      }
+      await sleep(180);
+      continue;
+    }
+
+    if (!ctx.canCreate()) {
       counters.skipped++;
-      onLog(`↪︎ Skipped (exists): ${m.title} [${m.handle}]`);
+      onLog(`↪︎ Skipped (quota reached, not created): ${m.title}`);
       continue;
     }
 
@@ -2550,46 +2803,84 @@ async function migrateMenus(ctx) {
 //  (percentage or fixed-amount off, applied to all items). Other discount
 //  classes (BxGy, free shipping, app discounts) are logged and skipped.
 // ═════════════════════════════════════════════════════════════════════════════
+// Which items a discount applies to. Ids don't cross stores, so products and
+// collections are carried by handle and variants by SKU.
+const DISCOUNT_ITEMS = `
+  __typename
+  ... on DiscountProducts {
+    products(first: 250) { nodes { handle } }
+    productVariants(first: 250) { nodes { sku } }
+  }
+  ... on DiscountCollections { collections(first: 250) { nodes { handle } } }`;
+
+const DISCOUNT_MINIMUM = `
+  minimumRequirement {
+    __typename
+    ... on DiscountMinimumQuantity { greaterThanOrEqualToQuantity }
+    ... on DiscountMinimumSubtotal { greaterThanOrEqualToSubtotal { amount } }
+  }`;
+
+const DISCOUNT_COMBINES = `combinesWith { orderDiscounts productDiscounts shippingDiscounts }`;
+
 const Q_DISCOUNTS = `#graphql
   query Discounts($cursor: String) {
-    discountNodes(first: 50, after: $cursor) {
+    discountNodes(first: 25, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       edges { node {
         id
         discount {
           __typename
           ... on DiscountCodeBasic {
-            title status startsAt endsAt appliesOncePerCustomer
+            title status startsAt endsAt appliesOncePerCustomer usageLimit
+            ${DISCOUNT_COMBINES}
+            ${DISCOUNT_MINIMUM}
+            customerSelection { __typename }
             codes(first: 1) { edges { node { code } } }
             customerGets {
+              items { ${DISCOUNT_ITEMS} }
               value {
                 __typename
                 ... on DiscountPercentage { percentage }
-                ... on DiscountAmount { amount { amount } }
+                ... on DiscountAmount { amount { amount } appliesOnEachItem }
               }
             }
           }
           ... on DiscountAutomaticBasic {
             title status startsAt endsAt
+            ${DISCOUNT_COMBINES}
+            ${DISCOUNT_MINIMUM}
             customerGets {
+              items { ${DISCOUNT_ITEMS} }
               value {
                 __typename
                 ... on DiscountPercentage { percentage }
-                ... on DiscountAmount { amount { amount } }
+                ... on DiscountAmount { amount { amount } appliesOnEachItem }
               }
             }
           }
           ... on DiscountCodeFreeShipping {
-            title status startsAt endsAt appliesOncePerCustomer
+            title status startsAt endsAt appliesOncePerCustomer usageLimit
+            ${DISCOUNT_COMBINES}
+            ${DISCOUNT_MINIMUM}
+            customerSelection { __typename }
+            destinationSelection { __typename }
+            maximumShippingPrice { amount }
             codes(first: 1) { edges { node { code } } }
           }
           ... on DiscountAutomaticFreeShipping {
             title status startsAt endsAt
+            ${DISCOUNT_COMBINES}
+            ${DISCOUNT_MINIMUM}
+            destinationSelection { __typename }
+            maximumShippingPrice { amount }
           }
           ... on DiscountCodeBxgy {
-            title status startsAt endsAt usesPerOrderLimit appliesOncePerCustomer
+            title status startsAt endsAt usesPerOrderLimit appliesOncePerCustomer usageLimit
+            ${DISCOUNT_COMBINES}
+            customerSelection { __typename }
             codes(first: 1) { edges { node { code } } }
             customerBuys {
+              items { ${DISCOUNT_ITEMS} }
               value {
                 __typename
                 ... on DiscountQuantity { quantity }
@@ -2597,6 +2888,7 @@ const Q_DISCOUNTS = `#graphql
               }
             }
             customerGets {
+              items { ${DISCOUNT_ITEMS} }
               value {
                 __typename
                 ... on DiscountOnQuantity {
@@ -2611,8 +2903,10 @@ const Q_DISCOUNTS = `#graphql
             }
           }
           ... on DiscountAutomaticBxgy {
-            title status startsAt endsAt
+            title status startsAt endsAt usesPerOrderLimit
+            ${DISCOUNT_COMBINES}
             customerBuys {
+              items { ${DISCOUNT_ITEMS} }
               value {
                 __typename
                 ... on DiscountQuantity { quantity }
@@ -2620,6 +2914,7 @@ const Q_DISCOUNTS = `#graphql
               }
             }
             customerGets {
+              items { ${DISCOUNT_ITEMS} }
               value {
                 __typename
                 ... on DiscountOnQuantity {
@@ -2637,6 +2932,94 @@ const Q_DISCOUNTS = `#graphql
       } }
     }
   }`;
+
+// Discounts used to be recreated against ALL items, with no minimum, usage
+// limit or customer eligibility — so "10% off Sale, orders over $100, first 50
+// uses" became 10% off everything, forever, for everyone. Each restriction is
+// now carried over, and a discount whose restriction can't be reproduced on
+// the target is skipped (with the reason) rather than created wider.
+
+// → DiscountItemsInput, or { error } when something can't be found on target
+async function discountItemsInput(ctx, items) {
+  const kind = items?.__typename;
+  if (!kind || kind === "AllDiscountItems") return { input: { all: true } };
+
+  if (kind === "DiscountCollections") {
+    const ids = [];
+    for (const c of items.collections?.nodes || []) {
+      const d = await gql(ctx.target, Q_TARGET_COLLECTION_BY_HANDLE, {
+        handle: c.handle,
+      });
+      const id = d?.collectionByHandle?.id;
+      if (!id) return { error: `collection "${c.handle}" isn't on this store yet` };
+      ids.push(id);
+    }
+    return { input: { collections: { add: ids } } };
+  }
+
+  if (kind === "DiscountProducts") {
+    const productsToAdd = [];
+    const productVariantsToAdd = [];
+    for (const p of items.products?.nodes || []) {
+      const d = await gql(ctx.target, Q_TARGET_PRODUCT_ID_BY_HANDLE, {
+        handle: p.handle,
+      });
+      const id = d?.productByHandle?.id;
+      if (!id) return { error: `product "${p.handle}" isn't on this store yet` };
+      productsToAdd.push(id);
+    }
+    for (const v of items.productVariants?.nodes || []) {
+      if (!v.sku) return { error: "a variant without a SKU can't be matched" };
+      const d = await gql(ctx.target, Q_TARGET_VARIANT_BY_SKU, {
+        q: `sku:${qv(v.sku)}`,
+      });
+      const id = d?.productVariants?.edges?.[0]?.node?.id;
+      if (!id) return { error: `variant SKU "${v.sku}" isn't on this store yet` };
+      productVariantsToAdd.push(id);
+    }
+    return { input: { products: { productsToAdd, productVariantsToAdd } } };
+  }
+
+  return { error: `item scope ${kind} isn't supported` };
+}
+
+function minimumRequirementInput(min) {
+  if (min?.__typename === "DiscountMinimumQuantity") {
+    return {
+      quantity: {
+        greaterThanOrEqualToQuantity: String(min.greaterThanOrEqualToQuantity),
+      },
+    };
+  }
+  if (min?.__typename === "DiscountMinimumSubtotal") {
+    return {
+      subtotal: {
+        greaterThanOrEqualToSubtotal: String(
+          min.greaterThanOrEqualToSubtotal?.amount ?? "0",
+        ),
+      },
+    };
+  }
+  return null;
+}
+
+// fields every discount input shares; undefined keys are dropped by JSON
+function commonDiscountFields(d) {
+  return {
+    title: d.title,
+    startsAt: d.startsAt,
+    endsAt: d.endsAt || null,
+    combinesWith: d.combinesWith || undefined,
+  };
+}
+
+// Code discounts limited to particular customers or segments can't be
+// reproduced (customers/segments differ per store) — opening them up to
+// everyone would hand out a private code publicly.
+function restrictedToCustomers(d) {
+  const k = d.customerSelection?.__typename;
+  return !!k && k !== "DiscountCustomerAll";
+}
 
 const M_DISCOUNT_CODE_BASIC_CREATE = `#graphql
   mutation CreateCodeDiscount($basicCodeDiscount: DiscountCodeBasicInput!) {
@@ -2686,25 +3069,22 @@ const M_DISCOUNT_AUTO_BXGY_CREATE = `#graphql
     }
   }`;
 
-// Build the customerBuys input (the "Buy X" half of a BxGy discount).
-// Items reference product/variant/collection gids that don't map across stores,
-// so the prerequisite is recreated against ALL items — a documented best-effort.
-function bxgyCustomerBuysInput(customerBuys) {
+// "Buy X" half of a BxGy discount
+function bxgyCustomerBuysInput(customerBuys, items) {
   const v = customerBuys?.value;
   if (!v) return null;
   if (v.__typename === "DiscountQuantity" && v.quantity != null) {
-    return { value: { quantity: String(v.quantity) }, items: { all: true } };
+    return { value: { quantity: String(v.quantity) }, items };
   }
   if (v.__typename === "DiscountPurchaseAmount" && v.amount != null) {
-    return { value: { amount: String(v.amount) }, items: { all: true } };
+    return { value: { amount: String(v.amount) }, items };
   }
   return null;
 }
 
-// Build the customerGets input (the "Get Y" half of a BxGy discount). Only
-// percentage effects (incl. 100% = free) are supported; fixed-amount effects
-// vary by store and are reported as unsupported by the caller.
-function bxgyCustomerGetsInput(customerGets) {
+// "Get Y" half of a BxGy discount. Only percentage effects (incl. 100% = free)
+// are supported; fixed-amount effects are reported as unsupported.
+function bxgyCustomerGetsInput(customerGets, items) {
   const v = customerGets?.value;
   if (!v) return null;
   if (v.__typename === "DiscountOnQuantity") {
@@ -2716,11 +3096,11 @@ function bxgyCustomerGetsInput(customerGets) {
           effect: { percentage: v.effect.percentage ?? 1 },
         },
       },
-      items: { all: true },
+      items,
     };
   }
   if (v.__typename === "DiscountPercentage") {
-    return { value: { percentage: v.percentage ?? 0 }, items: { all: true } };
+    return { value: { percentage: v.percentage ?? 0 }, items };
   }
   return null;
 }
@@ -2736,184 +3116,155 @@ function discountValueInput(value) {
     return {
       discountAmount: {
         amount: value.amount?.amount ?? "0",
-        appliesOnEachItem: false,
+        appliesOnEachItem: !!value.appliesOnEachItem,
       },
     };
   }
   return null;
 }
 
+// Automatic discounts have no code, so nothing stopped a second run from
+// creating every one again — and duplicates stack at checkout. Match by title.
+const Q_TARGET_AUTOMATIC_TITLES = `#graphql
+  query TargetAutoDiscounts($cursor: String) {
+    discountNodes(first: 100, after: $cursor, query: "method:automatic") {
+      pageInfo { hasNextPage endCursor }
+      edges { node { discount {
+        __typename
+        ... on DiscountAutomaticBasic { title }
+        ... on DiscountAutomaticBxgy { title }
+        ... on DiscountAutomaticFreeShipping { title }
+        ... on DiscountAutomaticApp { title }
+      } } }
+    }
+  }`;
+
+const DISCOUNT_CREATE = {
+  DiscountCodeBasic: [M_DISCOUNT_CODE_BASIC_CREATE, "basicCodeDiscount", "discountCodeBasicCreate", "Code discount"],
+  DiscountAutomaticBasic: [M_DISCOUNT_AUTO_BASIC_CREATE, "automaticBasicDiscount", "discountAutomaticBasicCreate", "Automatic discount"],
+  DiscountCodeFreeShipping: [M_DISCOUNT_CODE_FREE_SHIPPING_CREATE, "freeShippingCodeDiscount", "discountCodeFreeShippingCreate", "Free-shipping code discount"],
+  DiscountAutomaticFreeShipping: [M_DISCOUNT_AUTO_FREE_SHIPPING_CREATE, "freeShippingAutomaticDiscount", "discountAutomaticFreeShippingCreate", "Automatic free-shipping discount"],
+  DiscountCodeBxgy: [M_DISCOUNT_CODE_BXGY_CREATE, "bxgyCodeDiscount", "discountCodeBxgyCreate", "Buy X Get Y code discount"],
+  DiscountAutomaticBxgy: [M_DISCOUNT_AUTO_BXGY_CREATE, "automaticBxgyDiscount", "discountAutomaticBxgyCreate", "Automatic Buy X Get Y discount"],
+};
+
+// → { input } ready for the create mutation, or { skip: reason }
+async function buildDiscountInput(ctx, d) {
+  const kind = d.__typename;
+  const isCode = kind.startsWith("DiscountCode");
+  const input = commonDiscountFields(d);
+
+  if (isCode) {
+    if (restrictedToCustomers(d)) {
+      return { skip: "limited to specific customers or segments, which differ per store" };
+    }
+    input.code = d.codes?.edges?.[0]?.node?.code || d.title;
+    input.appliesOncePerCustomer = !!d.appliesOncePerCustomer;
+    input.customerSelection = { all: true };
+    if (d.usageLimit != null) input.usageLimit = d.usageLimit;
+  }
+
+  if (kind === "DiscountCodeBasic" || kind === "DiscountAutomaticBasic") {
+    const value = discountValueInput(d.customerGets?.value);
+    if (!value) return { skip: "unsupported value" };
+    const items = await discountItemsInput(ctx, d.customerGets?.items);
+    if (items.error) return { skip: items.error };
+    input.customerGets = { value, items: items.input };
+    const min = minimumRequirementInput(d.minimumRequirement);
+    if (min) input.minimumRequirement = min;
+    return { input };
+  }
+
+  if (kind === "DiscountCodeFreeShipping" || kind === "DiscountAutomaticFreeShipping") {
+    if (d.destinationSelection?.__typename !== "DiscountCountryAll") {
+      return { skip: "limited to specific countries — recreate it by hand" };
+    }
+    input.destination = { all: true };
+    const min = minimumRequirementInput(d.minimumRequirement);
+    if (min) input.minimumRequirement = min;
+    if (d.maximumShippingPrice?.amount != null) {
+      input.maximumShippingPrice = String(d.maximumShippingPrice.amount);
+    }
+    return { input };
+  }
+
+  if (kind === "DiscountCodeBxgy" || kind === "DiscountAutomaticBxgy") {
+    const buysItems = await discountItemsInput(ctx, d.customerBuys?.items);
+    if (buysItems.error) return { skip: buysItems.error };
+    const getsItems = await discountItemsInput(ctx, d.customerGets?.items);
+    if (getsItems.error) return { skip: getsItems.error };
+    const customerBuys = bxgyCustomerBuysInput(d.customerBuys, buysItems.input);
+    const customerGets = bxgyCustomerGetsInput(d.customerGets, getsItems.input);
+    if (!customerBuys || !customerGets) return { skip: "unsupported Buy X Get Y shape" };
+    input.customerBuys = customerBuys;
+    input.customerGets = customerGets;
+    if (d.usesPerOrderLimit != null) input.usesPerOrderLimit = d.usesPerOrderLimit;
+    return { input };
+  }
+
+  return { skip: `unsupported type ${kind}` };
+}
+
 async function migrateDiscounts(ctx) {
-  const { source, target, onLog, counters, hasQuota, consume } = ctx;
+  const { source, target, onLog, counters, consume } = ctx;
   const nodes = await fetchAll(source, Q_DISCOUNTS, "discountNodes", {}, (n) =>
     onLog(`Fetched ${n} discounts…`),
   );
   onLog(`Total ${nodes.length} discounts found. Importing…`);
 
+  const autoTitles = new Set();
+  try {
+    const existing = await fetchAll(target, Q_TARGET_AUTOMATIC_TITLES, "discountNodes");
+    for (const n of existing) if (n.discount?.title) autoTitles.add(n.discount.title);
+  } catch {
+    /* couldn't list — creates below may duplicate automatic discounts */
+  }
+
   for (const n of nodes) {
-    if (!hasQuota()) {
+    if (ctx.stopOnQuota()) {
       onLog("Quota reached — stopping discounts.");
       break;
     }
     const d = n.discount;
     const kind = d?.__typename;
+    const spec = DISCOUNT_CREATE[kind];
+    if (!spec) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (unsupported type ${kind || "unknown"})`);
+      continue;
+    }
+    if (kind.startsWith("DiscountAutomatic") && autoTitles.has(d.title)) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (exists): ${d.title}`);
+      continue;
+    }
+    if (!ctx.canCreate()) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (quota reached, not created): ${d.title}`);
+      continue;
+    }
 
+    const [mutation, argName, root, label] = spec;
     try {
-      if (kind === "DiscountCodeBasic") {
-        const value = discountValueInput(d.customerGets?.value);
-        if (!value) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped (unsupported value): ${d.title}`);
-          continue;
-        }
-        const code = d.codes?.edges?.[0]?.node?.code || d.title;
-        const data = await gql(target, M_DISCOUNT_CODE_BASIC_CREATE, {
-          basicCodeDiscount: {
-            title: d.title,
-            code,
-            startsAt: d.startsAt,
-            endsAt: d.endsAt || null,
-            appliesOncePerCustomer: !!d.appliesOncePerCustomer,
-            customerSelection: { all: true },
-            customerGets: { value, items: { all: true } },
-          },
-        });
-        const errs = data?.discountCodeBasicCreate?.userErrors;
-        if (errs?.length) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped: ${d.title} — ${errText(errs)}`);
-        } else {
-          counters.created++;
-          consume();
-          onLog(`✓ Code discount: ${d.title}`);
-        }
-      } else if (kind === "DiscountAutomaticBasic") {
-        const value = discountValueInput(d.customerGets?.value);
-        if (!value) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped (unsupported value): ${d.title}`);
-          continue;
-        }
-        const data = await gql(target, M_DISCOUNT_AUTO_BASIC_CREATE, {
-          automaticBasicDiscount: {
-            title: d.title,
-            startsAt: d.startsAt,
-            endsAt: d.endsAt || null,
-            customerGets: { value, items: { all: true } },
-            minimumRequirement: {
-              quantity: { greaterThanOrEqualToQuantity: "1" },
-            },
-          },
-        });
-        const errs = data?.discountAutomaticBasicCreate?.userErrors;
-        if (errs?.length) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped: ${d.title} — ${errText(errs)}`);
-        } else {
-          counters.created++;
-          consume();
-          onLog(`✓ Automatic discount: ${d.title}`);
-        }
-      } else if (kind === "DiscountCodeFreeShipping") {
-        const code = d.codes?.edges?.[0]?.node?.code || d.title;
-        const data = await gql(target, M_DISCOUNT_CODE_FREE_SHIPPING_CREATE, {
-          freeShippingCodeDiscount: {
-            title: d.title,
-            code,
-            startsAt: d.startsAt,
-            endsAt: d.endsAt || null,
-            appliesOncePerCustomer: !!d.appliesOncePerCustomer,
-            customerSelection: { all: true },
-            destination: { all: true },
-          },
-        });
-        const errs = data?.discountCodeFreeShippingCreate?.userErrors;
-        if (errs?.length) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped: ${d.title} — ${errText(errs)}`);
-        } else {
-          counters.created++;
-          consume();
-          onLog(`✓ Free-shipping code discount: ${d.title}`);
-        }
-      } else if (kind === "DiscountAutomaticFreeShipping") {
-        const data = await gql(target, M_DISCOUNT_AUTO_FREE_SHIPPING_CREATE, {
-          freeShippingAutomaticDiscount: {
-            title: d.title,
-            startsAt: d.startsAt,
-            endsAt: d.endsAt || null,
-            destination: { all: true },
-          },
-        });
-        const errs = data?.discountAutomaticFreeShippingCreate?.userErrors;
-        if (errs?.length) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped: ${d.title} — ${errText(errs)}`);
-        } else {
-          counters.created++;
-          consume();
-          onLog(`✓ Automatic free-shipping discount: ${d.title}`);
-        }
-      } else if (kind === "DiscountCodeBxgy") {
-        const customerBuys = bxgyCustomerBuysInput(d.customerBuys);
-        const customerGets = bxgyCustomerGetsInput(d.customerGets);
-        if (!customerBuys || !customerGets) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped (unsupported Buy X Get Y shape): ${d.title}`);
-          continue;
-        }
-        const code = d.codes?.edges?.[0]?.node?.code || d.title;
-        const data = await gql(target, M_DISCOUNT_CODE_BXGY_CREATE, {
-          bxgyCodeDiscount: {
-            title: d.title,
-            code,
-            startsAt: d.startsAt,
-            endsAt: d.endsAt || null,
-            usesPerOrderLimit: d.usesPerOrderLimit ?? null,
-            appliesOncePerCustomer: !!d.appliesOncePerCustomer,
-            customerSelection: { all: true },
-            customerBuys,
-            customerGets,
-          },
-        });
-        const errs = data?.discountCodeBxgyCreate?.userErrors;
-        if (errs?.length) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped: ${d.title} — ${errText(errs)}`);
-        } else {
-          counters.created++;
-          consume();
-          onLog(`✓ Buy X Get Y code discount: ${d.title}`);
-        }
-      } else if (kind === "DiscountAutomaticBxgy") {
-        const customerBuys = bxgyCustomerBuysInput(d.customerBuys);
-        const customerGets = bxgyCustomerGetsInput(d.customerGets);
-        if (!customerBuys || !customerGets) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped (unsupported Buy X Get Y shape): ${d.title}`);
-          continue;
-        }
-        const data = await gql(target, M_DISCOUNT_AUTO_BXGY_CREATE, {
-          automaticBxgyDiscount: {
-            title: d.title,
-            startsAt: d.startsAt,
-            endsAt: d.endsAt || null,
-            customerBuys,
-            customerGets,
-          },
-        });
-        const errs = data?.discountAutomaticBxgyCreate?.userErrors;
-        if (errs?.length) {
-          counters.skipped++;
-          onLog(`↪︎ Skipped: ${d.title} — ${errText(errs)}`);
-        } else {
-          counters.created++;
-          consume();
-          onLog(`✓ Automatic Buy X Get Y discount: ${d.title}`);
-        }
-      } else {
+      const built = await buildDiscountInput(ctx, d);
+      if (built.skip) {
         counters.skipped++;
-        onLog(`↪︎ Skipped (unsupported type ${kind || "unknown"})`);
+        onLog(`↪︎ Skipped: ${d.title} — ${built.skip}`);
+        continue;
+      }
+      const data = await gql(target, mutation, { [argName]: built.input });
+      const errs = data?.[root]?.userErrors;
+      if (errs?.length && /taken|already|unique/i.test(errText(errs))) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (exists): ${d.title}`);
+      } else if (errs?.length) {
+        counters.failed++;
+        onLog(`✕ Failed: ${d.title} — ${errText(errs)}`);
+      } else {
+        counters.created++;
+        consume();
+        if (kind.startsWith("DiscountAutomatic")) autoTitles.add(d.title);
+        onLog(`✓ ${label}: ${d.title}`);
       }
     } catch (err) {
       counters.failed++;
@@ -2924,7 +3275,6 @@ async function migrateDiscounts(ctx) {
     await sleep(220);
   }
 }
-
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  ORCHESTRATOR

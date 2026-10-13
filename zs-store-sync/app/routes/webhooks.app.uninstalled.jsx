@@ -31,5 +31,13 @@ export const action = async ({ request }) => {
     data: { authorized: false },
   });
 
+  // Turn off this store's own schedules now. Left on, the next tick found the
+  // Free plan and emailed a "schedule paused" notice to someone who had just
+  // uninstalled.
+  await db.syncSchedule.updateMany({
+    where: { ownerShop: shop, enabled: true },
+    data: { enabled: false, lastError: "Paused — the app was uninstalled." },
+  });
+
   return new Response();
 };

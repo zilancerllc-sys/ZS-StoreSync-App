@@ -158,12 +158,18 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
   // Items are counted here as they are created and flushed periodically, so
   // whatever a dead run produced has already been billed.
   const pendingQuota = {};
-  let flushingQuota = false;
+  let inFlightFlush = null;
   const onConsume = (type) => {
     pendingQuota[type] = (pendingQuota[type] || 0) + 1;
   };
-  const flushQuota = async () => {
-    if (flushingQuota) return; // never let two flushes overlap
+  // Flushes are chained, never skipped: the final flush used to return early
+  // when a timer flush was still in flight, so items created after that
+  // snapshot were never billed.
+  const flushQuota = () => {
+    inFlightFlush = (inFlightFlush || Promise.resolve()).then(flushQuotaNow);
+    return inFlightFlush;
+  };
+  const flushQuotaNow = async () => {
     const batch = {};
     let any = false;
     for (const [type, n] of Object.entries(pendingQuota)) {
@@ -174,17 +180,14 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
       }
     }
     if (!any) return;
-    flushingQuota = true;
     try {
       await consumeQuota(shop, batch);
     } catch {
-      // Put it back rather than dropping it — the next flush (or the final one
-      // in the finally block) retries. Better to bill late than never.
+      // Put it back rather than dropping it — the next flush retries.
+      // Better to bill late than never.
       for (const [type, n] of Object.entries(batch)) {
         pendingQuota[type] = (pendingQuota[type] || 0) + n;
       }
-    } finally {
-      flushingQuota = false;
     }
   };
 
