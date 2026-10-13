@@ -12,6 +12,7 @@ import { getUsage, filterAllowedTypes } from "../credits.server";
 import {
   verifyConnectionCode,
   getVerifiedConnection,
+  listConnections,
 } from "../connection.server";
 import { startMigrationJob, getActiveJob } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
@@ -45,24 +46,7 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const connections = await db.storeConnection.findMany({
-    where: { ownerShop: shop },
-    orderBy: { createdAt: "desc" },
-  });
-
-  for (const c of connections) {
-    const srcSession = await db.session.findFirst({
-      where: { shop: c.sourceShop, isOnline: false },
-    });
-    const has = !!srcSession?.accessToken;
-    if (has !== c.authorized) {
-      await db.storeConnection.update({
-        where: { id: c.id },
-        data: { authorized: has },
-      });
-      c.authorized = has;
-    }
-  }
+  const connections = await listConnections(shop);
 
   const usage = await getUsage(shop);
 

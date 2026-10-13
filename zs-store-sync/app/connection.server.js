@@ -84,6 +84,40 @@ export async function verifyConnectionCode(sourceShop, code) {
   return rec.connectionCode === normalized;
 }
 
+// ─── An owner's pairings, with `authorized` checked against reality ──────────
+// `authorized` is a cached flag; the truth is whether the source store still
+// has an offline session (it goes away when that store uninstalls). Only the
+// Migrate page used to re-check, so the dashboard, Get Started, Sync and
+// Preview kept offering sources that could no longer be read.
+export async function listConnections(ownerShop) {
+  const connections = await db.storeConnection.findMany({
+    where: { ownerShop },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!connections.length) return connections;
+
+  const sessions = await db.session.findMany({
+    where: {
+      shop: { in: connections.map((c) => c.sourceShop) },
+      isOnline: false,
+    },
+    select: { shop: true, accessToken: true },
+  });
+  const live = new Set(sessions.filter((s) => s.accessToken).map((s) => s.shop));
+
+  for (const c of connections) {
+    const has = live.has(c.sourceShop);
+    if (has !== c.authorized) {
+      await db.storeConnection.update({
+        where: { id: c.id },
+        data: { authorized: has },
+      });
+      c.authorized = has;
+    }
+  }
+  return connections;
+}
+
 // ─── Require a code-verified connection between owner and source ─────────────
 // SECURITY: every read of a source store's data must go through a connection
 // the owner paired with that store's connection code. Returns the connection

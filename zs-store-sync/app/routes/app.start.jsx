@@ -3,7 +3,7 @@ import { useLoaderData, useFetcher, Link as RouterLink } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { verifyConnectionCode } from "../connection.server";
+import { listConnections, verifyConnectionCode } from "../connection.server";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
 import {
@@ -40,10 +40,7 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const connections = await db.storeConnection.findMany({
-    where: { ownerShop: shop },
-    orderBy: { createdAt: "desc" },
-  });
+  const connections = await listConnections(shop);
   const ready = connections.filter((c) => c.codeVerified && c.authorized);
   const jobCount = await db.migrationJob.count({ where: { shop } });
 
@@ -194,8 +191,13 @@ export default function Start() {
     if (checked?.sourceShop) setSource(checked.sourceShop);
   }, [checked?.sourceShop]);
 
-  const step2Done = !!checked?.installed;
-  const step3Done = !!connected || alreadyDone;
+  // A store paired on an earlier visit has, by definition, been through steps
+  // 1 and 2 as well — without this the page said "You're connected" above
+  // three steps still asking to "finish step 1 first".
+  // Once they start checking a NEW source, that store's own progress wins.
+  const step1Done = !!checked || alreadyDone;
+  const step2Done = checked ? !!checked.installed : alreadyDone;
+  const step3Done = !!connected || (alreadyDone && !checked);
 
   const stepClass = (done, active) =>
     `zs-step ${done ? "done" : active ? "active" : "idle"}`;
@@ -232,8 +234,8 @@ export default function Start() {
             </div>
 
             {/* ── Step 1: name the source ───────────────────────────────── */}
-            <div className={stepClass(!!checked, !checked)}>
-              <div className="zs-num">{checked ? <Check size={15} /> : 1}</div>
+            <div className={stepClass(step1Done, !step1Done)}>
+              <div className="zs-num">{step1Done ? <Check size={15} /> : 1}</div>
               <div className="zs-step-body">
                 <h3>{t("Which store are you copying from?")}</h3>
                 <p>
@@ -276,12 +278,13 @@ export default function Start() {
               <div className="zs-num">{step2Done ? <Check size={15} /> : 2}</div>
               <div className="zs-step-body">
                 <h3>{t("Install ZS StoreSync on that store")}</h3>
-                {!checked ? (
-                  <p>{t("Finish step 1 first.")}</p>
-                ) : step2Done ? (
+                {step2Done ? (
                   <div className="zs-ok">
-                    <Check size={16} /> {t("Installed on {shop}", { shop: checked.sourceShop })}
+                    <Check size={16} />{" "}
+                    {t("Installed on {shop}", { shop: checked?.sourceShop || doneSource })}
                   </div>
+                ) : !checked ? (
+                  <p>{t("Finish step 1 first.")}</p>
                 ) : (
                   <>
                     <p>

@@ -546,7 +546,7 @@ export default function Plan() {
     if (monthly === 0)
       return { price: "$0", period: t("/mo"), billed: t("Free forever") };
     if (annual) {
-      const perMo = (yearly / 12).toFixed(0);
+      const perMo = (yearly / 12).toFixed(2);
       return {
         price: `$${perMo}`,
         period: t("/mo"),

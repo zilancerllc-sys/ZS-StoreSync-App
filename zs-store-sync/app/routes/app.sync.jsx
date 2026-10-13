@@ -4,7 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { getUsage, filterAllowedTypes } from "../credits.server";
-import { getVerifiedConnection } from "../connection.server";
+import { getVerifiedConnection, listConnections } from "../connection.server";
 import { startMigrationJob, getActiveJob } from "../jobs.server";
 import {
   listSchedules,
@@ -35,11 +35,10 @@ import {
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
-  const connections = await db.storeConnection.findMany({
-    // only code-verified pairings can be used as a sync source
-    where: { ownerShop: shop, authorized: true, codeVerified: true },
-    orderBy: { lastUsedAt: "desc" },
-  });
+  // only code-verified, still-authorized pairings can be used as a sync source
+  const connections = (await listConnections(shop))
+    .filter((c) => c.authorized && c.codeVerified)
+    .sort((a, b) => (b.lastUsedAt?.getTime() ?? 0) - (a.lastUsedAt?.getTime() ?? 0));
   const usage = await getUsage(shop);
   const schedules = await listSchedules(shop);
   return {

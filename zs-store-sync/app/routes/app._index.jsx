@@ -6,6 +6,7 @@ import db from "../db.server";
 import { getUsage, PLAN_LABEL } from "../credits.server";
 import { failStaleJobs } from "../jobs.server";
 import { recordFeedback } from "../feedback.server";
+import { listConnections } from "../connection.server";
 import { brandStyles } from "./zs-styles.js";
 import { RECOMMENDED_APPS } from "../recommended-apps";
 import { useT } from "../i18n";
@@ -63,9 +64,9 @@ export const loader = async ({ request }) => {
   // Setup isn't finished until a source store is paired AND still authorized.
   // Almost every merchant who reaches that point goes on to migrate, so the
   // dashboard leads with it until they do.
-  const readyConnections = await db.storeConnection.count({
-    where: { ownerShop: shop, codeVerified: true, authorized: true },
-  });
+  const readyConnections = (await listConnections(shop)).filter(
+    (c) => c.codeVerified && c.authorized,
+  ).length;
 
   return {
     needsSetup: readyConnections === 0,

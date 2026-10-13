@@ -4,7 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate, unauthenticated } from "../shopify.server";
 import db from "../db.server";
 import { getUsage } from "../credits.server";
-import { getVerifiedConnection } from "../connection.server";
+import { getVerifiedConnection, listConnections } from "../connection.server";
 import { previewCounts } from "../migrator.server";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
@@ -13,11 +13,10 @@ import { Eye, Loader2, AlertCircle } from "lucide-react";
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
-  const connections = await db.storeConnection.findMany({
-    // only code-verified pairings can be previewed
-    where: { ownerShop: shop, authorized: true, codeVerified: true },
-    orderBy: { createdAt: "desc" },
-  });
+  // only code-verified, still-authorized pairings can be previewed
+  const connections = (await listConnections(shop)).filter(
+    (c) => c.authorized && c.codeVerified,
+  );
   const usage = await getUsage(shop);
   return {
     connections: connections.map((c) => ({ sourceShop: c.sourceShop })),
