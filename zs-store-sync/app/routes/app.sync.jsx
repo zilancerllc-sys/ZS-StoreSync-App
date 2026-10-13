@@ -436,6 +436,7 @@ export default function Sync() {
                         updated: job.updated ?? 0,
                         skipped: job.skipped,
                       })}
+                      {job.status === "partial" ? ` ${t("(some items failed)")}` : ""}
                     </div>
                   )}
                   {job.logs?.length > 0 && (
