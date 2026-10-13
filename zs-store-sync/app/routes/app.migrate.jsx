@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   useLoaderData,
   useFetcher,
@@ -391,6 +391,13 @@ export default function Migrate() {
   const disconnectFetcher = useFetcher();
   const runFetcher = useFetcher();
   const jobFetcher = useFetcher();
+  // The poll timer outlives the render that created it, so it must read the
+  // fetcher's state through a ref. Reading the captured `jobFetcher` froze it
+  // at whatever state it had then — if that was "loading" (the post-action
+  // revalidation of the previous job), a second run on the same page was
+  // never polled and sat on its spinner forever.
+  const jobFetcherRef = useRef(jobFetcher);
+  jobFetcherRef.current = jobFetcher;
   const revalidator = useRevalidator();
   const [activeJobId, setActiveJobId] = useState(null);
 
@@ -427,8 +434,8 @@ export default function Migrate() {
       return undefined;
     }
     const timer = setInterval(() => {
-      if (jobFetcher.state === "idle") {
-        jobFetcher.load(`/app/jobs/${activeJobId}`);
+      if (jobFetcherRef.current.state === "idle") {
+        jobFetcherRef.current.load(`/app/jobs/${activeJobId}`);
       }
     }, 2500);
     return () => clearInterval(timer);
@@ -830,7 +837,7 @@ export default function Migrate() {
                       })}
                     </span>
                   </div>
-                  {job?.logs?.length > 0 && (
+                  {job?.id === activeJobId && job.logs?.length > 0 && (
                     <div className="zs-log">
                       {job.logs.map((l, i) => (
                         <div key={i}>{l}</div>
