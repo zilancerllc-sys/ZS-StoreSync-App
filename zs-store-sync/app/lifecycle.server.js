@@ -55,9 +55,44 @@ const COPY = {
     "Re-run a migration whenever you like — anything that already exists is " +
     "skipped, so nothing gets duplicated.",
 
+  // Optional welcome extras. Leave any of these empty to drop that block.
+  welcomeChips: [
+    "Products", "Collections", "Pages", "Blog posts", "Files", "Menus",
+    "Redirects", "Discounts", "Metafields", "Metaobjects", "Orders", "Customers",
+  ],
+  welcomeHighlights: [
+    {
+      title: "Nothing gets duplicated",
+      text: "Items already in this store are skipped — matched by SKU, handle or email — so you can re-run safely.",
+    },
+    {
+      title: "Preview before you run",
+      text: "Compare what each store has, side by side, without changing anything.",
+    },
+    {
+      title: "Keep stores in sync",
+      text: "Pull only what's new later, or schedule it weekly, daily or every 6 hours on paid plans.",
+    },
+  ],
+  welcomeHelpLinks: [
+    { label: "Watch the 5-minute walkthrough", url: "https://www.youtube.com/watch?v=9S7bM81PSZo" },
+    { label: "Read the docs", url: "https://zs-storesync.zilancer.com/documentation" },
+  ],
+
   // Completes "we'd love to hear how your ___ went" in the feedback email.
   feedbackExperience: "migration experience",
 
+};
+
+// Everything sendWelcomeEmail takes from COPY, in one place for both callers.
+const WELCOME_CONTENT = {
+  blurb: COPY.welcomeBlurb,
+  steps: COPY.welcomeSteps,
+  cta: COPY.welcomeCta,
+  closing: COPY.welcomeClosing,
+  chips: COPY.welcomeChips,
+  highlights: COPY.welcomeHighlights,
+  helpLinks: COPY.welcomeHelpLinks,
 };
 
 const FEEDBACK_DELAY_MS = 2 * 24 * 60 * 60 * 1000;
@@ -115,10 +150,7 @@ export async function onAppInstalled({ shop, admin }) {
           shop,
           token: existing.unsubscribeToken,
           apps: pickApps(0),
-          blurb: COPY.welcomeBlurb,
-          steps: COPY.welcomeSteps,
-          cta: COPY.welcomeCta,
-          closing: COPY.welcomeClosing,
+          ...WELCOME_CONTENT,
         });
         if (late) {
           await db.merchantContact.update({
@@ -149,10 +181,7 @@ export async function onAppInstalled({ shop, admin }) {
       shop,
       token: contact.unsubscribeToken,
       apps: pickApps(0),
-      blurb: COPY.welcomeBlurb,
-      steps: COPY.welcomeSteps,
-      cta: COPY.welcomeCta,
-      closing: COPY.welcomeClosing,
+      ...WELCOME_CONTENT,
     });
     if (sent) {
       await db.merchantContact.update({

@@ -12,6 +12,7 @@ import {
   PLAN_LIMITS,
 } from "../credits.server";
 import { brandStyles } from "./zs-styles.js";
+import { useT } from "../i18n";
 import { Lock, Undo, Zap, MessageCircle, Check } from "lucide-react";
 import AffiliateReferralCard from "../components/AffiliateReferralCard";
 
@@ -351,30 +352,32 @@ const pageStyles = `
 // ─── Plan data ────────────────────────────────────────────────────────────────
 const PLAN_META = {
   free: {
-    tagline: "Try it out — core content types with a generous monthly quota.",
+    tagline: "Try every data type with a monthly allowance — no card needed.",
     featureLabel: "Includes",
     featured: false,
     badge: null,
   },
   starter: {
-    tagline: "For active store moves — adds files, discounts, menus & more.",
+    tagline: "For active store moves — higher limits and weekly automatic sync.",
     featureLabel: "Everything in Free, plus",
     featured: false,
     badge: null,
   },
   growth: {
-    tagline: "Higher limits across every data type for larger catalogs.",
+    tagline: "Higher limits across every data type, synced daily.",
     featureLabel: "Everything in Starter, plus",
     featured: true,
     badge: "★ Most Popular",
   },
   pro: {
-    tagline: "Maximum limits for big migrations and ongoing syncs.",
+    tagline: "Maximum limits for big migrations, synced every 6 hours.",
     featureLabel: "Everything in Growth, plus",
     featured: false,
     badge: null,
   },
 };
+
+const PLAN_NAME = { free: "Free", starter: "Starter", growth: "Growth", pro: "Pro" };
 
 const TYPE_LABEL = {
   products: "Products",
@@ -409,11 +412,11 @@ const DISPLAY_TYPES = [
 const faqs = [
   {
     q: "What counts toward my monthly quota?",
-    a: "Each new item created in this store by a migration or sync (product, page, file, etc.) counts once per billing cycle. Items that already exist and are skipped don't count. The counter resets every 30 days.",
+    a: "Each new item created in this store by a migration or sync (product, page, file, etc.) counts once per billing cycle. Items that already exist and are skipped don't count, and neither do updates to existing items during a sync. The counter resets every 30 days.",
   },
   {
     q: "What happens if I hit my limit?",
-    a: "Syncs for that data type pause until your quota resets or you upgrade. Existing data in both stores is never deleted.",
+    a: "New items of that data type stop being created until your quota resets or you upgrade. Other data types keep running, and a sync still updates items that already exist. Existing data in both stores is never deleted.",
   },
   {
     q: "Can I change or cancel my plan later?",
@@ -442,100 +445,46 @@ const fmt = (n) => {
   return `${n}`;
 };
 
-function buildFeatures(planId, L) {
-  if (planId === "free")
-    return [
-      { text: `${fmt(L.products)} Products`, ok: true },
-      { text: `${fmt(L.collections)} Collections`, ok: true },
-      {
-        text: `${fmt(L.pages)} Pages, ${fmt(L.discounts)} Discounts`,
-        ok: true,
-      },
-      {
-        text: `${fmt(L.files)} Files, ${fmt(L.menus)} Menus, ${fmt(L.redirects)} Redirects`,
-        ok: true,
-      },
-      { text: `${fmt(L.metaobjects)} Metaobjects`, ok: true },
-      { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
-      { text: `${fmt(L.metafields)} Metafields`, ok: true },
-      {
-        text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
-        ok: true,
-      },
-      { text: "Automatic sync", ok: false },
-    ];
+const SYNC_FEATURE = {
+  free: { text: "Automatic sync", ok: false },
+  starter: { text: "Automatic sync — weekly", ok: true },
+  growth: { text: "Automatic sync — daily", ok: true },
+  pro: { text: "Automatic sync — every 6 hours", ok: true },
+};
 
-  if (planId === "starter")
-    return [
-      { text: `${fmt(L.products)} Products`, ok: true },
-      { text: `${fmt(L.collections)} Collections`, ok: true },
-      {
-        text: `${fmt(L.pages)} Pages, ${fmt(L.discounts)} Discounts`,
-        ok: true,
-      },
-      {
-        text: `${fmt(L.files)} Files, ${fmt(L.menus)} Menus, ${fmt(L.redirects)} Redirects`,
-        ok: true,
-      },
-      { text: `${fmt(L.metaobjects)} Metaobjects`, ok: true },
-      { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
-      { text: `${fmt(L.metafields)} Metafields`, ok: true },
-      {
-        text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
-        ok: true,
-      },
-      { text: "Automatic sync — weekly", ok: true },
-    ];
-
-  if (planId === "growth")
-    return [
-      { text: `${fmt(L.products)} Products`, ok: true },
-      { text: `${fmt(L.collections)} Collections`, ok: true },
-      {
-        text: `${fmt(L.pages)} Pages, ${fmt(L.discounts)} Discounts`,
-        ok: true,
-      },
-      {
-        text: `${fmt(L.files)} Files, ${fmt(L.menus)} Menus, ${fmt(L.redirects)} Redirects`,
-        ok: true,
-      },
-      { text: `${fmt(L.metaobjects)} Metaobjects`, ok: true },
-      { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
-      { text: `${fmt(L.metafields)} Metafields`, ok: true },
-      {
-        text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
-        ok: true,
-      },
-      { text: "Automatic sync — daily", ok: true },
-    ];
-
-  if (planId === "pro")
-    return [
-      { text: `${fmt(L.products)} Products`, ok: true },
-      { text: `${fmt(L.collections)} Collections`, ok: true },
-      {
-        text: `${fmt(L.pages)} Pages, ${fmt(L.discounts)} Discounts`,
-        ok: true,
-      },
-      {
-        text: `${fmt(L.files)} Files, ${fmt(L.menus)} Menus, ${fmt(L.redirects)} Redirects`,
-        ok: true,
-      },
-      { text: `${fmt(L.metaobjects)} Metaobjects`, ok: true },
-      { text: `${fmt(L.blogPosts)} Blog Posts`, ok: true },
-      { text: `${fmt(L.metafields)} Metafields`, ok: true },
-      {
-        text: `${fmt(L.orders)} Orders (last 60 days), ${fmt(L.customers)} Customers`,
-        ok: true,
-      },
-      { text: "Automatic sync — every 6 hours", ok: true },
-    ];
-
-  return [];
+// Every plan has every data type; only the limits and the sync cadence differ.
+function buildFeatures(planId, L, t) {
+  if (!SYNC_FEATURE[planId]) return [];
+  const sync = SYNC_FEATURE[planId];
+  return [
+    { text: t("{n} Products", { n: fmt(L.products) }), ok: true },
+    { text: t("{n} Collections", { n: fmt(L.collections) }), ok: true },
+    { text: t("{pages} Pages, {discounts} Discounts", { pages: fmt(L.pages), discounts: fmt(L.discounts) }), ok: true },
+    {
+      text: t("{files} Files, {menus} Menus, {redirects} Redirects", {
+        files: fmt(L.files),
+        menus: fmt(L.menus),
+        redirects: fmt(L.redirects),
+      }),
+      ok: true,
+    },
+    { text: t("{n} Metaobjects", { n: fmt(L.metaobjects) }), ok: true },
+    { text: t("{n} Blog Posts", { n: fmt(L.blogPosts) }), ok: true },
+    { text: t("{n} Metafields", { n: fmt(L.metafields) }), ok: true },
+    {
+      text: t("{orders} Orders (last 60 days), {customers} Customers", {
+        orders: fmt(L.orders),
+        customers: fmt(L.customers),
+      }),
+      ok: true,
+    },
+    { text: t(sync.text), ok: sync.ok },
+  ];
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Plan() {
+  const t = useT();
   const {
     current,
     usage,
@@ -588,25 +537,26 @@ export default function Plan() {
   }, [justFree]);
 
   const maxSavings = Math.max(...Object.values(planSavings));
+  const planName = (id) => t(PLAN_NAME[id] || id);
 
   const priceLabel = (planId) => {
     const monthly = planPrice[planId];
     const yearly = planPriceAnnual[planId];
     const savings = planSavings[planId];
     if (monthly === 0)
-      return { price: "$0", period: "/mo", billed: "Free forever" };
+      return { price: "$0", period: t("/mo"), billed: t("Free forever") };
     if (annual) {
-      const perMo = (yearly / 12).toFixed(0);
+      const perMo = (yearly / 12).toFixed(2);
       return {
         price: `$${perMo}`,
-        period: "/mo",
-        billed: `$${yearly}/yr · save ${savings}%`,
+        period: t("/mo"),
+        billed: t("${price}/yr · save {pct}%", { price: yearly, pct: savings }),
       };
     }
     return {
       price: `$${monthly}`,
-      period: "/mo",
-      billed: `or $${yearly}/yr · save ${savings}%`,
+      period: t("/mo"),
+      billed: t("or ${price}/yr · save {pct}%", { price: yearly, pct: savings }),
     };
   };
 
@@ -617,17 +567,23 @@ export default function Plan() {
   };
 
   const ctaLabel = (planId, inPaidPeriod = false) => {
-    if (submittingPlan === planId) return "Redirecting to Shopify…";
-    const name = planId[0].toUpperCase() + planId.slice(1);
-    if (isUpgrade(planId)) return `Upgrade to ${name}`;
+    if (submittingPlan === planId) return t("Redirecting to Shopify…");
+    const name = planName(planId);
+    if (isUpgrade(planId)) return t("Upgrade to {plan}", { plan: name });
     // downgrades during a paid period are scheduled for the period's end
     return inPaidPeriod
-      ? `Downgrade to ${name} at period end`
-      : `Downgrade to ${name}`;
+      ? t("Downgrade to {plan} at period end", { plan: name })
+      : t("Downgrade to {plan}", { plan: name });
+  };
+
+  const noteStyle = {
+    background: "var(--zs-cream-tint)",
+    border: "1px solid var(--zs-border)",
+    color: "var(--zs-clay-deep)",
   };
 
   return (
-    <s-page heading="Pricing Plans">
+    <s-page heading={t("Pricing Plans")}>
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
 
       <div className="zs-section-wrap">
@@ -636,75 +592,49 @@ export default function Plan() {
             {/* Activated banner */}
             {bannerPlan && (
               <div className="zs-activated zs-reveal zs-d1">
-                ✓ Your{" "}
-                <strong>
-                  {bannerPlan[0].toUpperCase() + bannerPlan.slice(1)}
-                </strong>{" "}
-                plan is now active.
+                ✓{" "}
+                {t("Your {plan} plan is now active.", {
+                  plan: <strong>{planName(bannerPlan)}</strong>,
+                })}
               </div>
             )}
 
             {/* Scheduled downgrade notice */}
             {pendingPlan && (
-              <div
-                className="zs-activated zs-reveal zs-d1"
-                style={{
-                  background: "var(--zs-cream-tint)",
-                  border: "1px solid var(--zs-border)",
-                  color: "var(--zs-clay-deep)",
-                }}
-              >
-                <Lock size={13} style={{ verticalAlign: "-2px" }} /> Your plan
-                switches to{" "}
-                <strong>
-                  {pendingPlan[0].toUpperCase() + pendingPlan.slice(1)}
-                </strong>
-                {lockedUntilLabel ? (
-                  <>
-                    {" "}
-                    on <strong>{lockedUntilLabel}</strong>
-                  </>
-                ) : (
-                  " when your current period ends"
-                )}
-                . You keep your{" "}
-                <strong>{current[0].toUpperCase() + current.slice(1)}</strong>{" "}
-                features until then.
+              <div className="zs-activated zs-reveal zs-d1" style={noteStyle}>
+                <Lock size={13} style={{ verticalAlign: "-2px" }} />{" "}
+                {lockedUntilLabel
+                  ? t("Your plan switches to {next} on {date}. You keep your {current} features until then.", {
+                      next: <strong>{planName(pendingPlan)}</strong>,
+                      date: <strong>{lockedUntilLabel}</strong>,
+                      current: <strong>{planName(current)}</strong>,
+                    })
+                  : t("Your plan switches to {next} when your current period ends. You keep your {current} features until then.", {
+                      next: <strong>{planName(pendingPlan)}</strong>,
+                      current: <strong>{planName(current)}</strong>,
+                    })}
               </div>
             )}
 
             {/* Just scheduled a free downgrade */}
             {planFetcher.data?.scheduled === "free" && !pendingPlan && (
-              <div
-                className="zs-activated zs-reveal zs-d1"
-                style={{
-                  background: "var(--zs-cream-tint)",
-                  border: "1px solid var(--zs-border)",
-                  color: "var(--zs-clay-deep)",
-                }}
-              >
-                ✓ Downgrade scheduled — your plan switches to{" "}
-                <strong>Free</strong> on{" "}
-                <strong>{planFetcher.data.effectiveLabel}</strong>. No further
-                charges.
+              <div className="zs-activated zs-reveal zs-d1" style={noteStyle}>
+                ✓{" "}
+                {t("Downgrade scheduled — your plan switches to {plan} on {date}. No further charges.", {
+                  plan: <strong>{planName("free")}</strong>,
+                  date: <strong>{planFetcher.data.effectiveLabel}</strong>,
+                })}
               </div>
             )}
 
             {/* Commitment notice (paid period, nothing scheduled) */}
             {lockedUntilLabel && !pendingPlan && (
-              <div
-                className="zs-activated zs-reveal zs-d1"
-                style={{
-                  background: "var(--zs-cream-tint)",
-                  border: "1px solid var(--zs-border)",
-                  color: "var(--zs-clay-deep)",
-                }}
-              >
-                <Lock size={13} style={{ verticalAlign: "-2px" }} /> Your{" "}
-                <strong>{current[0].toUpperCase() + current.slice(1)}</strong>{" "}
-                plan runs until <strong>{lockedUntilLabel}</strong>. Upgrades
-                apply immediately (prorated by Shopify); downgrades and
-                cancellations take effect on that date.
+              <div className="zs-activated zs-reveal zs-d1" style={noteStyle}>
+                <Lock size={13} style={{ verticalAlign: "-2px" }} />{" "}
+                {t("Your {plan} plan runs until {date}. Upgrades apply immediately (prorated by Shopify); downgrades and cancellations take effect on that date.", {
+                  plan: <strong>{planName(current)}</strong>,
+                  date: <strong>{lockedUntilLabel}</strong>,
+                })}
               </div>
             )}
 
@@ -718,20 +648,18 @@ export default function Plan() {
                   color: "#9a3412",
                 }}
               >
-                {planFetcher.data.error}
+                {t(planFetcher.data.error)}
               </div>
             )}
 
             {/* Header */}
             <div className="zs-pricing-head zs-reveal zs-d1">
-              <div className="zs-pricing-eyebrow">Pricing</div>
+              <div className="zs-pricing-eyebrow">{t("Pricing")}</div>
               <h1 className="zs-pricing-title">
-                Plans that grow <em>with your store</em>
+                {t("Plans that grow {em}", { em: <em>{t("with your store")}</em> })}
               </h1>
               <p className="zs-pricing-sub">
-                Start free, upgrade when you&apos;re ready. Migrate and sync
-                products, collections, pages, files, and more — billed securely
-                through Shopify.
+                {t("Start free, upgrade when you're ready. Migrate and sync products, collections, pages, files, and more — billed securely through Shopify.")}
               </p>
 
               {/* These were <label>s with click handlers and no control to
@@ -744,13 +672,13 @@ export default function Plan() {
                   className={`zs-toggle-label ${!annual ? "active" : ""}`}
                   onClick={() => setAnnual(false)}
                 >
-                  Monthly
+                  {t("Monthly")}
                 </button>
                 <button
                   type="button"
                   role="switch"
                   aria-checked={annual}
-                  aria-label="Bill annually"
+                  aria-label={t("Bill annually")}
                   className={`zs-toggle-track ${annual ? "annual" : ""}`}
                   onClick={() => setAnnual((v) => !v)}
                 >
@@ -761,9 +689,9 @@ export default function Plan() {
                   className={`zs-toggle-label ${annual ? "active" : ""}`}
                   onClick={() => setAnnual(true)}
                 >
-                  Annual
+                  {t("Annual")}
                 </button>
-                <span className="zs-save-badge">Save up to {maxSavings}%</span>
+                <span className="zs-save-badge">{t("Save up to {pct}%", { pct: maxSavings })}</span>
               </div>
             </div>
 
@@ -781,15 +709,13 @@ export default function Plan() {
                     className={`zs-plan${meta.featured ? " featured" : ""}${isCurrent ? " current-plan" : ""}`}
                   >
                     {isCurrent ? (
-                      <div className="zs-plan-badge cur">✓ Current</div>
+                      <div className="zs-plan-badge cur">✓ {t("Current")}</div>
                     ) : meta.badge ? (
-                      <div className="zs-plan-badge">{meta.badge}</div>
+                      <div className="zs-plan-badge">{t(meta.badge)}</div>
                     ) : null}
 
-                    <div className="zs-plan-name">
-                      {planId[0].toUpperCase() + planId.slice(1)}
-                    </div>
-                    <div className="zs-plan-tagline">{meta.tagline}</div>
+                    <div className="zs-plan-name">{planName(planId)}</div>
+                    <div className="zs-plan-tagline">{t(meta.tagline)}</div>
 
                     <div className="zs-plan-price-row">
                       <span className="zs-plan-price">{price}</span>
@@ -804,7 +730,7 @@ export default function Plan() {
                         className="zs-plan-cta current"
                         disabled
                       >
-                        ✓ Current Plan
+                        ✓ {t("Current Plan")}
                       </button>
                     ) : isFree ? (
                       // Free has no charge to request — submit via the fetcher so
@@ -822,19 +748,19 @@ export default function Plan() {
                           disabled={!!submittingPlan || !!pendingPlan}
                           title={
                             pendingPlan
-                              ? "A plan change is already scheduled"
+                              ? t("A plan change is already scheduled")
                               : lockedUntilLabel
-                                ? `Takes effect ${lockedUntilLabel}`
+                                ? t("Takes effect {date}", { date: lockedUntilLabel })
                                 : undefined
                           }
                         >
                           {submittingPlan === "free"
-                            ? "Scheduling…"
+                            ? t("Scheduling…")
                             : pendingPlan
-                              ? "Change scheduled"
+                              ? t("Change scheduled")
                               : lockedUntilLabel
-                                ? "Downgrade at period end"
-                                : "Downgrade to Free"}
+                                ? t("Downgrade at period end")
+                                : t("Downgrade to {plan}", { plan: planName("free") })}
                         </button>
                       </planFetcher.Form>
                     ) : (
@@ -857,22 +783,22 @@ export default function Plan() {
                           }
                           title={
                             !isUpgrade(planId) && pendingPlan
-                              ? "A plan change is already scheduled"
+                              ? t("A plan change is already scheduled")
                               : !isUpgrade(planId) && lockedUntilLabel
-                                ? `Takes effect ${lockedUntilLabel}`
+                                ? t("Takes effect {date}", { date: lockedUntilLabel })
                                 : undefined
                           }
                         >
                           {!isUpgrade(planId) && pendingPlan
-                            ? "Change scheduled"
+                            ? t("Change scheduled")
                             : ctaLabel(planId, !!lockedUntilLabel)}
                         </button>
                       </planFetcher.Form>
                     )}
 
-                    <div className="zs-feat-label">{meta.featureLabel}</div>
+                    <div className="zs-feat-label">{t(meta.featureLabel)}</div>
                     <ul className="zs-feat-list">
-                      {buildFeatures(planId, planLimits[planId] || {}).map(
+                      {buildFeatures(planId, planLimits[planId] || {}, t).map(
                         (f, i) => (
                           <li key={i} className="zs-feat">
                             <span className="zs-feat-check">
@@ -899,35 +825,35 @@ export default function Plan() {
             {/* Trust strip */}
             <div className="zs-trust zs-reveal zs-d3">
               <div className="zs-trust-item">
-                <Lock size={15} /> Secure Shopify billing
+                <Lock size={15} /> {t("Secure Shopify billing")}
               </div>
               <div className="zs-trust-item">
-                <Undo size={15} /> Cancel anytime
+                <Undo size={15} /> {t("Cancel anytime")}
               </div>
               <div className="zs-trust-item">
-                <Zap size={15} /> Instant activation
+                <Zap size={15} /> {t("Instant activation")}
               </div>
               <div className="zs-trust-item">
-                <MessageCircle size={15} /> Human support
+                <MessageCircle size={15} /> {t("Human support")}
               </div>
             </div>
 
             {/* Usage */}
-            {DISPLAY_TYPES.some((t) => (usage[t] || 0) > 0) && (
+            {DISPLAY_TYPES.some((ty) => (usage[ty] || 0) > 0) && (
               <div className="zs-usage zs-reveal zs-d3">
-                <div className="zs-usage-title">Usage this billing period</div>
+                <div className="zs-usage-title">{t("Usage this billing period")}</div>
                 <div className="zs-usage-grid">
-                  {DISPLAY_TYPES.map((t) => {
-                    const used = usage[t] || 0;
-                    const lim = planLimits[current]?.[t] || 0;
+                  {DISPLAY_TYPES.map((ty) => {
+                    const used = usage[ty] || 0;
+                    const lim = planLimits[current]?.[ty] || 0;
                     if (lim === 0 && used === 0) return null;
                     const pct = lim > 0 ? Math.min((used / lim) * 100, 100) : 0;
                     const barClass =
                       pct >= 100 ? "full" : pct >= 80 ? "warn" : "";
                     return (
-                      <div key={t} className="zs-usage-row">
+                      <div key={ty} className="zs-usage-row">
                         <div className="zs-usage-label">
-                          <span>{TYPE_LABEL[t]}</span>
+                          <span>{t(TYPE_LABEL[ty])}</span>
                           <span>
                             <b>{used}</b> / {lim}
                           </span>
@@ -947,12 +873,12 @@ export default function Plan() {
 
             {/* FAQ */}
             <div className="zs-reveal zs-d3">
-              <div className="zs-faq-title">Frequently asked questions</div>
+              <div className="zs-faq-title">{t("Frequently asked questions")}</div>
               <div className="zs-faq-grid">
                 {faqs.map((f, i) => (
                   <div key={i} className="zs-faq-card">
-                    <div className="zs-faq-q">{f.q}</div>
-                    <div className="zs-faq-a">{f.a}</div>
+                    <div className="zs-faq-q">{t(f.q)}</div>
+                    <div className="zs-faq-a">{t(f.a)}</div>
                   </div>
                 ))}
               </div>

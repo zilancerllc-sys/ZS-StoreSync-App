@@ -231,43 +231,156 @@ function mailShell(bodyHtml, { token, promotional }) {
 }
 
 // ─── 1. Welcome, on install ──────────────────────────────────────────────────
-// blurb / steps / cta / closing are the only app-specific parts, and they come
-// from the COPY block at the top of lifecycle.server.js.
-export async function sendWelcomeEmail({
-  to,
+// Everything app-specific (blurb, steps, cta, closing, chips, highlights,
+// helpLinks) comes from the COPY block at the top of lifecycle.server.js; an
+// app that leaves the optional ones out simply gets those blocks omitted.
+//
+// Built from nested tables with inline styles only: Outlook ignores most CSS
+// layout and Gmail strips <style>, so anything fancier breaks for someone.
+const SERIF = "Georgia,'Times New Roman',serif";
+const SANS = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+export function welcomeEmailHtml({
   shop,
   token,
-  apps,
+  apps = [],
   blurb = "",
   steps = [],
   cta = { path: "/app", label: "Open the app" },
   closing = "",
+  chips = [],
+  highlights = [],
+  helpLinks = [],
 }) {
-  const NUMBER = ["", "one", "two", "three", "four", "five", "six"];
-  const stepList = steps.length
-    ? `<div style="background:#faf7f1;border:1px solid #ece5db;border-radius:12px;padding:16px 18px;margin:0 0 20px;">
-         <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Getting set up takes ${NUMBER[steps.length] || steps.length} steps</div>
-         <div style="font-size:14px;line-height:1.9;color:#6b6259;">
-           ${steps.map((t, i) => `${i + 1}. ${esc(t)}`).join("<br>")}
-         </div>
-       </div>`
+  const ctaUrl = `${APP_URL}${cta.path}`;
+
+  // Bulletproof button: a table cell carries the colour, so it survives
+  // clients that drop padding or background on <a>.
+  const bigButton = `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+      <tr><td bgcolor="#2B231D" style="border-radius:12px;">
+        <a href="${esc(ctaUrl)}" style="display:inline-block;padding:15px 28px;font-family:${SANS};font-size:15px;font-weight:700;color:#FFFCF8;text-decoration:none;border-radius:12px;">${esc(cta.label)} &rarr;</a>
+      </td></tr>
+    </table>`;
+
+  const stepRows = steps
+    .map(
+      (t, i) => `
+      <tr>
+        <td width="44" valign="top" style="padding:0 0 14px;">
+          <div style="width:32px;height:32px;line-height:32px;border-radius:16px;background:#2B231D;color:#E2BE7E;text-align:center;font-family:${SERIF};font-size:16px;">${i + 1}</div>
+        </td>
+        <td valign="middle" style="padding:0 0 14px;font-family:${SANS};font-size:15px;line-height:1.5;color:#2B231D;">${esc(t)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  const stepsBlock = steps.length
+    ? `<tr><td style="padding:0 36px 8px;">
+         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FFFCF8;border:1px solid #ECE2D5;border-radius:16px;">
+           <tr><td style="padding:22px 22px 8px;">
+             <div style="font-family:${SANS};font-size:11px;font-weight:800;letter-spacing:1.6px;text-transform:uppercase;color:#A07E66;margin:0 0 14px;">Get set up in ${steps.length} steps</div>
+             <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${stepRows}</table>
+           </td></tr>
+         </table>
+       </td></tr>`
     : "";
 
-  const body = `
-    <h2 style="margin:0 0 12px;font-size:22px;">Welcome to ${esc(APP_NAME)}</h2>
-    <p style="font-size:15px;line-height:1.65;margin:0 0 16px;">
-      Thanks for installing on <b>${esc(shop)}</b>. ${esc(blurb)}
-    </p>
-    ${stepList}
-    <p style="margin:0 0 22px;">${button(`${APP_URL}${cta.path}`, cta.label)}</p>
-    ${closing ? `<p style="font-size:14px;line-height:1.65;color:#6b6259;margin:0;">${esc(closing)}</p>` : ""}
-    ${appsSection(apps)}`;
+  const chipsBlock = chips.length
+    ? `<tr><td style="padding:22px 36px 0;">
+         <div style="font-family:${SANS};font-size:11px;font-weight:800;letter-spacing:1.6px;text-transform:uppercase;color:#A07E66;margin:0 0 10px;">What you can copy</div>
+         <div style="font-family:${SANS};font-size:13px;line-height:2.3;">
+           ${chips
+             .map(
+               (c) =>
+                 `<span style="display:inline-block;background:#F6EEE3;border:1px solid #ECE2D5;border-radius:999px;padding:2px 11px;margin:0 4px 0 0;color:#5C4E43;white-space:nowrap;">${esc(c)}</span>`,
+             )
+             .join(" ")}
+         </div>
+       </td></tr>`
+    : "";
 
+  const highlightsBlock = highlights.length
+    ? `<tr><td style="padding:26px 36px 0;">
+         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+           ${highlights
+             .map(
+               (h) => `
+             <tr><td style="padding:0 0 14px;">
+               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-left:3px solid #8E9A5E;">
+                 <tr><td style="padding:2px 0 2px 14px;font-family:${SANS};">
+                   <div style="font-size:15px;font-weight:700;color:#2B231D;">${esc(h.title)}</div>
+                   <div style="font-size:14px;line-height:1.55;color:#75665A;">${esc(h.text)}</div>
+                 </td></tr>
+               </table>
+             </td></tr>`,
+             )
+             .join("")}
+         </table>
+       </td></tr>`
+    : "";
+
+  const helpBlock = helpLinks.length
+    ? `<tr><td style="padding:12px 36px 0;font-family:${SANS};font-size:14px;line-height:1.7;color:#75665A;">
+         Need a hand? ${helpLinks
+           .map(
+             (l) =>
+               `<a href="${esc(l.url)}" style="color:#8A6A55;font-weight:700;text-decoration:underline;">${esc(l.label)}</a>`,
+           )
+           .join(" &middot; ")} &middot; or just reply to this email — a person reads every one.
+       </td></tr>`
+    : "";
+
+  const preheader = `Thanks for installing on ${shop}. Here's how to run your first migration.`;
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Welcome to ${esc(APP_NAME)}</title></head>
+<body style="margin:0;padding:0;background:#F3ECE2;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${esc(preheader)}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#F3ECE2" style="background:#F3ECE2;">
+    <tr><td align="center" style="padding:28px 12px;">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#FAF5EE;border-radius:20px;overflow:hidden;">
+
+        <tr><td bgcolor="#1E1813" style="background:#1E1813;padding:22px 36px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+            <td style="font-family:${SANS};font-size:13px;font-weight:800;letter-spacing:2px;color:#FFFCF8;">${esc(APP_NAME.toUpperCase())}</td>
+            <td align="right" style="font-family:${SANS};font-size:12px;color:#C9BBAC;">Store &rarr; Store</td>
+          </tr></table>
+        </td></tr>
+
+        <tr><td bgcolor="#1E1813" style="background:#1E1813;padding:8px 36px 36px;">
+          <div style="font-family:${SERIF};font-size:34px;line-height:1.12;color:#FFFCF8;margin:0 0 14px;">Welcome aboard. <span style="font-style:italic;color:#E2BE7E;">Let's move your store.</span></div>
+          <div style="font-family:${SANS};font-size:15px;line-height:1.65;color:#C9BBAC;">Thanks for installing on <b style="color:#FFFCF8;">${esc(shop)}</b>. ${esc(blurb)}</div>
+        </td></tr>
+
+        <tr><td style="padding:30px 36px 18px;">${bigButton}</td></tr>
+
+        ${stepsBlock}
+        ${chipsBlock}
+        ${highlightsBlock}
+
+        ${closing ? `<tr><td style="padding:6px 36px 0;font-family:${SANS};font-size:14px;line-height:1.65;color:#75665A;">${esc(closing)}</td></tr>` : ""}
+        ${helpBlock}
+
+        ${apps.length ? `<tr><td style="padding:6px 36px 0;font-family:${SANS};">${appsSection(apps)}</td></tr>` : ""}
+
+        <tr><td style="padding:28px 36px 30px;font-family:${SANS};font-size:11.5px;line-height:1.7;color:#A09488;">
+          Sent because ${esc(APP_NAME)} was installed on ${esc(shop)}.
+          <a href="${esc(unsubscribeUrl(token))}" style="color:#8C6E58;">Unsubscribe from non-essential email</a>.<br>${esc(POSTAL_ADDRESS)}
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+}
+
+export async function sendWelcomeEmail({ to, ...opts }) {
   return sendEmail({
     to,
     replyTo: REPLY_TO,
     subject: `Welcome to ${APP_NAME} — here's how to start`,
-    html: mailShell(body, { token, promotional: false }),
+    html: welcomeEmailHtml(opts),
   });
 }
 

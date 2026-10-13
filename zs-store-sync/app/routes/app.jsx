@@ -5,6 +5,8 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { MessageCircle } from "lucide-react";
 import { authenticate } from "../shopify.server";
 import { syncAffiliate } from "../lib/affiliate.server";
+import { I18nProvider, useT } from "../i18n";
+import { messagesFor, resolveLocale } from "../i18n/messages.server";
 
 const TAWK_SRC = "https://embed.tawk.to/6a538d517c60fa1d457184bb/1jtb60286";
 
@@ -16,6 +18,7 @@ const TAWK_SRC = "https://embed.tawk.to/6a538d517c60fa1d457184bb/1jtb60286";
 // is clicked — at which point the merchant has actively chosen to start a
 // conversation, which is also when identifying their store is actually useful.
 function SupportChat({ shop }) {
+  const t = useT();
   const [state, setState] = useState("idle"); // idle | loading | ready
 
   const openChat = () => {
@@ -60,7 +63,7 @@ function SupportChat({ shop }) {
     <button
       type="button"
       onClick={openChat}
-      aria-label="Contact support"
+      aria-label={t("Contact support")}
       disabled={state === "loading"}
       style={{
         position: "fixed",
@@ -83,7 +86,7 @@ function SupportChat({ shop }) {
       }}
     >
       <MessageCircle size={16} />
-      {state === "loading" ? "Opening…" : "Support"}
+      {state === "loading" ? t("Opening…") : t("Support")}
     </button>
   );
 }
@@ -95,11 +98,36 @@ export const loader = async ({ request }) => {
   // Fire-and-forget and self-throttled — never slows or breaks the page load.
   void syncAffiliate({ admin, shop: session.shop, request });
 
-  return { apiKey: process.env.SHOPIFY_API_KEY || "", shop: session.shop };
+  // Shopify opens embedded apps with ?locale=<admin language>.
+  const locale = resolveLocale(new URL(request.url).searchParams.get("locale"));
+
+  return {
+    apiKey: process.env.SHOPIFY_API_KEY || "",
+    shop: session.shop,
+    locale,
+    messages: messagesFor(locale),
+  };
 };
 
+// Only the admin's first load carries ?locale; in-app navigation and form
+// submissions don't. Re-running this loader without it would flip the app
+// back to English, so keep the data from the load that had it.
+export function shouldRevalidate({ nextUrl, defaultShouldRevalidate }) {
+  return nextUrl.searchParams.has("locale") ? defaultShouldRevalidate : false;
+}
+
 export default function App() {
-  const { apiKey, shop } = useLoaderData();
+  const { apiKey, shop, locale, messages } = useLoaderData();
+
+  return (
+    <I18nProvider locale={locale} messages={messages}>
+      <AppShell apiKey={apiKey} shop={shop} />
+    </I18nProvider>
+  );
+}
+
+function AppShell({ apiKey, shop }) {
+  const t = useT();
 
   // v2's AppProvider takes only children and apiKey, and always injects App
   // Bridge — the `embedded` prop it used to need is gone.
@@ -107,14 +135,14 @@ export default function App() {
     <AppProvider apiKey={apiKey}>
       <SupportChat shop={shop} />
       <s-app-nav>
-        <s-link href="/app">Dashboard</s-link>
-        <s-link href="/app/start">Get Started</s-link>
-        <s-link href="/app/migrate">New Migration</s-link>
-        <s-link href="/app/sync">Sync Changes</s-link>
-        <s-link href="/app/preview">Preview</s-link>
-        <s-link href="/app/history">History</s-link>
-        <s-link href="/app/plan">Plans</s-link>
-        <s-link href="/app/settings">Settings</s-link>
+        <s-link href="/app">{t("Dashboard")}</s-link>
+        <s-link href="/app/start">{t("Get Started")}</s-link>
+        <s-link href="/app/migrate">{t("New Migration")}</s-link>
+        <s-link href="/app/sync">{t("Sync Changes")}</s-link>
+        <s-link href="/app/preview">{t("Preview")}</s-link>
+        <s-link href="/app/history">{t("History")}</s-link>
+        <s-link href="/app/plan">{t("Plans")}</s-link>
+        <s-link href="/app/settings">{t("Settings")}</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>

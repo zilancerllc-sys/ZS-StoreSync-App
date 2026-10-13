@@ -12,9 +12,11 @@ import { getUsage, filterAllowedTypes } from "../credits.server";
 import {
   verifyConnectionCode,
   getVerifiedConnection,
+  listConnections,
 } from "../connection.server";
 import { startMigrationJob, getActiveJob } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
+import { useT } from "../i18n";
 import {
   ArrowLeftRight,
   Package,
@@ -44,24 +46,7 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const connections = await db.storeConnection.findMany({
-    where: { ownerShop: shop },
-    orderBy: { createdAt: "desc" },
-  });
-
-  for (const c of connections) {
-    const srcSession = await db.session.findFirst({
-      where: { shop: c.sourceShop, isOnline: false },
-    });
-    const has = !!srcSession?.accessToken;
-    if (has !== c.authorized) {
-      await db.storeConnection.update({
-        where: { id: c.id },
-        data: { authorized: has },
-      });
-      c.authorized = has;
-    }
-  }
+  const connections = await listConnections(shop);
 
   const usage = await getUsage(shop);
 
@@ -398,6 +383,7 @@ const ALL_TYPES = [
 ];
 
 export default function Migrate() {
+  const t = useT();
   const { connections, allowedTypes, remaining, limits, plan, allowsOverage } =
     useLoaderData();
   const connectFetcher = useFetcher();
@@ -440,12 +426,12 @@ export default function Migrate() {
       revalidator.revalidate(); // refresh remaining quota numbers
       return undefined;
     }
-    const t = setInterval(() => {
+    const timer = setInterval(() => {
       if (jobFetcher.state === "idle") {
         jobFetcher.load(`/app/jobs/${activeJobId}`);
       }
     }, 2500);
-    return () => clearInterval(t);
+    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeJobId, job?.id, job?.finished]);
 
@@ -501,24 +487,27 @@ export default function Migrate() {
     disconnectFetcher.submit(fd, { method: "post" });
   };
 
+  const typeName = (id) => t(ALL_TYPES.find((x) => x.id === id)?.name || id);
+
   const cData = connectFetcher.data;
   const result = runFetcher.data;
   const authedConns = connections.filter((c) => c.authorized);
 
   return (
-    <s-page heading="New Migration">
+    <s-page heading={t("New Migration")}>
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">
           <div className="zs-wrap zs-stack">
             <div className="zs-reveal zs-d1">
-              <div className="zs-sec-eyebrow">Store → Store</div>
-              <h2 className="zs-sec-title">Start a Migration</h2>
+              <div className="zs-sec-eyebrow">{t("Store → Store")}</div>
+              <h2 className="zs-sec-title">{t("Start a Migration")}</h2>
               <p className="zs-sec-sub">
-                Connect the store you want to copy <em>from</em>, choose what to
-                move, and run it into this store. Duplicates are skipped
-                automatically · <b>{plan.toUpperCase()}</b> plan
-                {allowsOverage ? " · overage billed per item" : ""}.
+                {t("Connect the store you want to copy {from}, choose what to move, and run it into this store. Duplicates are skipped automatically · {plan} plan", {
+                  from: <em>{t("from")}</em>,
+                  plan: <b>{plan.toUpperCase()}</b>,
+                })}
+                {allowsOverage ? ` · ${t("overage billed per item")}` : ""}.
               </p>
             </div>
 
@@ -526,12 +515,10 @@ export default function Migrate() {
             <div className="zs-card zs-reveal zs-d1">
               <div className="zs-card-head">
                 <span className="zs-step-num">1</span>
-                <h3>Connect a source store</h3>
+                <h3>{t("Connect a source store")}</h3>
               </div>
               <p className="zs-sec-sub" style={{ margin: 0 }}>
-                Enter the Shopify domain of the store you want to pull data
-                from, plus its connection code. You can connect several and pick
-                one each time.
+                {t("Enter the Shopify domain of the store you want to pull data from, plus its connection code. You can connect several and pick one each time.")}
               </p>
 
               <connectFetcher.Form method="post">
@@ -541,24 +528,26 @@ export default function Migrate() {
                     className="zs-input"
                     name="sourceShop"
                     placeholder="my-old-store.myshopify.com"
+                    aria-label={t("Source store domain")}
                     value={domain}
                     onChange={(e) => setDomain(e.target.value)}
                   />
                   <input
                     className="zs-input code"
                     name="code"
-                    placeholder="Code · ZS7K-92QT"
+                    placeholder={t("Code · ZS7K-92QT")}
+                    aria-label={t("Connection code")}
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
                   />
                   <button className="zs-btn" disabled={connecting}>
                     {connecting ? (
                       <>
-                        <Loader2 size={15} className="zs-spin" /> Connecting…
+                        <Loader2 size={15} className="zs-spin" /> {t("Connecting…")}
                       </>
                     ) : (
                       <>
-                        <Link2 size={15} /> Connect
+                        <Link2 size={15} /> {t("Connect")}
                       </>
                     )}
                   </button>
@@ -568,14 +557,13 @@ export default function Migrate() {
               <div className="zs-code-hint">
                 <KeyRound size={14} />
                 <span>
-                  The source store&apos;s owner finds its connection code in ZS
-                  StoreSync → Settings on that store.
+                  {t("The source store's owner finds its connection code in ZS StoreSync → Settings on that store.")}
                 </span>
               </div>
 
               {cData?.error && (
                 <div className="zs-banner err">
-                  <AlertCircle size={16} /> {cData.error}
+                  <AlertCircle size={16} /> {t(cData.error)}
                 </div>
               )}
 
@@ -583,8 +571,10 @@ export default function Migrate() {
                 <div className="zs-banner info">
                   <Link2 size={16} />
                   <span>
-                    Opened <b>{authOpenedFor}</b> in a new tab. Approve the app
-                    there, then come back and click <b>“I’ve authorized”</b>.
+                    {t("Opened {shop} in a new tab. Approve the app there, then come back and click {button}.", {
+                      shop: <b>{authOpenedFor}</b>,
+                      button: <b>“{t("I’ve authorized")}”</b>,
+                    })}
                   </span>
                   <button
                     className="gbtn"
@@ -597,11 +587,11 @@ export default function Migrate() {
                   >
                     {rechecking ? (
                       <>
-                        <Loader2 size={13} className="zs-spin" /> Checking…
+                        <Loader2 size={13} className="zs-spin" /> {t("Checking…")}
                       </>
                     ) : (
                       <>
-                        <RotateCw size={13} /> I’ve authorized
+                        <RotateCw size={13} /> {t("I’ve authorized")}
                       </>
                     )}
                   </button>
@@ -611,7 +601,7 @@ export default function Migrate() {
               {connections.length > 0 && (
                 <>
                   <div className="zs-conn-label">
-                    Connected stores — click one to select it as the source
+                    {t("Connected stores — click one to select it as the source")}
                   </div>
                   <div className="zs-conn-list">
                     {connections.map((c) => {
@@ -647,14 +637,14 @@ export default function Migrate() {
                                 {c.sourceShop}
                                 {isSel && (
                                   <span className="zs-sel-tag">
-                                    <Check size={10} /> Selected
+                                    <Check size={10} /> {t("Selected")}
                                   </span>
                                 )}
                               </div>
                               <div className="zs-conn-sub">
                                 {c.lastUsedLabel
-                                  ? `Last used ${c.lastUsedLabel}`
-                                  : "Never used"}
+                                  ? t("Last used {date}", { date: c.lastUsedLabel })
+                                  : t("Never used")}
                               </div>
                             </div>
                           </button>
@@ -666,7 +656,7 @@ export default function Migrate() {
                             {isConfirming ? (
                               <div className="zs-confirm">
                                 <span className="zs-confirm-txt">
-                                  Disconnect?
+                                  {t("Disconnect?")}
                                 </span>
                                 <button
                                   className="zs-confirm-yes"
@@ -674,20 +664,20 @@ export default function Migrate() {
                                 >
                                   {disconnectFetcher.state !== "idle"
                                     ? "…"
-                                    : "Yes, remove"}
+                                    : t("Yes, remove")}
                                 </button>
                                 <button
                                   className="zs-confirm-no"
                                   onClick={() => setConfirmRemove(null)}
                                 >
-                                  Cancel
+                                  {t("Cancel")}
                                 </button>
                               </div>
                             ) : (
                               <>
                                 {c.authorized ? (
                                   <span className="zs-pill ok">
-                                    <CheckCircle2 size={12} /> Authorized
+                                    <CheckCircle2 size={12} /> {t("Authorized")}
                                   </span>
                                 ) : (
                                   <button
@@ -701,12 +691,13 @@ export default function Migrate() {
                                       });
                                     }}
                                   >
-                                    <Link2 size={11} /> Needs auth — authorize
+                                    <Link2 size={11} /> {t("Needs auth — authorize")}
                                   </button>
                                 )}
                                 <button
                                   className="zs-remove"
-                                  title="Disconnect this store"
+                                  title={t("Disconnect this store")}
+                                  aria-label={t("Disconnect this store")}
                                   onClick={() => setConfirmRemove(c.sourceShop)}
                                 >
                                   <Trash2 size={15} />
@@ -726,40 +717,40 @@ export default function Migrate() {
             <div className="zs-card zs-reveal zs-d2">
               <div className="zs-card-head">
                 <span className="zs-step-num">2</span>
-                <h3>Choose what to migrate</h3>
+                <h3>{t("Choose what to migrate")}</h3>
               </div>
               <div className="zs-types">
-                {ALL_TYPES.map((t) => {
-                  const locked = !allowedTypes.includes(t.id);
-                  const on = picked.includes(t.id);
-                  const left = remaining[t.id] ?? 0;
-                  const lim = limits[t.id] ?? 0;
+                {ALL_TYPES.map((ty) => {
+                  const locked = !allowedTypes.includes(ty.id);
+                  const on = picked.includes(ty.id);
+                  const left = remaining[ty.id] ?? 0;
+                  const lim = limits[ty.id] ?? 0;
                   return (
                     <button
                       type="button"
-                      key={t.id}
+                      key={ty.id}
                       className={`zs-type-chk ${on ? "on" : ""} ${locked ? "locked" : ""}`}
                       aria-pressed={on}
-                      onClick={() => toggleType(t.id)}
+                      onClick={() => toggleType(ty.id)}
                     >
-                      <div className="ico">{t.icon}</div>
+                      <div className="ico">{ty.icon}</div>
                       <div>
-                        <div className="nm">{t.name}</div>
+                        <div className="nm">{t(ty.name)}</div>
                         {locked ? (
-                          <div className="lk">Upgrade</div>
+                          <div className="lk">{t("Upgrade")}</div>
                         ) : allowsOverage ? (
                           <div
                             className="lk"
                             style={{ color: "var(--zs-sage-deep)" }}
                           >
-                            {lim} /mo · +overage
+                            {t("{n} /mo · +overage", { n: lim })}
                           </div>
                         ) : (
                           <div
                             className="lk"
                             style={{ color: "var(--zs-muted)" }}
                           >
-                            {left}/{lim} left
+                            {t("{left}/{limit} left", { left, limit: lim })}
                           </div>
                         )}
                       </div>
@@ -771,12 +762,9 @@ export default function Migrate() {
                 <div className="zs-note" style={{ marginTop: 14 }}>
                   <AlertCircle size={16} />
                   <span>
-                    Shopify only lets apps read the <b>last 60 days</b> of
-                    orders, so older orders cannot be copied — your plan&apos;s
-                    order allowance caps how many are migrated, not how far back
-                    they go. Orders are recreated with line items, addresses, note
-                    and tags; payment, fulfilment and refund records stay on the
-                    original store.
+                    {t("Shopify only lets apps read the {days} of orders, so older orders cannot be copied — your plan's order allowance caps how many are migrated, not how far back they go. Orders are recreated with line items, addresses, note and tags; payment, fulfilment and refund records stay on the original store.", {
+                      days: <b>{t("last 60 days")}</b>,
+                    })}
                   </span>
                 </div>
               )}
@@ -786,14 +774,14 @@ export default function Migrate() {
             <div className="zs-card zs-reveal zs-d3">
               <div className="zs-card-head">
                 <span className="zs-step-num">3</span>
-                <h3>Run the migration</h3>
+                <h3>{t("Run the migration")}</h3>
               </div>
               <p className="zs-sec-sub" style={{ margin: "0 0 4px" }}>
                 {selectedSource
-                  ? `Copying from ${selectedSource} → this store.`
+                  ? t("Copying from {shop} → this store.", { shop: selectedSource })
                   : authedConns.length > 0
-                    ? "Select a source store above first."
-                    : "Connect and authorize a source store above first."}
+                    ? t("Select a source store above first.")
+                    : t("Connect and authorize a source store above first.")}
               </p>
 
               <runFetcher.Form method="post">
@@ -807,11 +795,11 @@ export default function Migrate() {
                 >
                   {running ? (
                     <>
-                      <Loader2 size={15} className="zs-spin" /> Migrating…
+                      <Loader2 size={15} className="zs-spin" /> {t("Migrating…")}
                     </>
                   ) : (
                     <>
-                      <ArrowLeftRight size={15} /> Run Migration
+                      <ArrowLeftRight size={15} /> {t("Run Migration")}
                     </>
                   )}
                 </button>
@@ -819,14 +807,16 @@ export default function Migrate() {
 
               {result?.error && (
                 <div className="zs-banner err">
-                  <AlertCircle size={16} /> {result.error}
+                  <AlertCircle size={16} /> {t(result.error)}
                 </div>
               )}
 
               {result?.started && result.blocked?.length > 0 && (
                 <div className="zs-banner info">
-                  <AlertCircle size={16} /> Not included in this run (plan or
-                  monthly limit): {result.blocked.join(", ")}.
+                  <AlertCircle size={16} />{" "}
+                  {t("Not included in this run (plan or monthly limit): {types}.", {
+                    types: result.blocked.map(typeName).join(", "),
+                  })}
                 </div>
               )}
 
@@ -835,9 +825,9 @@ export default function Migrate() {
                   <div className="zs-banner info">
                     <Loader2 size={16} className="zs-spin" />
                     <span>
-                      Migration running in the background — live progress below.
-                      You can leave this page; the run continues and appears in{" "}
-                      <b>History</b>.
+                      {t("Migration running in the background — live progress below. You can leave this page; the run continues and appears in {history}.", {
+                        history: <b>{t("History")}</b>,
+                      })}
                     </span>
                   </div>
                   {job?.logs?.length > 0 && (
@@ -854,32 +844,32 @@ export default function Migrate() {
                 <>
                   {job.status === "failed" ? (
                     <div className="zs-banner err">
-                      <AlertCircle size={16} /> Migration failed
+                      <AlertCircle size={16} /> {t("Migration failed")}
                       {job.error ? ` — ${job.error}` : "."}
                     </div>
                   ) : (
                     <div className="zs-banner ok">
                       <CheckCircle2 size={16} />
-                      Migration finished — {job.summary}
-                      {job.status === "partial" ? " (some items failed)" : ""}
+                      {t("Migration finished — {summary}", { summary: job.summary })}
+                      {job.status === "partial" ? ` ${t("(some items failed)")}` : ""}
                     </div>
                   )}
                   <div className="zs-result">
                     <div className="box">
                       <div className="v">{job.created}</div>
-                      <div className="l">Created</div>
+                      <div className="l">{t("Created")}</div>
                     </div>
                     <div className="box">
                       <div className="v">{job.skipped}</div>
-                      <div className="l">Skipped</div>
+                      <div className="l">{t("Skipped")}</div>
                     </div>
                     <div className="box">
                       <div className="v">{job.failed}</div>
-                      <div className="l">Failed</div>
+                      <div className="l">{t("Failed")}</div>
                     </div>
                     <div className="box">
                       <div className="v">{job.total}</div>
-                      <div className="l">Total</div>
+                      <div className="l">{t("Total")}</div>
                     </div>
                   </div>
                   {job.logs?.length > 0 && (
@@ -894,7 +884,7 @@ export default function Migrate() {
                       to="/app/history"
                       className="zs-btn zs-btn-ghost"
                     >
-                      View migration history →
+                      {t("View migration history")} →
                     </RouterLink>
                   </div>
                 </>
@@ -906,5 +896,4 @@ export default function Migrate() {
     </s-page>
   );
 }
-
 export const headers = (headersArgs) => boundary.headers(headersArgs);

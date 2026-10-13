@@ -4,7 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { getUsage, filterAllowedTypes } from "../credits.server";
-import { getVerifiedConnection } from "../connection.server";
+import { getVerifiedConnection, listConnections } from "../connection.server";
 import { startMigrationJob, getActiveJob } from "../jobs.server";
 import {
   listSchedules,
@@ -21,6 +21,7 @@ import {
   normalizeNotifyEmail,
 } from "../schedule-config";
 import { brandStyles } from "./zs-styles.js";
+import { useT } from "../i18n";
 import {
   Zap,
   Loader2,
@@ -34,11 +35,10 @@ import {
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
-  const connections = await db.storeConnection.findMany({
-    // only code-verified pairings can be used as a sync source
-    where: { ownerShop: shop, authorized: true, codeVerified: true },
-    orderBy: { lastUsedAt: "desc" },
-  });
+  // only code-verified, still-authorized pairings can be used as a sync source
+  const connections = (await listConnections(shop))
+    .filter((c) => c.authorized && c.codeVerified)
+    .sort((a, b) => (b.lastUsedAt?.getTime() ?? 0) - (a.lastUsedAt?.getTime() ?? 0));
   const usage = await getUsage(shop);
   const schedules = await listSchedules(shop);
   return {
@@ -299,6 +299,7 @@ const TYPES = [
 ];
 
 export default function Sync() {
+  const t = useT();
   const {
     connections, allowedTypes, remaining, limits, allowsOverage,
     plan, canSchedule, allowedFrequencies, schedules,
@@ -329,12 +330,12 @@ export default function Sync() {
       revalidator.revalidate();
       return undefined;
     }
-    const t = setInterval(() => {
+    const timer = setInterval(() => {
       if (jobFetcher.state === "idle") {
         jobFetcher.load(`/app/jobs/${activeJobId}`);
       }
     }, 2500);
-    return () => clearInterval(t);
+    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeJobId, job?.id, job?.finished]);
 
@@ -344,28 +345,27 @@ export default function Sync() {
   };
 
   return (
-    <s-page heading="Sync Changes">
+    <s-page heading={t("Sync Changes")}>
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">
           <div className="zs-wrap">
-            <div className="zs-eyebrow">Delta Sync</div>
-            <h2 className="zs-title">Sync Changes</h2>
+            <div className="zs-eyebrow">{t("Delta Sync")}</div>
+            <h2 className="zs-title">{t("Sync Changes")}</h2>
             <p className="zs-sub">
-              Already migrated before? Pull only what&apos;s new since last time. Items
-              that already exist in this store are skipped automatically — only new
-              ones are created.
+              {t("Already migrated before? Bring this store up to date with the source: new items are created, and products, collections, pages, blog posts and redirects that already exist are updated to match. Nothing on this store is deleted.")}
             </p>
 
             <div className="zs-card">
               {connections.length === 0 ? (
                 <div className="zs-banner err">
-                  <AlertCircle size={16} /> No authorized source stores. Connect one on the Migrate page.
+                  <AlertCircle size={16} /> {t("No authorized source stores. Connect one on the Migrate page.")}
                 </div>
               ) : (
                 <fetcher.Form method="post">
                   <select
                     className="zs-select" name="sourceShop"
+                    aria-label={t("Source store")}
                     value={src} onChange={(e) => setSrc(e.target.value)}
                   >
                     {connections.map((c) => (
@@ -373,40 +373,40 @@ export default function Sync() {
                     ))}
                   </select>
                   <div className="zs-chk-row">
-                    {TYPES.map((t) => {
-                      const locked = !allowedTypes.includes(t.id);
-                      const left = remaining[t.id] ?? 0;
-                      const lim = limits[t.id] ?? 0;
+                    {TYPES.map((ty) => {
+                      const locked = !allowedTypes.includes(ty.id);
+                      const left = remaining[ty.id] ?? 0;
+                      const lim = limits[ty.id] ?? 0;
                       const meta = locked
                         ? ""
                         : allowsOverage
-                          ? ` · ${lim}/mo +overage`
+                          ? ` · ${t("{n}/mo +overage", { n: lim })}`
                           : ` · ${left}/${lim}`;
                       return (
-                        <button key={t.id}
+                        <button key={ty.id}
                           type="button"
-                          className={`zs-chk ${picked.includes(t.id) ? "on" : ""} ${locked ? "lock" : ""}`}
-                          aria-pressed={picked.includes(t.id)}
-                          onClick={() => toggle(t.id)}>
-                          {t.name}{meta}
+                          className={`zs-chk ${picked.includes(ty.id) ? "on" : ""} ${locked ? "lock" : ""}`}
+                          aria-pressed={picked.includes(ty.id)}
+                          onClick={() => toggle(ty.id)}>
+                          {t(ty.name)}{meta}
                         </button>
                       );
                     })}
                   </div>
                   <input type="hidden" name="types" value={picked.join(",")} />
                   <button className="zs-btn" disabled={busy || picked.length === 0}>
-                    {busy ? (<><Loader2 size={15} className="zs-spin" /> Syncing…</>) : (<><Zap size={15} /> Sync New Items</>)}
+                    {busy ? (<><Loader2 size={15} className="zs-spin" /> {t("Syncing…")}</>) : (<><Zap size={15} /> {t("Sync Now")}</>)}
                   </button>
                 </fetcher.Form>
               )}
 
               {data?.error && (
-                <div className="zs-banner err"><AlertCircle size={16} /> {data.error}</div>
+                <div className="zs-banner err"><AlertCircle size={16} /> {t(data.error)}</div>
               )}
               {jobRunning && (
                 <>
                   <div className="zs-banner ok" style={{ background: "var(--zs-cream-tint)", color: "var(--zs-clay-deep)", borderColor: "var(--zs-border)" }}>
-                    <Loader2 size={16} className="zs-spin" /> Sync running in the background — live progress below.
+                    <Loader2 size={16} className="zs-spin" /> {t("Sync running in the background — live progress below.")}
                   </div>
                   {job?.logs?.length > 0 && (
                     <div className="zs-log">
@@ -419,11 +419,16 @@ export default function Sync() {
                 <>
                   {job.status === "failed" ? (
                     <div className="zs-banner err">
-                      <AlertCircle size={16} /> Sync failed{job.error ? ` — ${job.error}` : "."}
+                      <AlertCircle size={16} /> {t("Sync failed")}{job.error ? ` — ${job.error}` : "."}
                     </div>
                   ) : (
                     <div className="zs-banner ok">
-                      <CheckCircle2 size={16} /> Synced — {job.created} new items added, {job.skipped} already up to date.
+                      <CheckCircle2 size={16} />{" "}
+                      {t("Synced — {created} new, {updated} updated, {skipped} already up to date.", {
+                        created: job.created,
+                        updated: job.updated ?? 0,
+                        skipped: job.skipped,
+                      })}
                     </div>
                   )}
                   {job.logs?.length > 0 && (
@@ -466,6 +471,7 @@ function AutoSyncCard({
   schedules,
   plan,
 }) {
+  const t = useT();
   const scheduleFetcher = useFetcher();
   const existing = schedules.find((s) => s.sourceShop === src) || null;
 
@@ -489,6 +495,10 @@ function AutoSyncCard({
 
   if (connections.length === 0) return null;
   const saving = scheduleFetcher.state !== "idle";
+  const freqLabel = (f) => t(FREQUENCY_LABEL[f] || f);
+  const pickedNames = picked
+    .map((id) => t(TYPES.find((x) => x.id === id)?.name || id))
+    .join(", ");
 
   return (
     <div className="zs-card" style={{ marginTop: 22 }}>
@@ -497,10 +507,9 @@ function AutoSyncCard({
           <Clock size={19} />
         </div>
         <div>
-          <h3>Automatic sync</h3>
+          <h3>{t("Automatic sync")}</h3>
           <p>
-            Run this sync on a schedule, without opening the app. Only new items
-            are created — the same as pressing Sync yourself.
+            {t("Run this sync on a schedule, without opening the app — the same as pressing Sync yourself.")}
           </p>
         </div>
       </div>
@@ -509,9 +518,9 @@ function AutoSyncCard({
         <div className="zs-locked">
           <Lock size={15} />
           <span>
-            Automatic sync isn&apos;t included on the {plan} plan.{" "}
-            <RouterLink to="/app/plan">See plans</RouterLink> — Starter syncs
-            weekly, Growth daily, Pro every 6 hours.
+            {t("Automatic sync isn't included on the {plan} plan.", { plan })}{" "}
+            <RouterLink to="/app/plan">{t("See plans")}</RouterLink>{" "}
+            {t("— Starter syncs weekly, Growth daily, Pro every 6 hours.")}
           </span>
         </div>
       ) : (
@@ -519,20 +528,23 @@ function AutoSyncCard({
           {existing && (
             <div className={`zs-sched-state ${existing.enabled ? "on" : "off"}`}>
               <div>
-                <b>{FREQUENCY_LABEL[existing.frequency] || existing.frequency}</b>
+                <b>{freqLabel(existing.frequency)}</b>
                 {" · "}
-                {existing.dataTypes.length} data type
-                {existing.dataTypes.length === 1 ? "" : "s"}
+                {existing.dataTypes.length === 1
+                  ? t("{n} data type", { n: 1 })
+                  : t("{n} data types", { n: existing.dataTypes.length })}
                 <div className="zs-sched-meta">
-                  Next run {existing.nextRunLabel} UTC
-                  {existing.lastRunLabel ? ` · last ran ${existing.lastRunLabel} UTC` : ""}
+                  {t("Next run {date} UTC", { date: existing.nextRunLabel })}
+                  {existing.lastRunLabel
+                    ? ` · ${t("last ran {date} UTC", { date: existing.lastRunLabel })}`
+                    : ""}
                 </div>
               </div>
               <scheduleFetcher.Form method="post">
                 <input type="hidden" name="intent" value="unschedule" />
                 <input type="hidden" name="sourceShop" value={src} />
                 <button className="zs-btn-link" disabled={saving}>
-                  <Trash2 size={13} /> Turn off
+                  <Trash2 size={13} /> {t("Turn off")}
                 </button>
               </scheduleFetcher.Form>
             </div>
@@ -540,7 +552,7 @@ function AutoSyncCard({
 
           {existing?.lastError && (
             <div className="zs-banner err" style={{ marginBottom: 12 }}>
-              <AlertCircle size={16} /> {existing.lastError}
+              <AlertCircle size={16} /> {t(existing.lastError)}
             </div>
           )}
 
@@ -550,7 +562,7 @@ function AutoSyncCard({
             <input type="hidden" name="types" value={picked.join(",")} />
 
             <label className="zs-field">
-              <span>How often</span>
+              <span>{t("How often")}</span>
               <select
                 className="zs-select"
                 name="frequency"
@@ -559,7 +571,7 @@ function AutoSyncCard({
               >
                 {allowedFrequencies.map((f) => (
                   <option key={f} value={f}>
-                    {FREQUENCY_LABEL[f]}
+                    {freqLabel(f)}
                   </option>
                 ))}
               </select>
@@ -567,7 +579,7 @@ function AutoSyncCard({
 
             {frequency === "weekly" && (
               <label className="zs-field">
-                <span>Day</span>
+                <span>{t("Day")}</span>
                 <select
                   className="zs-select"
                   name="dayOfWeek"
@@ -576,7 +588,7 @@ function AutoSyncCard({
                 >
                   {DAYS.map((d, i) => (
                     <option key={d} value={i}>
-                      {d}
+                      {t(d)}
                     </option>
                   ))}
                 </select>
@@ -585,7 +597,7 @@ function AutoSyncCard({
 
             {frequency !== "every6h" && (
               <label className="zs-field">
-                <span>Time (UTC)</span>
+                <span>{t("Time (UTC)")}</span>
                 <select
                   className="zs-select"
                   name="hourUtc"
@@ -608,18 +620,18 @@ function AutoSyncCard({
                 checked={notify}
                 onChange={(e) => setNotify(e.target.checked)}
               />
-              <span>Email me the results</span>
+              <span>{t("Email me the results")}</span>
             </label>
 
             {notify && (
               <label className="zs-field">
-                <span>Send to</span>
+                <span>{t("Send to")}</span>
                 <input
                   className="zs-input"
                   type="email"
                   name="notifyEmail"
                   value={notifyEmail}
-                  placeholder="your store's contact email"
+                  placeholder={t("your store's contact email")}
                   onChange={(e) => setNotifyEmail(e.target.value)}
                 />
               </label>
@@ -628,36 +640,35 @@ function AutoSyncCard({
             <button className="zs-btn" disabled={saving || picked.length === 0}>
               {saving ? (
                 <>
-                  <Loader2 size={15} className="zs-spin" /> Saving…
+                  <Loader2 size={15} className="zs-spin" /> {t("Saving…")}
                 </>
               ) : (
                 <>
-                  <Clock size={15} /> {existing ? "Update schedule" : "Turn on"}
+                  <Clock size={15} /> {existing ? t("Update schedule") : t("Turn on")}
                 </>
               )}
             </button>
           </scheduleFetcher.Form>
 
           <div className="zs-sched-hint">
-            Uses the data types selected above ({picked.length ? picked.join(", ") : "none yet"}).
-            Runs are billed against your monthly quota just like manual ones, and
-            appear in History. You&apos;ll only be emailed when a run adds
-            something or fails — a sync that finds nothing new stays quiet.
+            {t("Uses the data types selected above ({types}). Runs are billed against your monthly quota just like manual ones, and appear in History. You'll only be emailed when a run adds something or fails — a sync that finds nothing new stays quiet.", {
+              types: pickedNames || t("none yet"),
+            })}
           </div>
 
           {scheduleFetcher.data?.error && (
             <div className="zs-banner err">
-              <AlertCircle size={16} /> {scheduleFetcher.data.error}
+              <AlertCircle size={16} /> {t(scheduleFetcher.data.error)}
             </div>
           )}
           {scheduleFetcher.data?.scheduleSaved && (
             <div className="zs-banner ok">
-              <CheckCircle2 size={16} /> Automatic sync is on.
+              <CheckCircle2 size={16} /> {t("Automatic sync is on.")}
             </div>
           )}
           {scheduleFetcher.data?.scheduleRemoved && (
             <div className="zs-banner ok">
-              <CheckCircle2 size={16} /> Automatic sync turned off.
+              <CheckCircle2 size={16} /> {t("Automatic sync turned off.")}
             </div>
           )}
         </>

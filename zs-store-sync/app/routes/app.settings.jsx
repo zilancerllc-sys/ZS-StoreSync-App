@@ -8,6 +8,7 @@ import {
 } from "../connection.server";
 import { getEmailPreference, setEmailPreference } from "../lifecycle.server";
 import { brandStyles } from "./zs-styles.js";
+import { useT } from "../i18n";
 import {
   Mail,
   KeyRound,
@@ -101,6 +102,7 @@ const pageStyles = `
 `;
 
 export default function Settings() {
+  const t = useT();
   const { shop, code: initialCode, emailOptedIn, notifyEmail } = useLoaderData();
   const prefFetcher = useFetcher();
   const fetcher = useFetcher();
@@ -116,16 +118,17 @@ export default function Settings() {
   };
 
   return (
-    <s-page heading="Settings">
+    <s-page heading={t("Settings")}>
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">
           <div className="zs-wrap zs-reveal">
-            <div className="zs-eyebrow">Settings</div>
-            <h2 className="zs-title">Store Connection Code</h2>
+            <div className="zs-eyebrow">{t("Settings")}</div>
+            <h2 className="zs-title">{t("Store Connection Code")}</h2>
             <p className="zs-sub">
-              This code lets you securely connect <b>{shop}</b> as a source
-              store when migrating into another store you own.
+              {t("This code lets you securely connect {shop} as a source store when migrating into another store you own.", {
+                shop: <b>{shop}</b>,
+              })}
             </p>
 
             <div className="zs-card">
@@ -134,10 +137,9 @@ export default function Settings() {
                   <KeyRound size={22} />
                 </div>
                 <div>
-                  <h3>Your connection code</h3>
+                  <h3>{t("Your connection code")}</h3>
                   <p>
-                    Keep it private — anyone with this code can connect this
-                    store as a source.
+                    {t("Keep it private — anyone with this code can connect this store as a source.")}
                   </p>
                 </div>
               </div>
@@ -150,11 +152,11 @@ export default function Settings() {
                 >
                   {copied ? (
                     <>
-                      <Check size={15} /> Copied
+                      <Check size={15} /> {t("Copied")}
                     </>
                   ) : (
                     <>
-                      <Copy size={15} /> Copy
+                      <Copy size={15} /> {t("Copy")}
                     </>
                   )}
                 </button>
@@ -163,40 +165,39 @@ export default function Settings() {
               <div className="zs-note">
                 <ShieldCheck size={16} />
                 <span>
-                  For your security, ZS StoreSync will only pull data from this
-                  store if the person connecting it provides this exact code.
-                  Only share it with stores you control.
+                  {t("For your security, ZS StoreSync will only pull data from this store if the person connecting it provides this exact code. Only share it with stores you control.")}
                 </span>
               </div>
 
               <ol className="zs-steps">
                 <li>
-                  Open ZS StoreSync on the store you want to migrate <b>into</b>
-                  .
+                  {t("Open ZS StoreSync on the store you want to migrate {into}.", {
+                    into: <b>{t("into")}</b>,
+                  })}
                 </li>
                 <li>
-                  Go to <b>New Migration</b> and enter this store&apos;s domain.
+                  {t("Go to {page} and enter this store's domain.", {
+                    page: <b>{t("New Migration")}</b>,
+                  })}
                 </li>
                 <li>
-                  When asked, paste this connection code to authorize the
-                  transfer.
+                  {t("When asked, paste this connection code to authorize the transfer.")}
                 </li>
               </ol>
 
               <fetcher.Form method="post" className="zs-regen">
                 <input type="hidden" name="intent" value="regenerate" />
                 <span className="zs-regen-txt">
-                  Regenerating creates a new code and immediately revokes the
-                  old one. Any store using the old code will need the new one.
+                  {t("Regenerating creates a new code and immediately revokes the old one. Any store using the old code will need the new one.")}
                 </span>
                 <button className="zs-regen-btn" disabled={regenerating}>
                   {regenerating ? (
                     <>
-                      <Loader2 size={14} className="zs-spin" /> Generating…
+                      <Loader2 size={14} className="zs-spin" /> {t("Generating…")}
                     </>
                   ) : (
                     <>
-                      <RefreshCw size={14} /> Regenerate code
+                      <RefreshCw size={14} /> {t("Regenerate code")}
                     </>
                   )}
                 </button>
@@ -209,10 +210,9 @@ export default function Settings() {
                   <Mail size={22} />
                 </div>
                 <div>
-                  <h3>Email from ZS StoreSync</h3>
+                  <h3>{t("Email from ZS StoreSync")}</h3>
                   <p>
-                    Occasional product updates and the odd request for feedback.
-                    Nothing more than twice a month.
+                    {t("A welcome note when you install and one short request for feedback a few days later. No newsletters or promotions.")}
                   </p>
                 </div>
               </div>
@@ -226,26 +226,26 @@ export default function Settings() {
                     defaultChecked={emailOptedIn}
                   />
                   <span>
-                    Send me product updates and tips
-                    {notifyEmail ? ` at ${notifyEmail}` : ""}
+                    {notifyEmail
+                      ? t("Send me tips and feedback requests at {email}", { email: notifyEmail })
+                      : t("Send me tips and feedback requests")}
                   </span>
                 </label>
                 <button className="zs-regen-btn" disabled={prefFetcher.state !== "idle"}>
-                  {prefFetcher.state !== "idle" ? "Saving…" : "Save"}
+                  {prefFetcher.state !== "idle" ? t("Saving…") : t("Save")}
                 </button>
               </prefFetcher.Form>
 
               <div className="zs-note" style={{ marginTop: 14 }}>
                 <Info size={16} />
                 <span>
-                  This doesn&apos;t affect email you asked for yourself — the
-                  results of a scheduled sync still arrive either way.
+                  {t("This doesn't affect email you asked for yourself — the results of a scheduled sync still arrive either way.")}
                 </span>
               </div>
 
               {prefFetcher.data?.prefSaved && (
                 <div className="zs-pref-ok">
-                  <Check size={15} /> Saved
+                  <Check size={15} /> {t("Saved")}
                 </div>
               )}
             </div>
@@ -253,9 +253,10 @@ export default function Settings() {
             <div className="zs-note" style={{ marginTop: 16 }}>
               <Info size={16} />
               <span>
-                Tip: The store you migrate <b>into</b> doesn&apos;t need a code —
-                only the
-                <b> source</b> store (the one being copied from) requires it.
+                {t("Tip: The store you migrate {into} doesn't need a code — only the {source} store (the one being copied from) requires it.", {
+                  into: <b>{t("into")}</b>,
+                  source: <b>{t("source")}</b>,
+                })}
               </span>
             </div>
           </div>

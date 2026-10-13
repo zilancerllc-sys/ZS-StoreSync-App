@@ -241,7 +241,7 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
 
     const summary =
       mode === "sync"
-        ? `${result.created} new · ${result.skipped} unchanged`
+        ? `${result.created} new · ${result.updated} updated · ${result.skipped} unchanged`
         : result.summary;
 
     clearInterval(flusher);

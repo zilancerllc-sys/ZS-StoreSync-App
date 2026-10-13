@@ -4,19 +4,19 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate, unauthenticated } from "../shopify.server";
 import db from "../db.server";
 import { getUsage } from "../credits.server";
-import { getVerifiedConnection } from "../connection.server";
+import { getVerifiedConnection, listConnections } from "../connection.server";
 import { previewCounts } from "../migrator.server";
 import { brandStyles } from "./zs-styles.js";
+import { useT } from "../i18n";
 import { Eye, Loader2, AlertCircle } from "lucide-react";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
-  const connections = await db.storeConnection.findMany({
-    // only code-verified pairings can be previewed
-    where: { ownerShop: shop, authorized: true, codeVerified: true },
-    orderBy: { createdAt: "desc" },
-  });
+  // only code-verified, still-authorized pairings can be previewed
+  const connections = (await listConnections(shop)).filter(
+    (c) => c.authorized && c.codeVerified,
+  );
   const usage = await getUsage(shop);
   return {
     connections: connections.map((c) => ({ sourceShop: c.sourceShop })),
@@ -105,6 +105,7 @@ const TYPES = [
 ];
 
 export default function Preview() {
+  const t = useT();
   const { connections, allowedTypes, limits, remaining, allowsOverage } = useLoaderData();
   const fetcher = useFetcher();
   const [src, setSrc] = useState(connections[0]?.sourceShop || "");
@@ -118,23 +119,24 @@ export default function Preview() {
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   };
 
+  const typeName = (id) => t(TYPES.find((x) => x.id === id)?.name || id);
+
   return (
-    <s-page heading="Preview & Compare">
+    <s-page heading={t("Preview & Compare")}>
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">
           <div className="zs-wrap zs-reveal">
-            <div className="zs-sec-eyebrow">Dry Run</div>
-            <h2 className="zs-sec-title">Preview &amp; Compare</h2>
+            <div className="zs-sec-eyebrow">{t("Dry Run")}</div>
+            <h2 className="zs-sec-title">{t("Preview & Compare")}</h2>
             <p className="zs-sec-sub">
-              See how many items exist in the source vs this store before you migrate.
-              Nothing is changed.
+              {t("See how many items exist in the source vs this store before you migrate. Nothing is changed.")}
             </p>
 
             <div className="zs-card">
               {connections.length === 0 ? (
                 <div className="zs-banner err">
-                  <AlertCircle size={16} /> No authorized source stores yet. Connect one on the Migrate page first.
+                  <AlertCircle size={16} /> {t("No authorized source stores yet. Connect one on the Migrate page first.")}
                 </div>
               ) : (
                 <fetcher.Form method="post">
@@ -142,6 +144,7 @@ export default function Preview() {
                     <select
                       className="zs-select"
                       name="sourceShop"
+                      aria-label={t("Source store")}
                       value={src}
                       onChange={(e) => setSrc(e.target.value)}
                     >
@@ -154,24 +157,24 @@ export default function Preview() {
                   </div>
 
                   <div className="zs-chk-row">
-                    {TYPES.map((t) => {
-                      const locked = !allowedTypes.includes(t.id);
-                      const left = remaining[t.id] ?? 0;
-                      const lim = limits[t.id] ?? 0;
+                    {TYPES.map((ty) => {
+                      const locked = !allowedTypes.includes(ty.id);
+                      const left = remaining[ty.id] ?? 0;
+                      const lim = limits[ty.id] ?? 0;
                       const meta = locked
                         ? ""
                         : allowsOverage
-                          ? ` · ${lim}/mo +overage`
+                          ? ` · ${t("{n}/mo +overage", { n: lim })}`
                           : ` · ${left}/${lim}`;
                       return (
                         <button
                           type="button"
-                          key={t.id}
-                          className={`zs-chk ${picked.includes(t.id) ? "on" : ""} ${locked ? "lock" : ""}`}
-                          aria-pressed={picked.includes(t.id)}
-                          onClick={() => toggle(t.id)}
+                          key={ty.id}
+                          className={`zs-chk ${picked.includes(ty.id) ? "on" : ""} ${locked ? "lock" : ""}`}
+                          aria-pressed={picked.includes(ty.id)}
+                          onClick={() => toggle(ty.id)}
                         >
-                          {t.name}{meta}
+                          {t(ty.name)}{meta}
                         </button>
                       );
                     })}
@@ -180,9 +183,9 @@ export default function Preview() {
                   <input type="hidden" name="types" value={picked.join(",")} />
                   <button className="zs-btn" disabled={busy || picked.length === 0}>
                     {busy ? (
-                      <><Loader2 size={15} className="zs-spin" /> Comparing…</>
+                      <><Loader2 size={15} className="zs-spin" /> {t("Comparing…")}</>
                     ) : (
-                      <><Eye size={15} /> Compare Counts</>
+                      <><Eye size={15} /> {t("Compare Counts")}</>
                     )}
                   </button>
                 </fetcher.Form>
@@ -190,7 +193,7 @@ export default function Preview() {
 
               {data?.error && (
                 <div className="zs-banner err">
-                  <AlertCircle size={16} /> {data.error}
+                  <AlertCircle size={16} /> {t(data.error)}
                 </div>
               )}
 
@@ -198,10 +201,10 @@ export default function Preview() {
                 <table className="zs-table">
                   <thead>
                     <tr>
-                      <th>Data Type</th>
-                      <th>Source ({data.sourceShop})</th>
-                      <th>This Store</th>
-                      <th>Likely New</th>
+                      <th>{t("Data Type")}</th>
+                      <th>{t("Source ({shop})", { shop: data.sourceShop })}</th>
+                      <th>{t("This Store")}</th>
+                      <th>{t("Likely New")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -211,7 +214,7 @@ export default function Preview() {
                         typeof c.target === "number";
                       return (
                         <tr key={type}>
-                          <td style={{ textTransform: "capitalize" }}>{type}</td>
+                          <td>{typeName(type)}</td>
                           {counted ? (
                             <>
                               <td className="num">{c.source}</td>
@@ -228,8 +231,8 @@ export default function Preview() {
                             // showing three dashes that read as a failure.
                             <td colSpan={3} className="zs-nocount">
                               {c.note === "unavailable"
-                                ? "Count unavailable — needs Protected Customer Data approval"
-                                : "No count API — totals are reported during the run"}
+                                ? t("Count unavailable — needs Protected Customer Data approval")
+                                : t("No count API — totals are reported during the run")}
                             </td>
                           )}
                         </tr>
