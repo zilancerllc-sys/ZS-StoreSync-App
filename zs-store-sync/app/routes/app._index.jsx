@@ -8,6 +8,7 @@ import { failStaleJobs } from "../jobs.server";
 import { recordFeedback } from "../feedback.server";
 import { brandStyles } from "./zs-styles.js";
 import { RECOMMENDED_APPS } from "../recommended-apps";
+import { useT } from "../i18n";
 import {
   ArrowLeftRight, Package, Layers, FileText, Image, Users,
   ShoppingCart, Boxes, Tag, Zap, ShieldCheck, BookOpen,
@@ -399,6 +400,7 @@ function HeroWave() {
 // the modal would remount it on every hover and drop the hover state).
 // eslint-disable-next-line react/prop-types
 function StarRow({ value, hover, onPick, onHover, interactive }) {
+  const t = useT();
   return (
     <div className="zs-stars" onMouseLeave={interactive ? () => onHover(0) : undefined}>
       {[1, 2, 3, 4, 5].map((n) => {
@@ -410,7 +412,7 @@ function StarRow({ value, hover, onPick, onHover, interactive }) {
             className={`zs-star-btn${active ? " on" : ""}`}
             onClick={interactive ? () => onPick(n) : undefined}
             onMouseEnter={interactive ? () => onHover(n) : undefined}
-            aria-label={`${n} star${n > 1 ? "s" : ""}`}
+            aria-label={n > 1 ? t("{n} stars", { n }) : t("{n} star", { n })}
             disabled={!interactive}
           >
             <Star size={30} fill={active ? "#e29e49" : "none"} strokeWidth={1.75} />
@@ -426,6 +428,7 @@ function StarRow({ value, hover, onPick, onHover, interactive }) {
 // 4-5 invites the merchant to leave a public App Store review.
 // eslint-disable-next-line react/prop-types
 function FeedbackModal({ onClose }) {
+  const t = useT();
   const fetcher = useFetcher();
   const [step, setStep] = useState("rate"); // rate | write | rock | thanks
   const [rating, setRating] = useState(0);
@@ -489,19 +492,19 @@ function FeedbackModal({ onClose }) {
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Share your feedback"
+      aria-label={t("Share your feedback")}
     >
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
       <div className="zs-fb-modal" onClick={(e) => e.stopPropagation()}>
-        <button className="zs-fb-close" onClick={onClose} aria-label="Close">
+        <button className="zs-fb-close" onClick={onClose} aria-label={t("Close")}>
           <X size={18} />
         </button>
 
         {step === "rate" && (
           <>
-            <h3 className="zs-fb-modal-title">What do you think of ZS StoreSync?</h3>
+            <h3 className="zs-fb-modal-title">{t("What do you think of ZS StoreSync?")}</h3>
             <p className="zs-fb-modal-sub">
-              Your feedback helps us keep improving. It only takes a moment.
+              {t("Your feedback helps us keep improving. It only takes a moment.")}
             </p>
             <StarRow
               value={rating}
@@ -515,15 +518,14 @@ function FeedbackModal({ onClose }) {
 
         {step === "write" && (
           <>
-            <h3 className="zs-fb-modal-title">Help us do better</h3>
+            <h3 className="zs-fb-modal-title">{t("Help us do better")}</h3>
             <p className="zs-fb-modal-sub">
-              We&apos;d like to fix this. Tell us what went wrong or what you were
-              expecting — we read every message.
+              {t("We'd like to fix this. Tell us what went wrong or what you were expecting — we read every message.")}
             </p>
             <StarRow value={rating} interactive={false} />
             <textarea
               className="zs-fb-textarea"
-              placeholder="Write your feedback…"
+              placeholder={t("Write your feedback…")}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               // Focusing the note field on open is expected in a modal context.
@@ -532,7 +534,7 @@ function FeedbackModal({ onClose }) {
             />
             <div className="zs-fb-actions">
               <button className="zs-fb-btn ghost" onClick={onClose} type="button">
-                Cancel
+                {t("Cancel")}
               </button>
               <button
                 className="zs-fb-btn primary"
@@ -540,7 +542,7 @@ function FeedbackModal({ onClose }) {
                 disabled={submitting || message.trim().length === 0}
                 type="button"
               >
-                {submitting ? "Sending…" : "Send feedback"}
+                {submitting ? t("Sending…") : t("Send feedback")}
               </button>
             </div>
           </>
@@ -552,19 +554,17 @@ function FeedbackModal({ onClose }) {
               <PartyPopper size={30} />
             </div>
             <h3 className="zs-fb-modal-title" style={{ paddingRight: 0 }}>
-              You rock! 🎉
+              {t("You rock! 🎉")}
             </h3>
             <p className="zs-fb-modal-sub">
-              It&apos;s awesome to see you succeed with ZS StoreSync. Just one
-              click to share a quick review on the Shopify App Store — a small
-              click for you, a big leap for us.
+              {t("It's awesome to see you succeed with ZS StoreSync. Just one click to share a quick review on the Shopify App Store — a small click for you, a big leap for us.")}
             </p>
             <div className="zs-fb-actions" style={{ justifyContent: "center" }}>
               <button className="zs-fb-btn ghost" onClick={onClose} type="button">
-                Maybe later
+                {t("Maybe later")}
               </button>
               <button className="zs-fb-btn primary" onClick={shareOnAppStore} type="button">
-                Yes, share on App Store
+                {t("Yes, share on App Store")}
               </button>
             </div>
           </div>
@@ -576,15 +576,14 @@ function FeedbackModal({ onClose }) {
               <MessageSquareHeart size={26} />
             </div>
             <h3 className="zs-fb-modal-title" style={{ paddingRight: 0 }}>
-              Thank you!
+              {t("Thank you!")}
             </h3>
             <p className="zs-fb-modal-sub">
-              We&apos;ve received your feedback and our team will take a close
-              look. We appreciate you helping us improve.
+              {t("We've received your feedback and our team will take a close look. We appreciate you helping us improve.")}
             </p>
             <div className="zs-fb-actions" style={{ justifyContent: "center" }}>
               <button className="zs-fb-btn primary" onClick={onClose} type="button">
-                Done
+                {t("Done")}
               </button>
             </div>
           </div>
@@ -594,7 +593,16 @@ function FeedbackModal({ onClose }) {
   );
 }
 
+// Display names for the data-type keys stored on a job ("blogPosts" → "Blog Posts").
+const TYPE_LABEL = {
+  products: "Products", collections: "Collections", pages: "Pages",
+  discounts: "Discounts", files: "Files", menus: "Menus", redirects: "Redirects",
+  metaobjects: "Metaobjects", blogPosts: "Blog Posts", metafields: "Metafields",
+  orders: "Orders", customers: "Customers",
+};
+
 export default function Index() {
+  const t = useT();
   const { stats, plan, jobs, needsSetup } = useLoaderData();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // Session-only dismissal — the banner returns on the next page load.
@@ -644,55 +652,55 @@ export default function Index() {
   };
 
   const statCards = [
-    { icon: <ArrowLeftRight size={18} />, cls: "clay", label: "Total Migrations", value: stats.totalJobs },
-    { icon: <Boxes size={18} />, cls: "camel", label: "Items Migrated", value: Number(stats.itemsMigrated).toLocaleString() },
-    { icon: <Zap size={18} />, cls: "sage", label: "Used This Month", value: `${stats.monthlyUsed}/${stats.monthlyLimit}` },
-    { icon: <ShieldCheck size={18} />, cls: "cream", label: "Last Run", value: stats.lastRun },
+    { icon: <ArrowLeftRight size={18} />, cls: "clay", label: t("Total Migrations"), value: stats.totalJobs },
+    { icon: <Boxes size={18} />, cls: "camel", label: t("Items Migrated"), value: Number(stats.itemsMigrated).toLocaleString() },
+    { icon: <Zap size={18} />, cls: "sage", label: t("Used This Month"), value: `${stats.monthlyUsed}/${stats.monthlyLimit}` },
+    { icon: <ShieldCheck size={18} />, cls: "cream", label: t("Last Run"), value: stats.lastRun },
   ];
 
   const dataTypes = [
-    { icon: <Package size={18} />, name: "Products", sub: "Variants & images" },
-    { icon: <Layers size={18} />, name: "Collections", sub: "Smart & manual" },
-    { icon: <FileText size={18} />, name: "Pages", sub: "Content pages" },
-    { icon: <Percent size={18} />, name: "Discounts", sub: "Codes & automatic" },
-    { icon: <Image size={18} />, name: "Files", sub: "Media library" },
-    { icon: <Menu size={18} />, name: "Menus", sub: "Navigation" },
-    { icon: <Shuffle size={18} />, name: "Redirects", sub: "URL redirects" },
-    { icon: <Boxes size={18} />, name: "Metaobjects", sub: "Definitions & entries" },
-    { icon: <Newspaper size={18} />, name: "Blog Posts", sub: "Blogs & articles" },
-    { icon: <Tag size={18} />, name: "Metafields", sub: "On products & more" },
-    { icon: <ShoppingCart size={18} />, name: "Orders", sub: "Incl. drafts · Protected data" },
-    { icon: <Users size={18} />, name: "Customers", sub: "Protected data" },
+    { icon: <Package size={18} />, name: t("Products"), sub: t("Variants & images") },
+    { icon: <Layers size={18} />, name: t("Collections"), sub: t("Smart & manual") },
+    { icon: <FileText size={18} />, name: t("Pages"), sub: t("Content pages") },
+    { icon: <Percent size={18} />, name: t("Discounts"), sub: t("Codes & automatic") },
+    { icon: <Image size={18} />, name: t("Files"), sub: t("Media library") },
+    { icon: <Menu size={18} />, name: t("Menus"), sub: t("Navigation") },
+    { icon: <Shuffle size={18} />, name: t("Redirects"), sub: t("URL redirects") },
+    { icon: <Boxes size={18} />, name: t("Metaobjects"), sub: t("Definitions & entries") },
+    { icon: <Newspaper size={18} />, name: t("Blog Posts"), sub: t("Blogs & articles") },
+    { icon: <Tag size={18} />, name: t("Metafields"), sub: t("On products & more") },
+    { icon: <ShoppingCart size={18} />, name: t("Orders"), sub: t("Incl. drafts · Protected data") },
+    { icon: <Users size={18} />, name: t("Customers"), sub: t("Protected data") },
   ];
 
   const featureCards = [
-    { icon: <ArrowLeftRight size={26} />, cls: "clay", title: "New Migration", desc: "Connect a source store and copy products, collections, pages, files & metafields into this store — duplicates skipped automatically.", href: "/app/migrate", meta: "Store → Store · No data stored on our servers" },
-    { icon: <Zap size={26} />, cls: "camel", title: "Sync Changes", desc: "Already migrated before? Pull only what's new since last time — added products, no re-runs of everything.", href: "/app/sync", meta: "Smart delta · Matches by SKU & handle" },
-    { icon: <PlayCircle size={26} />, cls: "sage", title: "Preview & Compare", desc: "See exactly what will transfer before you run it. Compare source vs target counts at a glance.", href: "/app/preview", meta: "Dry run · Zero changes to your store" },
+    { icon: <ArrowLeftRight size={26} />, cls: "clay", title: t("New Migration"), desc: t("Connect a source store and copy products, collections, pages, files & metafields into this store — duplicates skipped automatically."), href: "/app/migrate", meta: t("Store → Store · No data stored on our servers") },
+    { icon: <Zap size={26} />, cls: "camel", title: t("Sync Changes"), desc: t("Already migrated before? Pull only what's new since last time — added products, no re-runs of everything."), href: "/app/sync", meta: t("Smart delta · Matches by SKU & handle") },
+    { icon: <PlayCircle size={26} />, cls: "sage", title: t("Preview & Compare"), desc: t("See exactly what will transfer before you run it. Compare source vs target counts at a glance."), href: "/app/preview", meta: t("Dry run · Zero changes to your store") },
   ];
 
   const steps = [
-    { title: "Get the connection code", desc: <>On the <b>source</b> store, open ZS StoreSync → <b>Settings</b> and copy its connection code.</> },
-    { title: "Connect the source", desc: <>On <b>New Migration</b>, enter the source store domain and paste the connection code to authorize.</> },
-    { title: "Pick what to move", desc: <>Choose the data types — products, collections, pages, files & more. <b>Preview</b> counts before you run.</> },
-    { title: "Run & sync later", desc: <>Run it — duplicates are skipped. Come back anytime and use <b>Sync Changes</b> to pull only what&apos;s new.</> },
+    { title: t("Get the connection code"), desc: t("On the {source} store, open ZS StoreSync → {settings} and copy its connection code.", { source: <b>{t("source")}</b>, settings: <b>{t("Settings")}</b> }) },
+    { title: t("Connect the source"), desc: t("On {page}, enter the source store domain and paste the connection code to authorize.", { page: <b>{t("New Migration")}</b> }) },
+    { title: t("Pick what to move"), desc: t("Choose the data types — products, collections, pages, files & more. {preview} counts before you run.", { preview: <b>{t("Preview")}</b> }) },
+    { title: t("Run & sync later"), desc: t("Run it — duplicates are skipped. Come back anytime and use {sync} to pull only what's new.", { sync: <b>{t("Sync Changes")}</b> }) },
   ];
 
   const planMeters = [
-    { label: "Items this month", value: `${plan.monthlyUsed} / ${plan.monthlyLimit}`, pct: plan.monthlyPct },
+    { label: t("Items this month"), value: `${plan.monthlyUsed} / ${plan.monthlyLimit}`, pct: plan.monthlyPct },
   ];
 
   const upgradeCta =
-    plan.current === "free" ? "Upgrade to Starter — $12.99" :
-    plan.current === "starter" ? "Upgrade to Growth — $24.99" :
-    plan.current === "growth" ? "Upgrade to Pro — $39.99" : "Manage Plan";
+    plan.current === "free" ? t("Upgrade to {plan} — {price}", { plan: "Starter", price: "$12.99" }) :
+    plan.current === "starter" ? t("Upgrade to {plan} — {price}", { plan: "Growth", price: "$24.99" }) :
+    plan.current === "growth" ? t("Upgrade to {plan} — {price}", { plan: "Pro", price: "$39.99" }) : t("Manage Plan");
 
-  const typeIcon = (t) => ({
+  const typeIcon = (k) => ({
     products:<Package size={17}/>,collections:<Layers size={17}/>,pages:<FileText size={17}/>,
     files:<Image size={17}/>,orders:<ShoppingCart size={17}/>,customers:<Users size={17}/>,
     metaobjects:<Boxes size={17}/>,metafields:<Tag size={17}/>,discounts:<Percent size={17}/>,
     menus:<Menu size={17}/>,redirects:<Shuffle size={17}/>,blogPosts:<Newspaper size={17}/>,
-  }[t] || <ArrowLeftRight size={17}/>);
+  }[k] || <ArrowLeftRight size={17}/>);
 
   return (
     <s-page heading="ZS StoreSync">
@@ -704,19 +712,19 @@ export default function Index() {
             <div className="zs-hero zs-reveal zs-d1">
               <HeroWave />
               <div className="zs-hero-left">
-                <span className="zs-hero-chip"><span className="zs-hero-chip-dot" />Store → Store · Nothing stored on our servers</span>
-                <h1>Move your store&apos;s <em>content</em>,<br />store to store.</h1>
-                <p className="zs-hero-lead">Copy products, collections, pages, discounts, files, menus, redirects, blog posts, metaobjects & metafields from one Shopify store into another — duplicates skipped, changes synced, no spreadsheets, no developer.</p>
+                <span className="zs-hero-chip"><span className="zs-hero-chip-dot" />{t("Store → Store · Nothing stored on our servers")}</span>
+                <h1>{t("Move your store's {content},{br}store to store.", { content: <em>{t("content")}</em>, br: <br /> })}</h1>
+                <p className="zs-hero-lead">{t("Copy products, collections, pages, discounts, files, menus, redirects, blog posts, metaobjects & metafields from one Shopify store into another — duplicates skipped, changes synced, no spreadsheets, no developer.")}</p>
                 <div className="zs-hero-btns">
                   {/* Before a source store is paired, "Start a Migration" leads
                       to a page that can't do anything yet — the setup walkthrough
                       is the only useful next click. */}
                   {needsSetup ? (
-                    <RouterLink to="/app/start" className="zs-btn-primary">Set Up Your First Migration <span>→</span></RouterLink>
+                    <RouterLink to="/app/start" className="zs-btn-primary">{t("Set Up Your First Migration")} <span>→</span></RouterLink>
                   ) : (
-                    <RouterLink to="/app/migrate" className="zs-btn-primary">Start a Migration <span>→</span></RouterLink>
+                    <RouterLink to="/app/migrate" className="zs-btn-primary">{t("Start a Migration")} <span>→</span></RouterLink>
                   )}
-                  <RouterLink to="/app/preview" className="zs-btn-ghost-white">Preview First</RouterLink>
+                  <RouterLink to="/app/preview" className="zs-btn-ghost-white">{t("Preview First")}</RouterLink>
                 </div>
               </div>
             </div>
@@ -725,18 +733,17 @@ export default function Index() {
               <div className="zs-setup-cta zs-reveal zs-d2">
                 <div className="zs-setup-ico"><Rocket size={20} /></div>
                 <div className="zs-setup-txt">
-                  <h3>Connect the store you&apos;re copying from</h3>
+                  <h3>{t("Connect the store you're copying from")}</h3>
                   <p>
-                    Migrations need a second store paired with this one. It takes
-                    three steps — we&apos;ll walk you through each.
+                    {t("Migrations need a second store paired with this one. It takes three steps — we'll walk you through each.")}
                   </p>
                 </div>
-                <RouterLink to="/app/start" className="zs-btn-primary">Get started <span>→</span></RouterLink>
+                <RouterLink to="/app/start" className="zs-btn-primary">{t("Get started")} <span>→</span></RouterLink>
               </div>
             )}
 
             <div className="zs-reveal zs-d2">
-              <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">How It Works</div><h2 className="zs-sec-title">Migrate in 4 Steps</h2></div></div>
+              <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">{t("How It Works")}</div><h2 className="zs-sec-title">{t("Migrate in 4 Steps")}</h2></div></div>
               <div className="zs-steps-grid">
                 {steps.map((s, i) => (
                   <div key={i} className="zs-step">
@@ -750,7 +757,7 @@ export default function Index() {
             </div>
 
             <div className="zs-reveal zs-d3">
-              <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">Overview</div><h2 className="zs-sec-title">Migration Activity</h2></div></div>
+              <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">{t("Overview")}</div><h2 className="zs-sec-title">{t("Migration Activity")}</h2></div></div>
               <div className="zs-stats-grid">
                 {statCards.map(({ icon, cls, label, value }) => (
                   <div key={label} className="zs-stat">
@@ -763,8 +770,8 @@ export default function Index() {
 
             <div className="zs-reveal zs-d4">
               <div className="zs-sec-head">
-                <div><div className="zs-sec-eyebrow">Supported Data</div><h2 className="zs-sec-title">What StoreSync Moves</h2></div>
-                <RouterLink to="/app/plan" className="zs-sec-link">See plans →</RouterLink>
+                <div><div className="zs-sec-eyebrow">{t("Supported Data")}</div><h2 className="zs-sec-title">{t("What StoreSync Moves")}</h2></div>
+                <RouterLink to="/app/plan" className="zs-sec-link">{t("See plans")} →</RouterLink>
               </div>
               <div className="zs-types-grid">
                 {dataTypes.map(({ icon, name, sub }) => (
@@ -777,7 +784,7 @@ export default function Index() {
             </div>
 
             <div className="zs-reveal zs-d5">
-              <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">Get Started</div><h2 className="zs-sec-title">Run a Transfer</h2></div></div>
+              <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">{t("Get Started")}</div><h2 className="zs-sec-title">{t("Run a Transfer")}</h2></div></div>
               <div className="zs-nav-grid">
                 {featureCards.map(({ icon, cls, title, desc, href, meta }) => (
                   <RouterLink key={href} to={href} className="zs-nav-card">
@@ -793,14 +800,14 @@ export default function Index() {
             <div className="zs-split zs-reveal zs-d5">
               <div className="zs-panel">
                 <div className="zs-sec-head">
-                  <div><div className="zs-sec-eyebrow">Activity</div><h2 className="zs-sec-title">Recent Migrations</h2></div>
-                  <RouterLink to="/app/history" className="zs-sec-link">View all →</RouterLink>
+                  <div><div className="zs-sec-eyebrow">{t("Activity")}</div><h2 className="zs-sec-title">{t("Recent Migrations")}</h2></div>
+                  <RouterLink to="/app/history" className="zs-sec-link">{t("View all")} →</RouterLink>
                 </div>
                 {jobs.length === 0 ? (
                   <div className="zs-empty">
                     <div className="zs-empty-icon"><ArrowLeftRight size={34} /></div>
-                    <div className="zs-empty-title">No migrations yet</div>
-                    <div className="zs-empty-sub">Start your first transfer using the options above.</div>
+                    <div className="zs-empty-title">{t("No migrations yet")}</div>
+                    <div className="zs-empty-sub">{t("Start your first transfer using the options above.")}</div>
                   </div>
                 ) : (
                   jobs.slice(0, 5).map((j) => (
@@ -808,7 +815,7 @@ export default function Index() {
                       <div className="zs-recent-left">
                         <div className="zs-recent-icon">{typeIcon(j.type)}</div>
                         <div>
-                          <div className="zs-recent-name">{j.type}<span className="zs-route">· <b>{j.source}</b> → <b>{j.target}</b></span></div>
+                          <div className="zs-recent-name">{t(TYPE_LABEL[j.type] || j.type)}<span className="zs-route">· <b>{j.source}</b> → <b>{j.target}</b></span></div>
                           <div className="zs-recent-sub">{j.summary}</div>
                         </div>
                       </div>
@@ -822,12 +829,12 @@ export default function Index() {
                         }
                       >
                         {j.status === "running"
-                          ? "Running"
+                          ? t("Running")
                           : j.status === "failed"
-                            ? "Failed"
+                            ? t("Failed")
                             : j.status === "partial"
-                              ? "Partial"
-                              : "Done"}
+                              ? t("Partial")
+                              : t("Done")}
                       </span>
                     </div>
                   ))
@@ -836,9 +843,9 @@ export default function Index() {
 
               <div className="zs-plan-card">
                 <div className="zs-plan-inner">
-                  <div className="zs-plan-eyebrow">Current Plan</div>
-                  <div className="zs-plan-name">{plan.name}</div>
-                  <div className="zs-plan-desc">Monthly item quota. Upgrade for higher limits, files, orders & customers. Cancel anytime.</div>
+                  <div className="zs-plan-eyebrow">{t("Current Plan")}</div>
+                  <div className="zs-plan-name">{t(plan.name)}</div>
+                  <div className="zs-plan-desc">{t("Monthly item quota per data type. Upgrade for higher limits and automatic scheduled syncs. Cancel anytime.")}</div>
                   <div className="zs-plan-meters">
                     {planMeters.map(({ label, value, pct }) => (
                       <div key={label}>
@@ -848,28 +855,28 @@ export default function Index() {
                     ))}
                   </div>
                   <RouterLink to="/app/plan" className="zs-plan-upgrade-btn">{upgradeCta}</RouterLink>
-                  <div className="zs-plan-upgrade-note">Cancel anytime · No commitment</div>
+                  <div className="zs-plan-upgrade-note">{t("Cancel anytime · No commitment")}</div>
                 </div>
               </div>
             </div>
 
             <div className="zs-reveal zs-d6">
-              <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">Learn</div><h2 className="zs-sec-title">Resources &amp; Support</h2></div></div>
+              <div className="zs-sec-head"><div><div className="zs-sec-eyebrow">{t("Learn")}</div><h2 className="zs-sec-title">{t("Resources & Support")}</h2></div></div>
               <div className="zs-resources-grid">
                 <a href="https://zs-storesync.zilancer.com/tutorials" target="_blank" rel="noreferrer" className="zs-video-card">
                   <div className="zs-video-play"><PlayCircle size={26} /></div>
                   <div className="zs-video-info">
-                    <span className="zs-video-tag">Quick Start</span>
-                    <div className="zs-video-title">Your First Store-to-Store Migration</div>
-                    <div className="zs-video-sub">5 min · Connect, preview, and run a full transfer</div>
+                    <span className="zs-video-tag">{t("Quick Start")}</span>
+                    <div className="zs-video-title">{t("Your First Store-to-Store Migration")}</div>
+                    <div className="zs-video-sub">{t("5 min · Connect, preview, and run a full transfer")}</div>
                   </div>
                 </a>
                 <div className="zs-link-card">
-                  <div className="zs-link-card-title"><BookOpen size={14} /> Documentation</div>
+                  <div className="zs-link-card-title"><BookOpen size={14} /> {t("Documentation")}</div>
                   {[
-                    { icon:<HelpCircle size={13}/>, label:"Setup Guide", href:"https://zs-storesync.zilancer.com/documentation" },
-                    { icon:<HelpCircle size={13}/>, label:"How Sync Works", href:"https://zs-storesync.zilancer.com/documentation" },
-                    { icon:<HelpCircle size={13}/>, label:"FAQ", href:"https://zs-storesync.zilancer.com/faq" },
+                    { icon:<HelpCircle size={13}/>, label:t("Setup Guide"), href:"https://zs-storesync.zilancer.com/documentation" },
+                    { icon:<HelpCircle size={13}/>, label:t("How Sync Works"), href:"https://zs-storesync.zilancer.com/documentation" },
+                    { icon:<HelpCircle size={13}/>, label:t("FAQ"), href:"https://zs-storesync.zilancer.com/faq" },
                   ].map(({ icon, label, href }) => (
                     <a key={label} href={href} target="_blank" rel="noreferrer" className="zs-res-link">
                       <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}>{icon} {label}</span><span>→</span>
@@ -877,10 +884,10 @@ export default function Index() {
                   ))}
                 </div>
                 <div className="zs-link-card">
-                  <div className="zs-link-card-title"><Mail size={14} /> Support &amp; Updates</div>
+                  <div className="zs-link-card-title"><Mail size={14} /> {t("Support & Updates")}</div>
                   {[
-                    { icon:<Mail size={13}/>, label:"Email Support", href:"mailto:contact@zilancer.com", mail:true },
-                    { icon:<Rocket size={13}/>, label:"Changelog", href:"https://zs-storesync.zilancer.com/changelog" },
+                    { icon:<Mail size={13}/>, label:t("Email Support"), href:"mailto:contact@zilancer.com", mail:true },
+                    { icon:<Rocket size={13}/>, label:t("Changelog"), href:"https://zs-storesync.zilancer.com/changelog" },
                   ].map(({ icon, label, href, mail }) =>
                     mail ? (
                       <a key={label} href={href} className="zs-res-link" target="_top">
@@ -903,18 +910,16 @@ export default function Index() {
                     className="zs-fb-banner-close"
                     type="button"
                     onClick={() => setFeedbackDismissed(true)}
-                    aria-label="Dismiss feedback"
+                    aria-label={t("Dismiss feedback")}
                   >
                     <X size={16} />
                   </button>
                   <div className="zs-fb-icon"><MessageSquareHeart size={28} /></div>
                   <div className="zs-fb-copy">
-                    <div className="zs-fb-eyebrow">Your opinion matters</div>
-                    <h2 className="zs-fb-title">Enjoying ZS StoreSync?</h2>
+                    <div className="zs-fb-eyebrow">{t("Your opinion matters")}</div>
+                    <h2 className="zs-fb-title">{t("Enjoying ZS StoreSync?")}</h2>
                     <p className="zs-fb-sub">
-                      We value your opinion — it helps us evaluate our performance and
-                      make sure we&apos;re meeting your expectations. Share a quick rating
-                      and let us know how we&apos;re doing.
+                      {t("We value your opinion — it helps us evaluate our performance and make sure we're meeting your expectations. Share a quick rating and let us know how we're doing.")}
                     </p>
                   </div>
                   <button
@@ -922,7 +927,7 @@ export default function Index() {
                     type="button"
                     onClick={() => setFeedbackOpen(true)}
                   >
-                    <Star size={16} /> Give feedback
+                    <Star size={16} /> {t("Give feedback")}
                   </button>
                 </div>
               </div>
@@ -932,15 +937,15 @@ export default function Index() {
               <section className="more-apps">
                 <div className="ma-head">
                   <div>
-                    <div className="ma-eyebrow">From the Zilancer Studio</div>
-                    <h2 className="ma-title">More apps to <em>grow your store</em></h2>
+                    <div className="ma-eyebrow">{t("From the Zilancer Studio")}</div>
+                    <h2 className="ma-title">{t("More apps to {grow}", { grow: <em>{t("grow your store")}</em> })}</h2>
                   </div>
                   <div className="ma-arrows">
                     <button
                       className="ma-arr"
                       onClick={() => handleSliderScroll("left")}
                       disabled={!canScrollLeft}
-                      aria-label="Previous"
+                      aria-label={t("Previous")}
                     >
                       ‹
                     </button>
@@ -948,7 +953,7 @@ export default function Index() {
                       className="ma-arr"
                       onClick={() => handleSliderScroll("right")}
                       disabled={!canScrollRight}
-                      aria-label="Next"
+                      aria-label={t("Next")}
                     >
                       ›
                     </button>
@@ -977,7 +982,7 @@ export default function Index() {
                             rel="noreferrer"
                             className="ma-cta"
                           >
-                            Learn more <span className="ma-cta-arr">&rarr;</span>
+                            {t("Learn more")} <span className="ma-cta-arr">&rarr;</span>
                           </a>
                         </div>
                       </div>

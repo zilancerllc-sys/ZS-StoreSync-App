@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useFetcher } from "react-router";
+import { useT } from "../i18n";
 
 /**
  * "Have a referral code?" card for the Zilancer Affiliate Network.
@@ -50,6 +51,7 @@ const styles = {
 };
 
 export default function AffiliateReferralCard() {
+  const t = useT();
   const state = useFetcher();
   const submit = useFetcher();
   const [code, setCode] = useState("");
@@ -69,8 +71,9 @@ export default function AffiliateReferralCard() {
     return (
       <div style={styles.card}>
         <p style={styles.applied}>
-          Referral code <span style={styles.code}>{appliedCode}</span> is applied to your store. Thanks for letting us
-          know who sent you.
+          {t("Referral code {code} is applied to your store. Thanks for letting us know who sent you.", {
+            code: <span style={styles.code}>{appliedCode}</span>,
+          })}
         </p>
       </div>
     );
@@ -78,26 +81,26 @@ export default function AffiliateReferralCard() {
 
   return (
     <div style={styles.card}>
-      <p style={styles.title}>Have a referral code?</p>
-      <p style={styles.hint}>If someone recommended this app to you, enter their code so they get credit.</p>
+      <p style={styles.title}>{t("Have a referral code?")}</p>
+      <p style={styles.hint}>{t("If someone recommended this app to you, enter their code so they get credit.")}</p>
       <submit.Form method="post" action="/app/referral-code" style={styles.row}>
         <input
           name="code"
           value={code}
           onChange={(e) => setCode(e.target.value)}
-          placeholder="e.g. AFF123"
-          aria-label="Referral code"
+          placeholder={t("e.g. AFF123")}
+          aria-label={t("Referral code")}
           autoComplete="off"
           maxLength={32}
           style={styles.input}
         />
         <button type="submit" disabled={busy || code.trim().length < 3} style={{ ...styles.button, opacity: busy || code.trim().length < 3 ? 0.55 : 1 }}>
-          {busy ? "Applying…" : "Apply"}
+          {busy ? t("Applying…") : t("Apply")}
         </button>
       </submit.Form>
       {submit.data && !submit.data.ok && (
         <p role="alert" style={styles.error}>
-          {submit.data.error}
+          {t(submit.data.error)}
         </p>
       )}
     </div>

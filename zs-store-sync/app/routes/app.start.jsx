@@ -5,6 +5,7 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { verifyConnectionCode } from "../connection.server";
 import { brandStyles } from "./zs-styles.js";
+import { useT } from "../i18n";
 import {
   ArrowLeftRight,
   Check,
@@ -170,6 +171,7 @@ const pageStyles = `
 `;
 
 export default function Start() {
+  const t = useT();
   const { shop, readySources, hasMigrated } = useLoaderData();
   const checkFetcher = useFetcher();
   const connectFetcher = useFetcher();
@@ -199,32 +201,32 @@ export default function Start() {
     `zs-step ${done ? "done" : active ? "active" : "idle"}`;
 
   return (
-    <s-page heading="Get started">
+    <s-page heading={t("Get started")}>
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">
           <div className="zs-wrap zs-reveal">
-            <div className="zs-eyebrow">Setup</div>
+            <div className="zs-eyebrow">{t("Setup")}</div>
             <h2 className="zs-title">
-              {step3Done ? "You're connected" : "Set up your first migration"}
+              {step3Done ? t("You're connected") : t("Set up your first migration")}
             </h2>
             <p className="zs-sub">
-              ZS StoreSync copies data <b>into</b> the store you are looking at
-              right now, from another store you own. Both stores need the app,
-              and the store you copy <b>from</b> has to hand over a short code —
-              that is what stops anyone else pulling its data.
+              {t(
+                "ZS StoreSync copies data {into} the store you are looking at right now, from another store you own. Both stores need the app, and the store you copy {from} has to hand over a short code — that is what stops anyone else pulling its data.",
+                { into: <b>{t("into")}</b>, from: <b>{t("from")}</b> },
+              )}
             </p>
 
             <div className="zs-dir">
               <div className="box">
-                <div className="lbl">Copy from (source)</div>
+                <div className="lbl">{t("Copy from (source)")}</div>
                 <div className={`val ${doneSource || source ? "" : "empty"}`}>
-                  {doneSource || source || "not chosen yet"}
+                  {doneSource || source || t("not chosen yet")}
                 </div>
               </div>
               <ArrowLeftRight size={20} className="arrow" />
               <div className="box">
-                <div className="lbl">Into (this store)</div>
+                <div className="lbl">{t("Into (this store)")}</div>
                 <div className="val">{shop}</div>
               </div>
             </div>
@@ -233,10 +235,11 @@ export default function Start() {
             <div className={stepClass(!!checked, !checked)}>
               <div className="zs-num">{checked ? <Check size={15} /> : 1}</div>
               <div className="zs-step-body">
-                <h3>Which store are you copying from?</h3>
+                <h3>{t("Which store are you copying from?")}</h3>
                 <p>
-                  Enter the other store&apos;s domain. Not this one —{" "}
-                  <b>{shop}</b> is where the data will land.
+                  {t("Enter the other store's domain. Not this one — {shop} is where the data will land.", {
+                    shop: <b>{shop}</b>,
+                  })}
                 </p>
                 <checkFetcher.Form method="post" className="zs-row">
                   <input type="hidden" name="intent" value="check" />
@@ -246,23 +249,23 @@ export default function Start() {
                     placeholder="my-old-store.myshopify.com"
                     value={source}
                     onChange={(e) => setSource(e.target.value)}
-                    aria-label="Source store domain"
+                    aria-label={t("Source store domain")}
                   />
                   <button className="zs-btn" disabled={checking || !source.trim()}>
                     {checking ? (
                       <>
-                        <Loader2 size={15} className="zs-spin" /> Checking…
+                        <Loader2 size={15} className="zs-spin" /> {t("Checking…")}
                       </>
                     ) : (
                       <>
-                        <Store size={15} /> Continue
+                        <Store size={15} /> {t("Continue")}
                       </>
                     )}
                   </button>
                 </checkFetcher.Form>
                 {checkFetcher.data?.error && (
                   <div className="zs-err">
-                    <AlertCircle size={15} /> {checkFetcher.data.error}
+                    <AlertCircle size={15} /> {t(checkFetcher.data.error)}
                   </div>
                 )}
               </div>
@@ -272,28 +275,29 @@ export default function Start() {
             <div className={stepClass(step2Done, !!checked && !step2Done)}>
               <div className="zs-num">{step2Done ? <Check size={15} /> : 2}</div>
               <div className="zs-step-body">
-                <h3>Install ZS StoreSync on that store</h3>
+                <h3>{t("Install ZS StoreSync on that store")}</h3>
                 {!checked ? (
-                  <p>Finish step 1 first.</p>
+                  <p>{t("Finish step 1 first.")}</p>
                 ) : step2Done ? (
                   <div className="zs-ok">
-                    <Check size={16} /> Installed on {checked.sourceShop}
+                    <Check size={16} /> {t("Installed on {shop}", { shop: checked.sourceShop })}
                   </div>
                 ) : (
                   <>
                     <p>
-                      The app isn&apos;t on <b>{checked.sourceShop}</b> yet. Install
-                      it there, then come back and re-check.
+                      {t("The app isn't on {shop} yet. Install it there, then come back and re-check.", {
+                        shop: <b>{checked.sourceShop}</b>,
+                      })}
                     </p>
                     <div className="zs-row">
                       <a className="zs-btn" href={checked.installUrl} target="_blank" rel="noreferrer">
-                        <ExternalLink size={15} /> Install on source store
+                        <ExternalLink size={15} /> {t("Install on source store")}
                       </a>
                       <checkFetcher.Form method="post">
                         <input type="hidden" name="intent" value="check" />
                         <input type="hidden" name="sourceShop" value={checked.sourceShop} />
                         <button className="zs-btn ghost" disabled={checking}>
-                          <RotateCw size={14} /> I&apos;ve installed it
+                          <RotateCw size={14} /> {t("I've installed it")}
                         </button>
                       </checkFetcher.Form>
                     </div>
@@ -306,23 +310,23 @@ export default function Start() {
             <div className={stepClass(step3Done, step2Done && !step3Done)}>
               <div className="zs-num">{step3Done ? <Check size={15} /> : 3}</div>
               <div className="zs-step-body">
-                <h3>Copy the code from the source store</h3>
+                <h3>{t("Copy the code from the source store")}</h3>
                 {!step2Done ? (
-                  <p>Finish step 2 first.</p>
+                  <p>{t("Finish step 2 first.")}</p>
                 ) : step3Done ? (
                   <div className="zs-ok">
-                    <Check size={16} /> {doneSource} is paired with this store
+                    <Check size={16} /> {t("{shop} is paired with this store", { shop: doneSource })}
                   </div>
                 ) : (
                   <>
                     <p>
-                      Open ZS StoreSync on <b>{checked.sourceShop}</b>, go to
-                      Settings, and copy the code shown there. The link below
-                      takes you straight to it.
+                      {t("Open ZS StoreSync on {shop}, go to Settings, and copy the code shown there. The link below takes you straight to it.", {
+                        shop: <b>{checked.sourceShop}</b>,
+                      })}
                     </p>
                     <div className="zs-row" style={{ marginBottom: 12 }}>
                       <a className="zs-btn ghost" href={checked.settingsUrl} target="_blank" rel="noreferrer">
-                        <ExternalLink size={15} /> Open Settings on {checked.sourceShop}
+                        <ExternalLink size={15} /> {t("Open Settings on {shop}", { shop: checked.sourceShop })}
                       </a>
                     </div>
                     <connectFetcher.Form method="post" className="zs-row">
@@ -334,26 +338,26 @@ export default function Start() {
                         placeholder="ZS7K-92QT"
                         value={code}
                         onChange={(e) => setCode(e.target.value)}
-                        aria-label="Connection code from the source store"
+                        aria-label={t("Connection code from the source store")}
                       />
                       <button className="zs-btn" disabled={connecting || !code.trim()}>
                         {connecting ? (
                           <>
-                            <Loader2 size={15} className="zs-spin" /> Pairing…
+                            <Loader2 size={15} className="zs-spin" /> {t("Pairing…")}
                           </>
                         ) : (
                           <>
-                            <KeyRound size={15} /> Pair stores
+                            <KeyRound size={15} /> {t("Pair stores")}
                           </>
                         )}
                       </button>
                     </connectFetcher.Form>
                     <div className="zs-hint">
-                      Typing it out is fine — spaces and dashes don&apos;t matter.
+                      {t("Typing it out is fine — spaces and dashes don't matter.")}
                     </div>
                     {connectFetcher.data?.error && (
                       <div className="zs-err">
-                        <AlertCircle size={15} /> {connectFetcher.data.error}
+                        <AlertCircle size={15} /> {t(connectFetcher.data.error)}
                       </div>
                     )}
                   </>
@@ -363,15 +367,16 @@ export default function Start() {
 
             {step3Done && (
               <div className="zs-done-card">
-                <h3>Ready to migrate</h3>
+                <h3>{t("Ready to migrate")}</h3>
                 <p>
-                  {doneSource} is paired with {shop}. Pick what to copy and run
-                  it — anything that already exists is skipped, so you can run it
-                  as many times as you like.
+                  {t("{source} is paired with {shop}. Pick what to copy and run it — anything that already exists is skipped, so you can run it as many times as you like.", {
+                    source: doneSource,
+                    shop,
+                  })}
                 </p>
                 <RouterLink className="zs-btn" to="/app/migrate">
                   <ArrowLeftRight size={15} />
-                  {hasMigrated ? "Go to New Migration" : "Run my first migration"}
+                  {hasMigrated ? t("Go to New Migration") : t("Run my first migration")}
                 </RouterLink>
               </div>
             )}

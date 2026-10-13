@@ -5,6 +5,7 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { failStaleJobs } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
+import { useLocale, useT } from "../i18n";
 import {
   ArrowLeftRight, ChevronDown, CheckCircle2, AlertCircle, Clock, XCircle,
 } from "lucide-react";
@@ -172,9 +173,29 @@ const TYPE_LABEL = {
   customers: "Customers",
 };
 
+const STATUS_LABEL = {
+  running: "Running",
+  completed: "Completed",
+  partial: "Partial",
+  failed: "Failed",
+};
+
+const MODE_LABEL = { migrate: "Migration", sync: "Sync" };
+
 export default function History() {
+  const t = useT();
+  const locale = useLocale();
   const { jobs } = useLoaderData();
   const [open, setOpen] = useState(null);
+
+  // A fixed time zone keeps the server render and the browser's hydration
+  // producing the same text — a mismatch here breaks the row toggles.
+  const fmtDate = (d) =>
+    `${new Intl.DateTimeFormat(locale, {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "UTC",
+    }).format(new Date(d))} UTC`;
 
   // Logs are fetched per job the first time its row is expanded, then cached
   // for the rest of the visit. /app/jobs/:id is already scoped to the
@@ -209,21 +230,21 @@ export default function History() {
   }, [logFetcher.state, logFetcher.data]);
 
   return (
-    <s-page heading="Migration History">
+    <s-page heading={t("Migration History")}>
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">
           <div className="zs-wrap zs-reveal">
-            <div className="zs-sec-eyebrow">Activity</div>
-            <h2 className="zs-sec-title">Migration History</h2>
+            <div className="zs-sec-eyebrow">{t("Activity")}</div>
+            <h2 className="zs-sec-title">{t("Migration History")}</h2>
 
             {jobs.length === 0 ? (
               <div className="zs-empty">
                 <ArrowLeftRight size={34} color="var(--zs-camel)" />
-                <div className="zs-empty-t">No migrations yet</div>
-                <div className="zs-empty-s">Run your first transfer to see it here.</div>
+                <div className="zs-empty-t">{t("No migrations yet")}</div>
+                <div className="zs-empty-s">{t("Run your first transfer to see it here.")}</div>
                 <RouterLink to="/app/migrate" className="zs-btn">
-                  <ArrowLeftRight size={14} /> Start a Migration
+                  <ArrowLeftRight size={14} /> {t("Start a Migration")}
                 </RouterLink>
               </div>
             ) : (
@@ -244,14 +265,14 @@ export default function History() {
                           {j.sourceShop} → {j.targetShop}
                         </div>
                         <div className="zs-job-meta">
-                          {j.mode} · {new Date(j.createdAt).toLocaleString()}
+                          {t(MODE_LABEL[j.mode] || j.mode)} · {fmtDate(j.createdAt)}
                           {j.summary ? ` · ${j.summary}` : ""}
                         </div>
                       </div>
                     </div>
                     <div className="zs-job-right">
                       <span className={`zs-status ${j.status}`}>
-                        {statusIcon(j.status)} {j.status}
+                        {statusIcon(j.status)} {t(STATUS_LABEL[j.status] || j.status)}
                       </span>
                       <ChevronDown
                         size={18}
@@ -267,27 +288,27 @@ export default function History() {
                           <table className="zs-bd">
                             <thead>
                               <tr>
-                                <th>Data type</th>
-                                <th>Created</th>
-                                <th>Updated</th>
-                                <th>Skipped</th>
-                                <th>Failed</th>
+                                <th>{t("Data type")}</th>
+                                <th>{t("Created")}</th>
+                                <th>{t("Updated")}</th>
+                                <th>{t("Skipped")}</th>
+                                <th>{t("Failed")}</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {j.dataTypes.map((t) => {
-                                const s = j.stats[t] || {};
+                              {j.dataTypes.map((ty) => {
+                                const s = j.stats[ty] || {};
                                 const c = s.created || 0;
                                 const u = s.updated || 0;
                                 const k = s.skipped || 0;
                                 const f = s.failed || 0;
                                 const empty = !c && !u && !k && !f;
                                 return (
-                                  <tr key={t} className={empty ? "quiet" : ""}>
-                                    <td className="ty">{TYPE_LABEL[t] || t}</td>
+                                  <tr key={ty} className={empty ? "quiet" : ""}>
+                                    <td className="ty">{t(TYPE_LABEL[ty] || ty)}</td>
                                     {empty ? (
                                       <td className="none" colSpan={4}>
-                                        nothing to migrate
+                                        {t("nothing to migrate")}
                                       </td>
                                     ) : (
                                       <>
@@ -307,27 +328,27 @@ export default function History() {
                         // Run predates per-type tracking — show what was
                         // selected rather than counters we do not have.
                         <div className="zs-types-row">
-                          {j.dataTypes.map((t) => (
-                            <span key={t} className="zs-tchip">
-                              {TYPE_LABEL[t] || t}
+                          {j.dataTypes.map((ty) => (
+                            <span key={ty} className="zs-tchip">
+                              {t(TYPE_LABEL[ty] || ty)}
                             </span>
                           ))}
                         </div>
                       )}
                       <div className="zs-counts">
-                        <div className="zs-count"><div className="v">{j.created}</div><div className="l">Created</div></div>
-                        <div className="zs-count"><div className="v">{j.updated}</div><div className="l">Updated</div></div>
-                        <div className="zs-count"><div className="v">{j.skipped}</div><div className="l">Skipped</div></div>
-                        <div className="zs-count"><div className="v">{j.failed}</div><div className="l">Failed</div></div>
-                        <div className="zs-count"><div className="v">{j.total}</div><div className="l">Total</div></div>
+                        <div className="zs-count"><div className="v">{j.created}</div><div className="l">{t("Created")}</div></div>
+                        <div className="zs-count"><div className="v">{j.updated}</div><div className="l">{t("Updated")}</div></div>
+                        <div className="zs-count"><div className="v">{j.skipped}</div><div className="l">{t("Skipped")}</div></div>
+                        <div className="zs-count"><div className="v">{j.failed}</div><div className="l">{t("Failed")}</div></div>
+                        <div className="zs-count"><div className="v">{j.total}</div><div className="l">{t("Total")}</div></div>
                       </div>
                       {j.error && (
                         <div style={{ color: "#9a3412", fontSize: 13, marginBottom: 12 }}>
-                          Error: {j.error}
+                          {t("Error: {message}", { message: j.error })}
                         </div>
                       )}
                       {logsById[j.id] === undefined ? (
-                        <div className="zs-log">Loading log…</div>
+                        <div className="zs-log">{t("Loading log…")}</div>
                       ) : (
                         logsById[j.id].length > 0 && (
                           <div className="zs-log">
