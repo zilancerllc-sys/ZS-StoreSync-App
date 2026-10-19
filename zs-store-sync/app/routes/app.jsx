@@ -5,6 +5,7 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { MessageCircle } from "lucide-react";
 import { authenticate } from "../shopify.server";
 import { syncAffiliate } from "../lib/affiliate.server";
+import { isOwnerShop } from "../lib/owner.server";
 import { I18nProvider, useT } from "../i18n";
 import { messagesFor, resolveLocale } from "../i18n/messages.server";
 
@@ -104,6 +105,7 @@ export const loader = async ({ request }) => {
   return {
     apiKey: process.env.SHOPIFY_API_KEY || "",
     shop: session.shop,
+    isOwner: isOwnerShop(session.shop),
     locale,
     messages: messagesFor(locale),
   };
@@ -117,7 +119,7 @@ export function shouldRevalidate({ nextUrl, defaultShouldRevalidate }) {
 }
 
 export default function App() {
-  const { apiKey, shop, locale, messages } = useLoaderData();
+  const { apiKey, shop, isOwner, locale, messages } = useLoaderData();
 
   return (
     <I18nProvider locale={locale} messages={messages}>
@@ -143,6 +145,7 @@ function AppShell({ apiKey, shop }) {
         <s-link href="/app/history">{t("History")}</s-link>
         <s-link href="/app/plan">{t("Plans")}</s-link>
         <s-link href="/app/settings">{t("Settings")}</s-link>
+        {isOwner && <s-link href="/app/stores">Owner dashboard</s-link>}
       </s-app-nav>
       <Outlet />
     </AppProvider>

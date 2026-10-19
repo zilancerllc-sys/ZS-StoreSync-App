@@ -433,3 +433,31 @@ export async function sendPromoEmail({ to, token, apps, headline, intro }) {
     html: mailShell(body, { token, promotional: true }),
   });
 }
+
+// ─── Review request, sent by hand ────────────────────────────────────────────
+// From the owner dashboard, for a store that is using the app. No incentive of
+// any kind (Shopify forbids it), and the review link goes to everyone -- the
+// "reply instead" line is an addition, never a gate in front of the review.
+const REVIEW_REQUEST_URL = "https://apps.shopify.com/zs-storesync#modal-show=WriteReviewModal";
+
+export async function sendReviewRequestEmail({ to, token }) {
+  const body = `
+    <h2 style="margin:0 0 14px;font-size:21px;">How is ${esc(APP_NAME)} working for you?</h2>
+    <p style="font-size:15px;line-height:1.65;margin:0 0 16px;">
+      Thanks for using ${esc(APP_NAME)}. If it has been useful, a short review on
+      the Shopify App Store would mean a lot. We&rsquo;re a small studio, and
+      reviews are how other merchants find us.
+    </p>
+    <p style="margin:0 0 22px;">${button(REVIEW_REQUEST_URL, "Write a quick review")}</p>
+    <p style="font-size:15px;line-height:1.65;margin:0;">
+      Something not right? Reply to this email as well &mdash; it comes straight
+      to us and we&rsquo;ll fix it.
+    </p>`;
+
+  return sendEmail({
+    to,
+    replyTo: REPLY_TO,
+    subject: `A quick favour from the ${APP_NAME} team`,
+    html: mailShell(body, { token, promotional: true }),
+  });
+}

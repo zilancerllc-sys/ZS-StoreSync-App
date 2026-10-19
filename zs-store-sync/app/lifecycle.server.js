@@ -26,7 +26,9 @@ import { RECOMMENDED_APPS } from "./recommended-apps";
 import {
   sendWelcomeEmail,
   sendFeedbackEmail,
+  sendReviewRequestEmail,
 } from "./notify.server";
+import { logAppEvent } from "./lib/app-events.server";
 
 // ╔═══════════════════════════════════════════════════════════════════════════╗
 // ║  COPY — the only part that differs per app. Everything else in this file  ║
@@ -133,6 +135,9 @@ export async function onAppInstalled({ shop, admin }) {
     // A reinstall shouldn't restart the whole sequence, and shouldn't quietly
     // re-subscribe someone who unsubscribed. Only clear the uninstall marker.
     if (existing) {
+      // Back after an uninstall (before the 48h redact): a fresh install for the
+      // owner dashboard. An ordinary re-auth of an installed store is not.
+      if (existing.uninstalledAt) logAppEvent(shop, "install", "reinstall");
       await db.merchantContact.update({
         where: { shop },
         data: {
@@ -173,6 +178,7 @@ export async function onAppInstalled({ shop, admin }) {
         nextPromoAt: null,
       },
     });
+    logAppEvent(shop, "install");
 
     if (!email) return { welcomed: false, reason: "no email available" };
 
@@ -198,6 +204,20 @@ export async function onAppInstalled({ shop, admin }) {
 
 // ─── Uninstall ───────────────────────────────────────────────────────────────
 export async function onAppUninstalled(shop) {
+  // Once per uninstall, however often Shopify retries the webhook: only the
+  // call that flips an installed contact logs it. A store with no contact row
+  // logs unless its last event already was one.
+  try {
+    const flipped = await db.merchantContact.count({ where: { shop, uninstalledAt: null } });
+    const known = flipped ? 1 : await db.merchantContact.count({ where: { shop } });
+    if (flipped) logAppEvent(shop, "uninstall");
+    else if (!known) {
+      const last = await db.appEvent.findFirst({ where: { shop }, orderBy: { createdAt: "desc" } });
+      if (!last || last.type !== "uninstall") logAppEvent(shop, "uninstall");
+    }
+  } catch (e) {
+    console.error("[lifecycle] uninstall event failed:", e?.message || e);
+  }
   await db.merchantContact
     .updateMany({
       where: { shop },
@@ -312,4 +332,19 @@ export async function runDueLifecycleEmails(now = new Date()) {
   }
 
   return results;
+}
+
+// ─── Review request from the owner dashboard ─────────────────────────────────
+// The owner presses the button; this only refuses what must never be mailed: a
+// store that left, unsubscribed, or has no address. Returns { ok, reason }.
+export async function requestReview(shop) {
+  const c = await db.merchantContact.findUnique({ where: { shop } });
+  if (!c || !c.email) return { ok: false, reason: "no email address on file" };
+  if (c.uninstalledAt) return { ok: false, reason: "the store has uninstalled" };
+  if (!c.optedIn || c.unsubscribedAt) return { ok: false, reason: "the store unsubscribed from email" };
+  const sent = await sendReviewRequestEmail({ to: c.email, token: c.unsubscribeToken }).catch(() => false);
+  if (!sent) return { ok: false, reason: "the email could not be sent" };
+  await db.merchantContact.update({ where: { shop }, data: { reviewAskSentAt: new Date() } });
+  logAppEvent(shop, "review_request");
+  return { ok: true };
 }

@@ -194,6 +194,7 @@ model MerchantContact {
   unsubscribedAt   DateTime?
   // Set on app/uninstalled — an uninstalled store must stop hearing from us.
   uninstalledAt    DateTime?
+  reviewAskSentAt  DateTime? // review request sent from the owner dashboard
 
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -227,4 +228,31 @@ model Feedback {
 
   @@index([shop])
   @@index([shop, createdAt])
+}
+// Owner dashboard: one row per install, uninstall, plan change or review
+// request, so the merchants-over-time chart and "who left" survive the shop's
+// GDPR redact. Holds no personal data -- only the shop domain, what happened
+// and when.
+model AppEvent {
+  id        String   @id @default(cuid())
+  shop      String
+  type      String   // install | uninstall | plan | review_request
+  detail    String?  // "reinstall", a plan key, ...
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([shop])
+}
+
+// The owner's own notes about a store (reviewed, test store) and what Shopify
+// said at the last "Check stores": open, development, frozen, closed, dormant.
+model StoreMeta {
+  shop       String    @id
+  reviewedAt DateTime?
+  isTest     Boolean   @default(false)
+  storeName  String?
+  storePlan  String?
+  storeState String?
+  checkedAt  DateTime?
+  updatedAt  DateTime  @updatedAt
 }
