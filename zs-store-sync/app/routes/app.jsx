@@ -123,12 +123,12 @@ export default function App() {
 
   return (
     <I18nProvider locale={locale} messages={messages}>
-      <AppShell apiKey={apiKey} shop={shop} />
+      <AppShell apiKey={apiKey} shop={shop} isOwner={isOwner} />
     </I18nProvider>
   );
 }
 
-function AppShell({ apiKey, shop }) {
+function AppShell({ apiKey, shop, isOwner }) {
   const t = useT();
 
   // v2's AppProvider takes only children and apiKey, and always injects App
