@@ -934,6 +934,36 @@ export default function Index() {
               </div>
             )}
 
+            {/* A person to reach, not only the chat bot. The chat loads only
+                when asked for, through the layout's support button. */}
+            <div className="zs-reveal zs-d7">
+              <div className="zs-fb-banner" style={{ flexWrap: "wrap" }}>
+                <div className="zs-fb-icon"><Mail size={28} /></div>
+                <div className="zs-fb-copy">
+                  <div className="zs-fb-eyebrow">{t("Support from the team that builds the app")}</div>
+                  <h2 className="zs-fb-title">{t("Need a hand?")}</h2>
+                  <p className="zs-fb-sub">
+                    {t("A sync stopped, or something is missing in the new store? Tell us which stores — we look at it with you and help you fix it.")}
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    className="zs-fb-cta"
+                    type="button"
+                    onClick={() => window.dispatchEvent(new Event("zs:open-support"))}
+                  >
+                    {t("Chat with us")}
+                  </button>
+                  <a className="zs-fb-cta" href="https://wa.me/8801408270201" target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                    WhatsApp
+                  </a>
+                  <a className="zs-fb-cta" href="mailto:contact@zilancer.com?subject=ZS%20StoreSync%20support" target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                    {t("Email contact@zilancer.com")}
+                  </a>
+                </div>
+              </div>
+            </div>
+
             <div className="zs-reveal zs-d7">
               <section className="more-apps">
                 <div className="ma-head">

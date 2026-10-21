@@ -404,5 +404,10 @@
   "{shop} is paired with this store": "{shop} はこのストアと連携済みです",
   "{source} is paired with {shop}. Pick what to copy and run it — anything that already exists is skipped, so you can run it as many times as you like.": "{source} は {shop} と連携済みです。コピーする内容を選んで実行してください。既存のものはスキップされるので、何度でも実行できます。",
   "— Starter syncs weekly, Growth daily, Pro every 6 hours.": "— Starter は毎週、Growth は毎日、Pro は6時間ごとに同期します。",
-  "★ Most Popular": "★ いちばん人気"
+  "★ Most Popular": "★ いちばん人気",
+  "Support from the team that builds the app": "アプリを開発しているチームからのサポート",
+  "Need a hand?": "お困りですか？",
+  "Chat with us": "チャットで相談",
+  "Email contact@zilancer.com": "contact@zilancer.com にメール",
+  "A sync stopped, or something is missing in the new store? Tell us which stores — we look at it with you and help you fix it.": "同期が止まった、または新しいストアに何か足りませんか？対象のストアをお知らせください。一緒に確認し、解決をお手伝いします。"
 }

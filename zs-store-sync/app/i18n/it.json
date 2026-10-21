@@ -404,5 +404,10 @@
   "{shop} is paired with this store": "{shop} è abbinato a questo negozio",
   "{source} is paired with {shop}. Pick what to copy and run it — anything that already exists is skipped, so you can run it as many times as you like.": "{source} è abbinato a {shop}. Scegli cosa copiare e avvia: tutto ciò che esiste già viene saltato, quindi puoi eseguirlo tutte le volte che vuoi.",
   "— Starter syncs weekly, Growth daily, Pro every 6 hours.": "— Starter sincronizza ogni settimana, Growth ogni giorno, Pro ogni 6 ore.",
-  "★ Most Popular": "★ Il più scelto"
+  "★ Most Popular": "★ Il più scelto",
+  "Support from the team that builds the app": "Supporto dal team che sviluppa l'app",
+  "Need a hand?": "Serve una mano?",
+  "Chat with us": "Chatta con noi",
+  "Email contact@zilancer.com": "Scrivi a contact@zilancer.com",
+  "A sync stopped, or something is missing in the new store? Tell us which stores — we look at it with you and help you fix it.": "Una sincronizzazione si è fermata o manca qualcosa nel nuovo negozio? Indicaci i negozi: lo controlliamo con te e ti aiutiamo a risolvere."
 }
