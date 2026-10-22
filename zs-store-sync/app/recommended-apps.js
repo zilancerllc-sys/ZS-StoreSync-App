@@ -29,8 +29,8 @@ export const RECOMMENDED_APPS = [
   {
     name: "ZS Bundles App & Upsells",
     category: "Upsell & AOV",
-    description: "Increase average order value with product bundles, volume discounts, and smart cart upsell recommendations.",
-    link: "https://apps.shopify.com/zs-bundles",
+    description: "Black Friday bundles in minutes: quantity breaks, buy X get Y and gift boxes on your product pages. Free plan and free setup.",
+    link: "https://apps.shopify.com/zs-bundles?utm_source=zs-storesync&utm_medium=email&utm_campaign=recommended",
     icon: "https://cdn.shopify.com/s/files/1/0813/8879/8190/files/favicon_84dd8a2f-dd90-4da4-8e40-4c9302f68cc5.png?v=1781849995",
     colorClass: "sage",
     badge: "Free plan available",
