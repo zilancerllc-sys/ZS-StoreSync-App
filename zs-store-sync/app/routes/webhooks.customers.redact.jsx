@@ -1,4 +1,4 @@
-import { authenticate } from "../shopify.server";
+import { authenticateWebhook } from "../lib/webhook-auth.server";
 import db from "../db.server";
 import { parseLogsJson, safeLogsJson } from "../jobs.server";
 import { customerLogTag, redactCustomerFromLogs } from "../redact.server";
@@ -14,7 +14,7 @@ import { customerLogTag, redactCustomerFromLogs } from "../redact.server";
 // The shop being redacted can appear in a job either as the owner (`shop`) or
 // as the store being copied from (`sourceShop`), so both sides are searched.
 export const action = async ({ request }) => {
-  const { shop, topic, payload } = await authenticate.webhook(request);
+  const { shop, topic, payload } = await authenticateWebhook(request);
 
   const customerId = payload?.customer?.id;
   const email = payload?.customer?.email;

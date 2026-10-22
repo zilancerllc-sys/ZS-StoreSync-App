@@ -1,11 +1,11 @@
-import { authenticate } from "../shopify.server";
+import { authenticateWebhook } from "../lib/webhook-auth.server";
 import db from "../db.server";
 
 // GDPR — shop/redact
 // Sent 48h after a store uninstalls the app. Remove everything we hold for the
 // shop. HMAC is verified via authenticate.webhook before we touch the database.
 export const action = async ({ request }) => {
-  const { shop, topic } = await authenticate.webhook(request);
+  const { shop, topic } = await authenticateWebhook(request);
   console.log(`Received ${topic} webhook for ${shop}`);
 
   // Purge all shop-scoped records we persist.

@@ -1,11 +1,11 @@
-import { authenticate } from "../shopify.server";
+import { authenticateWebhook } from "../lib/webhook-auth.server";
 import db from "../db.server";
 import { setPlan } from "../credits.server";
 import { onAppUninstalled } from "../lifecycle.server";
 import { syncAffiliateAfterUninstall } from "../lib/affiliate.server";
 
 export const action = async ({ request }) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
+  const { shop, session, topic } = await authenticateWebhook(request);
 
   console.log(`Received ${topic} webhook for ${shop}`);
 
@@ -14,9 +14,9 @@ export const action = async ({ request }) => {
 
   // Webhook requests can trigger multiple times and after an app has already been uninstalled.
   // If this webhook already ran, the session may have been deleted previously.
-  if (session) {
-    await db.session.deleteMany({ where: { shop } });
-  }
+  // No session comes back when its token could not be refreshed, but the
+  // stored rows still have to go.
+  await db.session.deleteMany({ where: { shop } });
 
   // Shopify cancels subscriptions on uninstall — drop the plan now so a
   // reinstall never resumes a paid plan without an active subscription.

@@ -1,4 +1,4 @@
-import { authenticate } from "../shopify.server";
+import { authenticateWebhook } from "../lib/webhook-auth.server";
 
 // GDPR — customers/data_request
 // Sent when a store owner requests a customer's data on the merchant's behalf.
@@ -12,7 +12,7 @@ import { authenticate } from "../shopify.server";
 // That masked reference is not a customer profile, so there is nothing to hand
 // back; we verify the HMAC (via authenticate.webhook) and acknowledge.
 export const action = async ({ request }) => {
-  const { shop, topic, payload } = await authenticate.webhook(request);
+  const { shop, topic, payload } = await authenticateWebhook(request);
   console.log(`Received ${topic} webhook for ${shop}`, {
     customer: payload?.customer?.id,
   });
