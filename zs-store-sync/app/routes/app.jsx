@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { isCompShop } from "../credits.server";
 import { Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
@@ -127,7 +128,7 @@ export const loader = async ({ request }) => {
     apiKey: process.env.SHOPIFY_API_KEY || "",
     shop: session.shop,
     supportEmail: contact?.email || null,
-    plan: sub?.plan || null,
+    plan: isCompShop(session.shop) ? "pro" : sub?.plan || null,
     isOwner: isOwnerShop(session.shop),
     locale,
     messages: messagesFor(locale),

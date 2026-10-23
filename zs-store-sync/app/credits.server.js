@@ -158,6 +158,21 @@ export function estimateOverageCost(overageByType) {
   return Math.round(cost * 100) / 100;
 }
 
+// ─── Complimentary Pro ─────────────────────────────────────────────────────────
+// Stores the app owner runs on Pro without a Shopify charge (their own demo and
+// company sites), named in COMP_PRO_SHOPS (comma-separated myshopify domains).
+// Read here, never stored: no subscription row to drift, nothing billed.
+function compShops() {
+  // eslint-disable-next-line no-undef
+  return (process.env.COMP_PRO_SHOPS || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+export function isCompShop(shop) {
+  return !!shop && compShops().includes(String(shop).toLowerCase());
+}
+
 // ─── Get (or lazily create) subscription, rolling window if due ───────────────
 export async function getUsage(shop) {
   let sub = await db.subscription.findUnique({ where: { shop } });
@@ -194,7 +209,8 @@ export async function getUsage(shop) {
   }
 
   const usage = parseUsage(sub.usageJson);
-  const limits = PLAN_LIMITS[sub.plan] || PLAN_LIMITS.free;
+  const plan = isCompShop(shop) ? "pro" : sub.plan;
+  const limits = PLAN_LIMITS[plan] || PLAN_LIMITS.free;
 
   // remaining per type
   const remaining = {};
@@ -203,13 +219,13 @@ export async function getUsage(shop) {
   }
 
   return {
-    plan: sub.plan,
+    plan,
     status: sub.status,
     usage,                         // { products: 10, collections: 5, ... }
     limits,                        // { products: 1000, collections: 500, ... }
     remaining,                     // { products: 990, ... }
-    allowedTypes: planAllowedTypes(sub.plan),
-    allowsOverage: planAllowsOverage(sub.plan),
+    allowedTypes: planAllowedTypes(plan),
+    allowsOverage: planAllowsOverage(plan),
     periodStart: sub.periodStart,
     interval: sub.interval,
     lockedUntil: sub.lockedUntil,
