@@ -5,7 +5,7 @@ import { onAppUninstalled } from "../lifecycle.server";
 import { syncAffiliateAfterUninstall } from "../lib/affiliate.server";
 
 export const action = async ({ request }) => {
-  const { shop, session, topic } = await authenticateWebhook(request);
+  const { shop, topic } = await authenticateWebhook(request);
 
   console.log(`Received ${topic} webhook for ${shop}`);
 

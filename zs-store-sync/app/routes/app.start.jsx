@@ -3,7 +3,13 @@ import { useLoaderData, useFetcher, Link as RouterLink } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { listConnections, verifyConnectionCode } from "../connection.server";
+import {
+  codeAttemptBlockedFor,
+  isShopDomain,
+  listConnections,
+  recordCodeFailure,
+  verifyConnectionCode,
+} from "../connection.server";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
 import {
@@ -61,7 +67,7 @@ export const action = async ({ request }) => {
   const intent = form.get("intent");
   const sourceShop = normalizeDomain(form.get("sourceShop"));
 
-  if (!sourceShop || !sourceShop.includes(".")) {
+  if (!isShopDomain(sourceShop)) {
     return { ok: false, error: "Enter the full domain, like my-store.myshopify.com" };
   }
   if (sourceShop === shop) {
@@ -91,8 +97,17 @@ export const action = async ({ request }) => {
     const code = String(form.get("code") || "").trim();
     if (!code) return { ok: false, error: "Paste the connection code from the source store." };
 
+    const waitMin = codeAttemptBlockedFor(shop, sourceShop);
+    if (waitMin) {
+      return {
+        ok: false,
+        error: "Too many incorrect codes. Wait 15 minutes, then try again.",
+      };
+    }
+
     const codeOk = await verifyConnectionCode(sourceShop, code);
     if (!codeOk) {
+      recordCodeFailure(shop, sourceShop);
       return {
         ok: false,
         error:

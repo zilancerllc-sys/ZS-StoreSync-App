@@ -2,8 +2,49 @@
 //  ZS StoreSync — Connection code (pairing) helpers
 //  Save as: app/connection.server.js
 // ═════════════════════════════════════════════════════════════════════════════
-import { randomInt } from "node:crypto";
+import { randomInt, timingSafeEqual } from "node:crypto";
 import db from "./db.server";
+
+// ─── Guessing limits ─────────────────────────────────────────────────────────
+// The code is the only thing standing between anyone who installs the app and
+// another store's catalog, customers and orders, and nothing limited how many
+// codes a store could try. Wrong guesses are now capped per trying store and
+// per target store (the second stops many throwaway stores ganging up on one
+// victim). Held in memory: each machine keeps its own count, which only makes
+// the effective limit a small multiple — still hopeless for 31^8 codes.
+const WINDOW_MS = 15 * 60 * 1000;
+const MAX_FAILS_PER_OWNER = 10;
+const MAX_FAILS_PER_SOURCE = 30;
+const fails = new Map(); // key → timestamps of recent wrong codes
+
+function recent(key, now) {
+  const list = (fails.get(key) || []).filter((t) => now - t < WINDOW_MS);
+  if (list.length) fails.set(key, list);
+  else fails.delete(key);
+  return list;
+}
+
+// Minutes until the caller may try again, or 0 when they may try now.
+export function codeAttemptBlockedFor(ownerShop, sourceShop, now = Date.now()) {
+  const owner = recent(`o:${ownerShop}`, now);
+  const source = recent(`s:${sourceShop}`, now);
+  const blocked =
+    (owner.length >= MAX_FAILS_PER_OWNER && owner[0]) ||
+    (source.length >= MAX_FAILS_PER_SOURCE && source[0]);
+  return blocked ? Math.ceil((blocked + WINDOW_MS - now) / 60000) : 0;
+}
+
+export function recordCodeFailure(ownerShop, sourceShop, now = Date.now()) {
+  for (const key of [`o:${ownerShop}`, `s:${sourceShop}`]) {
+    fails.set(key, [...recent(key, now), now]);
+  }
+}
+
+// A store domain we will look up, store, and send to /auth/login. Anything
+// else was previously accepted as long as it contained a dot.
+export function isShopDomain(value) {
+  return /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(String(value || ""));
+}
 
 // Characters that are unambiguous (no 0/O, 1/I/L) for codes humans read & type.
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -81,7 +122,10 @@ export async function verifyConnectionCode(sourceShop, code) {
   const normalized = normalizeCode(code);
   const rec = await db.shopSecret.findUnique({ where: { shop: sourceShop } });
   if (!rec) return false;
-  return rec.connectionCode === normalized;
+  // constant-time, so response timing can't reveal how much of a guess matched
+  const a = Buffer.from(rec.connectionCode);
+  const b = Buffer.from(normalized);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 // ─── An owner's pairings, with `authorized` checked against reality ──────────
