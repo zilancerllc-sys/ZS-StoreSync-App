@@ -231,6 +231,18 @@ export async function onAppUninstalled(shop) {
 // ─── Unsubscribe ─────────────────────────────────────────────────────────────
 // By token, so the link works from an inbox with no session. Returns the shop
 // on success so the page can confirm which store it applied to.
+// Look-up only. The unsubscribe page renders from this on GET and changes
+// nothing: mail scanners (Outlook Safe Links, Gmail's link checks) open every
+// link in a message, and unsubscribing on GET opted merchants out unasked.
+export async function contactByToken(token) {
+  if (!token) return null;
+  const contact = await db.merchantContact.findUnique({
+    where: { unsubscribeToken: String(token) },
+    select: { shop: true, optedIn: true },
+  });
+  return contact || null;
+}
+
 export async function unsubscribeByToken(token) {
   if (!token) return null;
   const contact = await db.merchantContact.findUnique({

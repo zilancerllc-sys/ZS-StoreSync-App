@@ -44,7 +44,10 @@ export function esc(s = "") {
 
 // Send one email. Returns true on success; never throws, because no email is
 // worth failing a migration over.
-export async function sendEmail({ to, subject, html, replyTo }) {
+// unsubscribeToken adds RFC 8058 one-click unsubscribe headers, which Gmail and
+// Yahoo require of bulk senders and which give mail clients their own
+// "Unsubscribe" button (it POSTs to /unsubscribe/:token).
+export async function sendEmail({ to, subject, html, replyTo, unsubscribeToken }) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey || !to) return false;
 
@@ -61,6 +64,14 @@ export async function sendEmail({ to, subject, html, replyTo }) {
         ...(replyTo ? { reply_to: replyTo } : {}),
         subject,
         html,
+        ...(unsubscribeToken
+          ? {
+              headers: {
+                "List-Unsubscribe": `<${unsubscribeUrl(unsubscribeToken)}>`,
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+              },
+            }
+          : {}),
       }),
     });
     if (!res.ok) {
@@ -381,6 +392,7 @@ export async function sendWelcomeEmail({ to, ...opts }) {
     replyTo: REPLY_TO,
     subject: `Welcome to ${APP_NAME} — here's how to start`,
     html: welcomeEmailHtml(opts),
+    unsubscribeToken: opts.token,
   });
 }
 
@@ -415,6 +427,7 @@ export async function sendFeedbackEmail({ to, token, experience = "experience" }
     replyTo: REPLY_TO,
     subject: `How's ${APP_NAME} working out?`,
     html: mailShell(body, { token, promotional: true }),
+    unsubscribeToken: token,
   });
 }
 
@@ -431,6 +444,7 @@ export async function sendPromoEmail({ to, token, apps, headline, intro }) {
     replyTo: REPLY_TO,
     subject: headline,
     html: mailShell(body, { token, promotional: true }),
+    unsubscribeToken: token,
   });
 }
 
@@ -459,5 +473,6 @@ export async function sendReviewRequestEmail({ to, token }) {
     replyTo: REPLY_TO,
     subject: `A quick favour from the ${APP_NAME} team`,
     html: mailShell(body, { token, promotional: true }),
+    unsubscribeToken: token,
   });
 }

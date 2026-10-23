@@ -237,7 +237,7 @@ function Traffic({ t, label }) {
         <div className="od-stat"><div className="od-stat-l">Listing views</div><div className="od-stat-v">{t.views}</div></div>
         <div className="od-stat"><div className="od-stat-l">Visitors</div><div className="od-stat-v">{t.visitors}</div></div>
         <div className="od-stat"><div className="od-stat-l">From search</div><div className="od-stat-v">{t.views ? Math.round((fromSearch / t.views) * 100) : 0}%</div><div className="od-stat-h">{fromSearch} views</div></div>
-        <div className="od-stat"><div className="od-stat-l">Install clicks</div><div className="od-stat-v">{t.installClicks}</div><div className="od-stat-h">"Install" pressed on the listing{t.visitors ? ` · ${Math.round((t.installClicks / t.visitors) * 100)}% of visitors` : ""}</div></div>
+        <div className="od-stat"><div className="od-stat-l">Install clicks</div><div className="od-stat-v">{t.installClicks}</div><div className="od-stat-h">&ldquo;Install&rdquo; pressed on the listing{t.visitors ? ` · ${Math.round((t.installClicks / t.visitors) * 100)}% of visitors` : ""}</div></div>
         <div className="od-stat"><div className="od-stat-l">Website visits</div><div className="od-stat-v">{t.siteViews}</div><div className="od-stat-h">zs-storesync.zilancer.com · {t.siteVisitors} visitors</div></div>
       </div>
       <div className="od-two" style={{ marginTop: 4 }}>
@@ -341,7 +341,7 @@ export default function OwnerDashboard() {
             <span className="od-small">{label} · UTC · <span style={{ color: "#1F9E6A" }}>■</span> installs <span style={{ color: "#C0271A" }}>■</span> uninstalls</span>
           </div>
           <Chart series={d.series} />
-          <p className="od-note">Exact from 17 Oct 2026, when the event log started. Earlier uninstalls were erased by Shopify's 48-hour data deletion, so Partners shows more history than this chart.</p>
+          <p className="od-note">Exact from 17 Oct 2026, when the event log started. Earlier uninstalls were erased by Shopify&apos;s 48-hour data deletion, so Partners shows more history than this chart.</p>
         </div>
 
         <Traffic t={d.traffic} label={label} />
@@ -420,7 +420,7 @@ export default function OwnerDashboard() {
             </table>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", gap: 12, flexWrap: "wrap" }}>
-            <span className="od-note" style={{ margin: 0 }}>{d.lastChecked ? `Stores last checked ${ago(d.lastChecked)}. ` : "Press Check stores once to match Partners. "}"Reviewed" is your own mark: the App Store doesn't tell apps who reviewed. <a href="https://apps.shopify.com/zs-storesync/reviews" target="_blank" rel="noreferrer">Check the reviews</a>.</span>
+            <span className="od-note" style={{ margin: 0 }}>{d.lastChecked ? `Stores last checked ${ago(d.lastChecked)}. ` : "Press Check stores once to match Partners. "}&ldquo;Reviewed&rdquo; is your own mark: the App Store doesn&apos;t tell apps who reviewed. <a href="https://apps.shopify.com/zs-storesync/reviews" target="_blank" rel="noreferrer">Check the reviews</a>.</span>
             <button className="od-btn" disabled={dl} onClick={async () => { setDl(true); try { await downloadFile("/app/stores-export.csv", "installed-stores.csv"); } finally { setDl(false); } }}>{dl ? "Preparing…" : "Download CSV"}</button>
           </div>
         </div>

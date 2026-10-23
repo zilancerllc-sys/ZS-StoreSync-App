@@ -11,6 +11,9 @@ import db from "../db.server";
 import { getUsage, filterAllowedTypes } from "../credits.server";
 import {
   verifyConnectionCode,
+  codeAttemptBlockedFor,
+  recordCodeFailure,
+  isShopDomain,
   getVerifiedConnection,
   listConnections,
 } from "../connection.server";
@@ -97,7 +100,7 @@ export const action = async ({ request }) => {
 
     if (!sourceShop)
       return { ok: false, error: "Please enter a store domain." };
-    if (!sourceShop.includes(".")) {
+    if (!isShopDomain(sourceShop)) {
       return {
         ok: false,
         error: "Enter a full domain like store.myshopify.com",
@@ -115,8 +118,17 @@ export const action = async ({ request }) => {
 
     // SECURITY: the source store's owner must share its connection code. This
     // prevents anyone who merely knows a domain from pulling that store's data.
+    const waitMin = codeAttemptBlockedFor(shop, sourceShop);
+    if (waitMin) {
+      return {
+        ok: false,
+        error: "Too many incorrect codes. Wait 15 minutes, then try again.",
+      };
+    }
+
     const codeOk = await verifyConnectionCode(sourceShop, code);
     if (!codeOk) {
+      recordCodeFailure(shop, sourceShop);
       return {
         ok: false,
         error:
