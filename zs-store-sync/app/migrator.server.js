@@ -3445,7 +3445,7 @@ export async function runMigration({
 // ═════════════════════════════════════════════════════════════════════════════
 //  PREVIEW (counts only — no writes)
 // ═════════════════════════════════════════════════════════════════════════════
-// Only these have a *Count field on QueryRoot (verified against the 2025-10
+// Only these have a *Count field on QueryRoot (verified against the 2026-04
 // schema). files, menus, metaobjects, metafields and blogPosts have none —
 // blogsCount exists but counts blogs, not the articles this app migrates — so
 // they are reported as "counted during the run" rather than a bogus number.

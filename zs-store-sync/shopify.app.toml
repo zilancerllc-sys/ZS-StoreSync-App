@@ -11,11 +11,11 @@ scopes = "read_products,write_products,read_content,write_content,read_files,wri
 
 [webhooks]
 # Must track the ApiVersion the app code is built against (app/shopify.server.js
-# uses ApiVersion.October25). Declaring a newer version here made Shopify send
+# uses ApiVersion.April26). Declaring a newer version here made Shopify send
 # payloads in a format the handlers were never written for — app_subscriptions
 # /update in particular reads status, name, admin_graphql_api_id and
 # current_period_end straight off the payload.
-api_version = "2025-10"
+api_version = "2026-04"
 
   [webhooks.privacy_compliance]
   customer_data_request_url = "/webhooks/customers/data_request"
