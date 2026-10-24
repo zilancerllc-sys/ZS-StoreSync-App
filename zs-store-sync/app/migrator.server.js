@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { customerRef } from "./redact.server";
+import { sourcesFromRuleSet } from "./lib/collection-sources";
 
 // Namespaces (metafields) and types (metaobjects) that Shopify or another app
 // owns. They already exist on every store and creating them is always refused
@@ -736,8 +737,8 @@ const Q_TARGET_COLLECTION_BY_HANDLE = `#graphql
   }`;
 
 const M_COLLECTION_CREATE = `#graphql
-  mutation CreateCollection($input: CollectionInput!) {
-    collectionCreate(input: $input) {
+  mutation CreateCollection($collection: CollectionCreateInput!) {
+    collectionCreate(collection: $collection) {
       collection { id handle }
       userErrors { field message }
     }
@@ -768,12 +769,48 @@ const M_COLLECTION_ADD_PRODUCTS = `#graphql
   }`;
 
 const M_COLLECTION_UPDATE = `#graphql
-  mutation UpdateCollection($input: CollectionInput!) {
-    collectionUpdate(input: $input) {
+  mutation UpdateCollection($collection: CollectionUpdateInput!) {
+    collectionUpdate(collection: $collection) {
       collection { id handle }
       userErrors { field message }
     }
   }`;
+
+// Rule-based sources on a target collection — replaced when a smart collection
+// is re-synced. Sources with only hand-picked products (a manual collection's
+// membership) are left alone.
+const Q_TARGET_COLLECTION_SOURCES = `#graphql
+  query ColSources($id: ID!) {
+    collection(id: $id) {
+      sources {
+        id
+        ... on CollectionConditionsSource { inclusion { conditions { __typename } } }
+      }
+    }
+  }`;
+
+const Q_SHOP_UNITS = `#graphql
+  query ShopUnits { shop { currencyCode weightUnit } }`;
+
+// Price and weight rules carry no unit of their own; they're in the source
+// store's currency and weight unit.
+async function sourceShopUnits(ctx) {
+  if (!ctx._sourceUnits) {
+    const d = await gql(ctx.source, Q_SHOP_UNITS);
+    ctx._sourceUnits = {
+      currencyCode: d?.shop?.currencyCode || "USD",
+      weightUnit: d?.shop?.weightUnit || "KILOGRAMS",
+    };
+  }
+  return ctx._sourceUnits;
+}
+
+async function ruleSourceIds(ctx, collectionId) {
+  const d = await gql(ctx.target, Q_TARGET_COLLECTION_SOURCES, { id: collectionId });
+  return (d?.collection?.sources || [])
+    .filter((s) => s.inclusion?.conditions?.length)
+    .map((s) => s.id);
+}
 
 // #7 — copy a manual collection's product membership, matching products by
 // handle across stores. Additive: products already in the target collection are
@@ -858,15 +895,15 @@ async function migrateCollections(ctx) {
           : undefined,
       metafields: collectionMf,
     };
+    let sources = null;
     if (c.ruleSet) {
-      input.ruleSet = {
-        appliedDisjunctively: c.ruleSet.appliedDisjunctively,
-        rules: c.ruleSet.rules.map((rule) => ({
-          column: rule.column,
-          relation: rule.relation,
-          condition: rule.condition,
-        })),
-      };
+      const built = sourcesFromRuleSet(c.ruleSet, c.title, await sourceShopUnits(ctx));
+      if (built.skip) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped: ${c.title} — ${built.skip}`);
+        continue;
+      }
+      sources = built.sources;
     }
     if (c.image?.src) {
       input.image = { src: c.image.src, altText: c.image.altText || "" };
@@ -880,9 +917,12 @@ async function migrateCollections(ctx) {
         continue;
       }
       try {
-        const upd = await gql(target, M_COLLECTION_UPDATE, {
-          input: { ...input, id: existingCol.id },
-        });
+        const collection = { ...input, id: existingCol.id };
+        if (sources) {
+          collection.sourcesToDelete = await ruleSourceIds(ctx, existingCol.id);
+          collection.sourcesToCreate = sources;
+        }
+        const upd = await gql(target, M_COLLECTION_UPDATE, { collection });
         const uerrs = upd?.collectionUpdate?.userErrors;
         if (uerrs?.length) {
           counters.failed++;
@@ -911,7 +951,9 @@ async function migrateCollections(ctx) {
     }
 
     try {
-      const data = await gql(target, M_COLLECTION_CREATE, { input });
+      const data = await gql(target, M_COLLECTION_CREATE, {
+        collection: sources ? { ...input, sources } : input,
+      });
       const errs = data?.collectionCreate?.userErrors;
       if (errs?.length) {
         counters.failed++;
@@ -3445,7 +3487,7 @@ export async function runMigration({
 // ═════════════════════════════════════════════════════════════════════════════
 //  PREVIEW (counts only — no writes)
 // ═════════════════════════════════════════════════════════════════════════════
-// Only these have a *Count field on QueryRoot (verified against the 2026-04
+// Only these have a *Count field on QueryRoot (verified against the 2026-10
 // schema). files, menus, metaobjects, metafields and blogPosts have none —
 // blogsCount exists but counts blogs, not the articles this app migrates — so
 // they are reported as "counted during the run" rather than a bogus number.
