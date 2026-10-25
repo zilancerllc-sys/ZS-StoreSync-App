@@ -5,6 +5,8 @@
 
 app = 'zs-store-sync'
 primary_region = 'sin'
+# Disk-backed swap; stays above the first [table] so Fly applies it.
+swap_size_mb = 512
 
 [build]
 
@@ -49,6 +51,6 @@ primary_region = 'sin'
     path = '/healthz'
 
 [[vm]]
-  memory = '1gb'
+  memory = '512mb'
   cpus = 1
-  memory_mb = 1024
+  memory_mb = 512
