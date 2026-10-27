@@ -386,7 +386,7 @@ export default function OwnerDashboard() {
                 {rows.map((r) => (
                   <tr key={r.shop} className={r.isTest ? "test" : ""}>
                     <td>
-                      <div className="od-shop">{r.storeName || r.shop.replace(".myshopify.com", "")}{r.isTest && <span className="od-chip mut" style={{ marginLeft: 6 }}>test</span>}{r.isDev && <span className="od-chip mut" style={{ marginLeft: 6 }}>dev</span>}</div>
+                      <div className="od-shop"><a href={`https://${r.shop}`} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>{r.storeName || r.shop.replace(".myshopify.com", "")}</a>{r.isTest && <span className="od-chip mut" style={{ marginLeft: 6 }}>test</span>}{r.isDev && <span className="od-chip mut" style={{ marginLeft: 6 }}>dev</span>}</div>
                       <div className="od-small">{r.storeName ? r.shop.replace(".myshopify.com", "") + " · " : ""}{r.email || "no email"}{r.name ? ` · ${r.name}` : ""}</div>
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>{fmtDate(r.installedAt)}{r.uninstalledAt && <div className="od-small">left {fmtDate(r.uninstalledAt)}</div>}</td>
@@ -396,21 +396,29 @@ export default function OwnerDashboard() {
                     <td style={{ whiteSpace: "nowrap" }}>{r.widgetShownAt ? ago(r.widgetShownAt) : <span className="od-small">never</span>}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{r.jobsDone} / {r.jobsTotal}{r.periodRuns ? <div className="od-small">{r.periodRuns} runs, {r.periodItems} items this period</div> : null}</td>
                     <td style={{ whiteSpace: "nowrap" }}>
-                      {r.reviewedAt ? <span className="od-chip ok">Reviewed</span> : r.reviewAskedAt ? <span className="od-small">asked {fmtDate(r.reviewAskedAt)}</span> : <span className="od-small">—</span>}
+                      {r.reviewedAt ? <span className="od-chip ok">Reviewed</span> : r.reviewAskedAt ? <span className="od-chip warn" title={`Review request sent ${fmtDate(r.reviewAskedAt)}`}>Requested {fmtDate(r.reviewAskedAt).slice(5)}</span> : <span className="od-small">—</span>}
                     </td>
                     <td>
                       <div className="od-acts">
                         {r.active && !r.reviewedAt && (
-                          <button className="od-btn p" disabled={!r.canEmail || busy(r.shop, "review")}
-                            title={r.canEmail ? "Email this store a review request" : "No email, or the store unsubscribed"}
-                            onClick={() => { if (arm === r.shop) { setArm(null); post("review", r.shop); } else setArm(r.shop); }}
-                            onBlur={() => setArm((a) => (a === r.shop ? null : a))}>
-                            {busy(r.shop, "review") ? "Sending…" : arm === r.shop ? "Click again to send" : r.reviewAskedAt ? "Ask again" : "Ask for review"}
-                          </button>
+                          arm === r.shop ? (
+                            <>
+                              <button className="od-btn p" disabled={busy(r.shop, "review")}
+                                title={`Send the review request email to ${r.email}`}
+                                onClick={() => { setArm(null); post("review", r.shop); }}>Send email</button>
+                              <button className="od-btn" onClick={() => setArm(null)}>Cancel</button>
+                            </>
+                          ) : (
+                            <button className="od-btn p" disabled={!r.canEmail || busy(r.shop, "review")}
+                              title={r.canEmail ? "Email this store a review request" : "No email, or the store unsubscribed"}
+                              onClick={() => setArm(r.shop)}>
+                              {busy(r.shop, "review") ? "Sending…" : r.reviewAskedAt ? "Ask again" : "Ask for review"}
+                            </button>
+                          )
                         )}
                         {r.email && r.active && <a className="od-btn" href={mailtoFor(r)} target="_blank" rel="noreferrer">Email</a>}
                         <label className="od-check"><input type="checkbox" checked={!!r.reviewedAt} onChange={(e) => post("reviewed", r.shop, e.target.checked ? "1" : "0")} /> reviewed</label>
-                        <label className="od-check"><input type="checkbox" checked={r.isTest} onChange={(e) => post("test", r.shop, e.target.checked ? "1" : "0")} /> test</label>
+                        <a className="od-btn" href={`https://${r.shop}`} target="_blank" rel="noreferrer" title="Open this store in a new tab">View store</a>
                       </div>
                     </td>
                   </tr>
