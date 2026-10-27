@@ -9,16 +9,25 @@ import { Link, useFetcher, useLoaderData, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import { requireOwnerShop } from "../lib/owner.server";
 import { checkStores, loadOwnerDashboard, setStoreMeta } from "../lib/owner-dashboard.server";
+import { syncReviewsCached } from "../lib/app-store-reviews.server";
 import { requestReview } from "../lifecycle.server";
 import { listingTraffic } from "../lib/ga4.server";
 import { downloadFile } from "../lib/download";
+
+// This app's App Store listing, where reviews are read from.
+const APP_HANDLE = "zs-storesync";
 
 export const loader = async ({ request }) => {
   // Cross-shop data — owner store only. See lib/owner.server.js.
   const { session } = await authenticate.admin(request);
   requireOwnerShop(session.shop);
   const period = new URL(request.url).searchParams.get("period") || "7d";
-  const data = await loadOwnerDashboard(period);
+  // Reviews first: a match marks the store reviewed, which the dashboard reads.
+  const reviews = await Promise.race([
+    syncReviewsCached(APP_HANDLE),
+    new Promise((r) => setTimeout(() => r(null), 6000)),
+  ]);
+  const data = { ...(await loadOwnerDashboard(period)), reviews };
   // App Store listing visits and keywords come from GA4; slow or missing GA4
   // must never hold up the rest of the page.
   const traffic = await Promise.race([
@@ -37,6 +46,7 @@ export const action = async ({ request }) => {
   const shop = String(form.get("shop") || "");
   if (intent === "check") {
     const r = await checkStores();
+    await syncReviewsCached(APP_HANDLE, { force: true });
     const parts = Object.entries(r.tally).map(([k, n]) => `${n} ${k}`).join(", ");
     return { ok: true, message: `Checked ${r.checked} stores: ${parts || "none"}.` };
   }
@@ -428,7 +438,7 @@ export default function OwnerDashboard() {
             </table>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", gap: 12, flexWrap: "wrap" }}>
-            <span className="od-note" style={{ margin: 0 }}>{d.lastChecked ? `Stores last checked ${ago(d.lastChecked)}. ` : "Press Check stores once to match Partners. "}&ldquo;Reviewed&rdquo; is your own mark: the App Store doesn&apos;t tell apps who reviewed. <a href="https://apps.shopify.com/zs-storesync/reviews" target="_blank" rel="noreferrer">Check the reviews</a>.</span>
+            <span className="od-note" style={{ margin: 0 }}>{d.lastChecked ? `Stores last checked ${ago(d.lastChecked)}. ` : "Press Check stores once to match Partners. "}{d.reviews ? `${d.reviews.matched.length} of ${d.reviews.reviews} App Store reviews matched to a store${d.reviews.unmatched.length ? ` (no store found for ${d.reviews.unmatched.map((u) => u.name).join(", ")}: tick reviewed by hand)` : ""}. ` : "App Store reviews are matched to stores by store name. "}<a href="https://apps.shopify.com/zs-storesync/reviews" target="_blank" rel="noreferrer">Check the reviews</a>.</span>
             <button className="od-btn" disabled={dl} onClick={async () => { setDl(true); try { await downloadFile("/app/stores-export.csv", "installed-stores.csv"); } finally { setDl(false); } }}>{dl ? "Preparing…" : "Download CSV"}</button>
           </div>
         </div>
