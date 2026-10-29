@@ -13,6 +13,9 @@ import { syncReviewsCached } from "../lib/app-store-reviews.server";
 import { requestReview } from "../lifecycle.server";
 import { listingTraffic } from "../lib/ga4.server";
 import { downloadFile } from "../lib/download";
+import { addTarget, loadRanks, removeTarget, runRankCheck } from "../lib/app-store-rank.server";
+import { RANK } from "../lib/app-store-rank.config";
+import AppStoreRank from "../components/AppStoreRank";
 
 // This app's App Store listing, where reviews are read from.
 const APP_HANDLE = "zs-storesync";
@@ -34,7 +37,11 @@ export const loader = async ({ request }) => {
     listingTraffic(data.start.slice(0, 10)),
     new Promise((r) => setTimeout(() => r({ connected: true, error: "Google Analytics took too long; reload to try again." }), 8000)),
   ]);
-  return { ...data, traffic };
+  const rank = await loadRanks(RANK.handle, RANK).catch((e) => {
+    console.error("[rank] load failed:", e?.message || e);
+    return null;
+  });
+  return { ...data, traffic, rank };
 };
 
 export const action = async ({ request }) => {
@@ -49,6 +56,18 @@ export const action = async ({ request }) => {
     await syncReviewsCached(APP_HANDLE, { force: true });
     const parts = Object.entries(r.tally).map(([k, n]) => `${n} ${k}`).join(", ");
     return { ok: true, message: `Checked ${r.checked} stores: ${parts || "none"}.` };
+  }
+  // App Store rank card (components/AppStoreRank.jsx).
+  if (intent === "rank-check") {
+    // A full read takes minutes: start it and let the page reload for results.
+    runRankCheck(RANK.handle, RANK, { full: true }).catch((e) => console.error("[rank check]", e?.message || e));
+    return { ok: true, rank: true, message: "Rank check started. Reload the page in a few minutes." };
+  }
+  if (intent === "rank-add") {
+    return { ...(await addTarget(String(form.get("kind")), String(form.get("key") || ""))), rank: true };
+  }
+  if (intent === "rank-remove") {
+    return { ...(await removeTarget(String(form.get("kind")), String(form.get("key") || ""))), rank: true };
   }
   if (!shop) return { ok: false, message: "No store given." };
 
@@ -355,6 +374,8 @@ export default function OwnerDashboard() {
         </div>
 
         <Traffic t={d.traffic} label={label} />
+
+        <AppStoreRank r={d.rank} />
 
         <div className="od-two">
           <div className="od-card">

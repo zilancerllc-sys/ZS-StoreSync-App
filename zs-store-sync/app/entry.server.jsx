@@ -5,10 +5,13 @@ import { createReadableStreamFromReadable } from "@react-router/node";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
 import { startScheduleTicker } from "./schedules.server";
+import { startRankTicker } from "./lib/app-store-rank.server";
+import { RANK } from "./lib/app-store-rank.config";
 
 // Recurring syncs need a heartbeat wherever the server runs. Safe on every
 // machine — schedules are claimed in the database, not owned by a process.
 startScheduleTicker();
+startRankTicker(RANK.handle, RANK);
 
 export const streamTimeout = 5000;
 

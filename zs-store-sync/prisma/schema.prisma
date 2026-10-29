@@ -256,3 +256,34 @@ model StoreMeta {
   checkedAt  DateTime?
   updatedAt  DateTime  @updatedAt
 }
+
+// App Store position, read once a day from the public App Store pages
+// (lib/app-store-rank.server.js). One row per day and thing measured:
+// kind "keyword" (key = the search text), "category" (key = category slug)
+// or "app" (key = an app handle: ours or a competitor's).
+model AppStoreRank {
+  id        String   @id @default(cuid())
+  day       String   // YYYY-MM-DD, UTC
+  kind      String
+  key       String
+  position  Int?     // null = not found in the pages read
+  total     Int?     // apps in the category
+  rating    Float?
+  reviews   Int?
+  label     String?
+  top       String?  // JSON: first 10 search results [{handle,name,rating,reviews}]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([day, kind, key])
+  @@index([kind, key])
+}
+
+// What the daily rank check reads: search keywords and competitor apps.
+model AppStoreRankTarget {
+  kind      String   // keyword | competitor
+  key       String
+  createdAt DateTime @default(now())
+
+  @@id([kind, key])
+}
