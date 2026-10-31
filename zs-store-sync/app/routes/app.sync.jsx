@@ -22,7 +22,7 @@ import {
 } from "../schedule-config";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
-import { ProductFilterFields } from "../components/ProductFilterFields";
+import { ProductFilterFields, NewTypeNotes } from "../components/ProductFilterFields";
 import { StopRunButton } from "../components/StopRunButton";
 import { productFilterFromForm } from "../lib/product-filter";
 import {
@@ -300,6 +300,8 @@ const TYPES = [
   { id: "metaobjects", name: "Metaobjects" },
   { id: "blogPosts", name: "Blog Posts" },
   { id: "metafields", name: "Metafields" },
+  { id: "inventory", name: "Stock levels" },
+  { id: "translations", name: "Translations" },
 ];
 
 export default function Sync() {
@@ -406,6 +408,7 @@ export default function Sync() {
                   </div>
                   <input type="hidden" name="types" value={picked.join(",")} />
                   {picked.includes("products") && <ProductFilterFields />}
+                  <NewTypeNotes picked={picked} />
                   <button className="zs-btn" disabled={busy || picked.length === 0}>
                     {busy ? (<><Loader2 size={15} className="zs-spin" /> {t("Syncing…")}</>) : (<><Zap size={15} /> {t("Sync Now")}</>)}
                   </button>

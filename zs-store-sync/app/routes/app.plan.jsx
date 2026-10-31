@@ -389,6 +389,8 @@ const TYPE_LABEL = {
   redirects: "Redirects",
   metaobjects: "Metaobjects",
   blogPosts: "Blog Posts",
+  inventory: "Stock levels",
+  translations: "Translations",
   metafields: "Metafields",
   orders: "Orders",
   customers: "Customers",
@@ -407,6 +409,8 @@ const DISPLAY_TYPES = [
   "metafields",
   "orders",
   "customers",
+  "inventory",
+  "translations",
 ];
 
 const faqs = [
@@ -471,6 +475,8 @@ function buildFeatures(planId, L, t) {
     { text: t("{n} Metaobjects", { n: fmt(L.metaobjects) }), ok: true },
     { text: t("{n} Blog Posts", { n: fmt(L.blogPosts) }), ok: true },
     { text: t("{n} Metafields", { n: fmt(L.metafields) }), ok: true },
+    { text: t("{n} Stock level updates", { n: fmt(L.inventory) }), ok: true },
+    { text: t("{n} Translated items", { n: fmt(L.translations) }), ok: true },
     {
       text: t("{orders} Orders (last 60 days), {customers} Customers", {
         orders: fmt(L.orders),

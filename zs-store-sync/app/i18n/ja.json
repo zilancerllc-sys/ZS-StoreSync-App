@@ -434,5 +434,11 @@
   "This permanently deletes the {count} items this run created on this store, including any changes you made to them since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.": "この実行でストアに作成した{count}件を、その後の変更も含めて完全に削除します。更新またはスキップされた項目はそのままで、月間使用量は返還されません。",
   "This run can't be undone.": "この実行は取り消せません。",
   "Undo is only available for 30 days after a run.": "取り消しは実行後30日間のみ可能です。",
-  "This run has nothing left to undo.": "この実行に取り消せる項目はありません。"
+  "This run has nothing left to undo.": "この実行に取り消せる項目はありません。",
+  "Stock levels": "在庫数",
+  "Translations": "翻訳",
+  "{n} Stock level updates": "在庫更新 {n}件",
+  "{n} Translated items": "翻訳済み項目 {n}件",
+  "Stock levels replaces the quantity on this store for matching variants. Locations are matched by name.": "在庫数は、一致するバリエーションのこのストアの数量を置き換えます。ロケーションは名前で照合します。",
+  "Translations copies products, collections, pages, blog posts and metaobjects, for languages enabled on both stores.": "翻訳は、両方のストアで有効な言語の商品、コレクション、ページ、ブログ記事、メタオブジェクトをコピーします。"
 }

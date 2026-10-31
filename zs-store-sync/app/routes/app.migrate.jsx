@@ -20,7 +20,8 @@ import {
 import { startMigrationJob, getActiveJob } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
-import { ProductFilterFields } from "../components/ProductFilterFields";
+import { ProductFilterFields, NewTypeNotes } from "../components/ProductFilterFields";
+import { Languages, Warehouse } from "lucide-react";
 import { StopRunButton } from "../components/StopRunButton";
 import { productFilterFromForm } from "../lib/product-filter";
 import {
@@ -396,6 +397,8 @@ const ALL_TYPES = [
   { id: "metafields", name: "Metafields", icon: <Tag size={16} /> },
   { id: "orders", name: "Orders", icon: <ShoppingCart size={16} /> },
   { id: "customers", name: "Customers", icon: <Users size={16} /> },
+  { id: "inventory", name: "Stock levels", icon: <Warehouse size={16} /> },
+  { id: "translations", name: "Translations", icon: <Languages size={16} /> },
 ];
 
 export default function Migrate() {
@@ -812,6 +815,7 @@ export default function Migrate() {
                 <input type="hidden" name="sourceShop" value={selectedSource} />
                 <input type="hidden" name="types" value={picked.join(",")} />
                 {picked.includes("products") && <ProductFilterFields />}
+                <NewTypeNotes picked={picked} />
                 <button
                   className="zs-btn"
                   disabled={!selectedSource || picked.length === 0 || running}

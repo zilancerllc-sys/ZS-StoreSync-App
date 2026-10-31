@@ -178,6 +178,8 @@ const TYPE_LABEL = {
   redirects: "Redirects",
   metaobjects: "Metaobjects",
   blogPosts: "Blog Posts",
+  inventory: "Stock levels",
+  translations: "Translations",
   metafields: "Metafields",
   orders: "Orders",
   customers: "Customers",
