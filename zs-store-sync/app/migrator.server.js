@@ -13,6 +13,7 @@
 //    const result = await runMigration({ source, target, types, mode, onLog });
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { randomUUID } from "node:crypto";
 import { customerRef } from "./redact.server";
 import { sourcesFromRuleSet } from "./lib/collection-sources";
 
@@ -3385,7 +3386,8 @@ const RUNNERS = {
 //  Quantities live per location, so a level is copied to the target location
 //  with the same name. Two single-location stores map to each other whatever
 //  their locations are called. Variants are matched by product handle and
-//  variant title, falling back to SKU.
+//  variant title, falling back to SKU. Shopify requires @idempotent on these two
+//  mutations from 2026-04; the schema check can't see that, only a live run can.
 // ═════════════════════════════════════════════════════════════════════════════
 const Q_SOURCE_INVENTORY = `#graphql
   query SourceInventory($cursor: String) {
@@ -3426,16 +3428,16 @@ const M_INVENTORY_TRACK = `#graphql
   }`;
 
 const M_INVENTORY_ACTIVATE = `#graphql
-  mutation ActivateStock($inventoryItemId: ID!, $locationId: ID!) {
-    inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) {
+  mutation ActivateStock($inventoryItemId: ID!, $locationId: ID!, $key: String!) {
+    inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) @idempotent(key: $key) {
       inventoryLevel { id }
       userErrors { field message }
     }
   }`;
 
 const M_INVENTORY_SET = `#graphql
-  mutation SetStock($input: InventorySetQuantitiesInput!) {
-    inventorySetQuantities(input: $input) {
+  mutation SetStock($input: InventorySetQuantitiesInput!, $key: String!) {
+    inventorySetQuantities(input: $input) @idempotent(key: $key) {
       userErrors { field message }
     }
   }`;
@@ -3446,6 +3448,7 @@ async function setStock(ctx, quantities) {
   const send = async () => {
     const d = await gql(ctx.target, M_INVENTORY_SET, {
       input: { name: "available", reason: "correction", quantities },
+      key: randomUUID(),
     });
     return d?.inventorySetQuantities?.userErrors || [];
   };
@@ -3456,6 +3459,7 @@ async function setStock(ctx, quantities) {
       await gql(ctx.target, M_INVENTORY_ACTIVATE, {
         inventoryItemId: q.inventoryItemId,
         locationId: q.locationId,
+        key: randomUUID(),
       });
     }
     errs = await send();
