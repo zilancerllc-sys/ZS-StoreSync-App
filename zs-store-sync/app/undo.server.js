@@ -134,7 +134,7 @@ export const gidType = (gid) => /^gid:\/\/shopify\/([^/]+)\//.exec(String(gid))?
 
 // The merchant or another app may already have removed the item, which is the
 // outcome undo wants, so it counts as done rather than as a failure.
-const GONE = /not found|does not exist|doesn't exist|no longer exists|invalid id/i;
+const GONE = /not found|does not exist|doesn't exist|can't be found|no longer exists|invalid id/i;
 
 // → { ok: true } or { ok: false, error }
 export async function deleteCreatedItem(admin, gid) {

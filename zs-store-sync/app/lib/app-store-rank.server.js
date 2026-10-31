@@ -31,7 +31,7 @@ const PAUSE_MS = 5000; // between requests, plus up to 3s of jitter
 const MAX_429 = 4; // refusals in one run before it stops for the hour
 const RUN_EVERY_MS = 60 * 60 * 1000; // hourly; each look reads only what today still lacks
 
-const g = globalThis;
+const g = global;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const pause = () => sleep(PAUSE_MS + Math.random() * 3000);
 const today = () => new Date().toISOString().slice(0, 10);

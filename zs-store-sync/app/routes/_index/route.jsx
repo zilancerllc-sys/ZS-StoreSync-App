@@ -31,7 +31,7 @@ export default function App() {
     } else {
       setExternal(true);
     }
-  }, []);
+  }, [navigate]);
 
   if (!external) return null;
 
