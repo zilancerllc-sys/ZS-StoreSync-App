@@ -33,6 +33,20 @@ model Session {
 }
 
 // ── A source store a merchant has connected to pull data FROM ────────────────
+// One item a run created on the target store, kept so the run can be undone.
+// Ids only; rows go when undone, after 30 days, or on shop/redact.
+model JobCreatedItem {
+  id        String   @id @default(cuid())
+  jobId     String
+  shop      String
+  gid       String
+  createdAt DateTime @default(now())
+
+  @@index([jobId])
+  @@index([shop, createdAt])
+  @@index([shop, gid])
+}
+
 model StoreConnection {
   id            String   @id @default(cuid())
   // the store that owns this connection (the merchant's main / target store)
@@ -69,6 +83,8 @@ model MigrationJob {
   status        String   @default("queued")
   // Set by the Stop button; the runner checks it between items.
   cancelRequested Boolean @default(false)
+  // Undo: set on an "undo" job, pointing at the run it reverses.
+  undoOfJobId   String?
 
   itemCount     Int      @default(0)   // total processed
   createdCount  Int      @default(0)

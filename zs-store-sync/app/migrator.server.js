@@ -99,6 +99,8 @@ function qv(value) {
 }
 
 // ── Generic paginated fetch over a connection ────────────────────────────────
+export { gql, sleep };
+
 async function fetchAll(admin, query, rootKey, variables = {}, onPage) {
   let cursor = null;
   const all = [];
@@ -701,7 +703,7 @@ async function migrateProducts(ctx) {
       }
 
       counters.created++;
-      consume();
+      consume(newProduct?.id);
       onLog(
         `✓ Created: ${p.title} (${sourceVariants.length} variant${sourceVariants.length === 1 ? "" : "s"})`,
       );
@@ -960,7 +962,7 @@ async function migrateCollections(ctx) {
         onLog(`✕ Failed: ${c.title} — ${errText(errs)}`);
       } else {
         counters.created++;
-        consume();
+        consume(data?.collectionCreate?.collection?.id);
         onLog(`✓ Created: ${c.title}`);
 
         // #7 — manual collection: copy product membership by handle
@@ -1307,7 +1309,7 @@ async function migratePages(ctx) {
         onLog(`✕ Failed: ${pg.title} — ${errText(errs)}`);
       } else {
         counters.created++;
-        consume();
+        consume(data?.pageCreate?.page?.id);
         onLog(`✓ Created: ${pg.title}`);
       }
     } catch (err) {
@@ -1440,7 +1442,7 @@ async function migrateFiles(ctx) {
         onLog(`✕ File failed — ${errText(errs)}`);
       } else {
         counters.created++;
-        consume();
+        consume(data?.fileCreate?.files?.[0]?.id);
         const newId = data?.fileCreate?.files?.[0]?.id;
         if (key) {
           existingKeys.add(key);
@@ -1699,7 +1701,7 @@ async function migrateMetaobjects(ctx) {
         } else {
           counters.created++;
           created++;
-          consume();
+          consume(data?.metaobjectCreate?.metaobject?.id);
         }
       } catch (err) {
         counters.failed++;
@@ -1929,7 +1931,7 @@ async function migrateCustomers(ctx) {
         onLog(`↪︎ Skipped: ${customerRef(c)} — ${errText(errs)}`);
       } else {
         counters.created++;
-        consume();
+        consume(data?.customerCreate?.customer?.id);
         onLog(`✓ Customer: ${customerRef(c)}`);
       }
     } catch (err) {
@@ -2095,7 +2097,7 @@ async function migrateOrders(ctx) {
         onLog(`↪︎ Skipped: ${o.name} — ${errText(errs)}`);
       } else {
         counters.created++;
-        consume();
+        consume(data?.orderCreate?.order?.id);
         onLog(`✓ Order: ${o.name}`);
       }
     } catch (err) {
@@ -2223,7 +2225,7 @@ async function migrateDraftOrders(ctx) {
         onLog(`↪︎ Skipped: ${o.name} — ${errText(errs)}`);
       } else {
         counters.created++;
-        consume();
+        consume(data?.draftOrderCreate?.draftOrder?.id);
         onLog(`✓ Draft order: ${o.name}`);
       }
     } catch (err) {
@@ -2343,7 +2345,7 @@ async function migrateRedirects(ctx) {
         onLog(`↪︎ Skipped: ${r.path} — ${errText(errs)}`);
       } else {
         counters.created++;
-        consume();
+        consume(data?.urlRedirectCreate?.urlRedirect?.id);
         onLog(`✓ Redirect: ${r.path} → ${r.target}`);
       }
     } catch (err) {
@@ -2628,7 +2630,7 @@ async function migrateBlogPosts(ctx) {
           errs = data?.articleCreate?.userErrors;
           if (!errs?.length) {
             counters.created++;
-            consume();
+            consume(data?.articleCreate?.article?.id);
             onLog(
               `✓ Article: ${a.title} — ⚠ featured image skipped, Shopify couldn't fetch it in time; re-add it in the target store.`,
             );
@@ -2642,7 +2644,7 @@ async function migrateBlogPosts(ctx) {
           onLog(`↪︎ Skipped article: ${a.title} — ${errText(errs)}`);
         } else {
           counters.created++;
-          consume();
+          consume(data?.articleCreate?.article?.id);
           onLog(`✓ Article: ${a.title}`);
         }
       } catch (err) {
@@ -2844,7 +2846,7 @@ async function migrateMenus(ctx) {
         onLog(`✕ Failed: ${m.title} — ${errText(errs)}`);
       } else {
         counters.created++;
-        consume();
+        consume(data?.menuCreate?.menu?.id);
         onLog(`✓ Menu: ${m.title}`);
       }
     } catch (err) {
@@ -3321,7 +3323,7 @@ async function migrateDiscounts(ctx) {
         onLog(`✕ Failed: ${d.title} — ${errText(errs)}`);
       } else {
         counters.created++;
-        consume();
+        consume(data?.[root]?.codeDiscountNode?.id || data?.[root]?.automaticDiscountNode?.id);
         if (kind.startsWith("DiscountAutomatic")) autoTitles.add(d.title);
         onLog(`✓ ${label}: ${d.title}`);
       }
@@ -3399,6 +3401,8 @@ export async function runMigration({
   // otherwise the whole run is free.
   onConsume = () => {},
   // products(query:) string narrowing which source products are copied
+  // Fired with the gid of every item created, for Undo.
+  onCreated = () => {},
   productQuery = null,
   // true once the merchant pressed Stop. Every module already checks quota
   // before each item, so stopping goes through those same checks.
@@ -3442,7 +3446,11 @@ export async function runMigration({
     // withheld (guard the create path with canCreate()).
     stopOnQuota: () => shouldStop() || (!hasQuota(currentType) && mode !== "sync"),
     canCreate: () => hasQuota(currentType),
-    consume: () => consume(currentType),
+    // gid: what was created, so the run can be undone later
+    consume: (gid) => {
+      consume(currentType);
+      if (gid) onCreated(gid);
+    },
     setType: (t) => {
       currentType = t;
     },

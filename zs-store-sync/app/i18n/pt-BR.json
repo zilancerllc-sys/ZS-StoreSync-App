@@ -427,5 +427,12 @@
   "Draft": "Rascunho",
   "Archived": "Arquivado",
   "Download report (CSV)": "Baixar relatório (CSV)",
-  "not reached": "não alcançado"
+  "not reached": "não alcançado",
+  "Undo": "Desfazer",
+  "Undo this run": "Desfazer esta execução",
+  "Delete {count} items": "Excluir {count} itens",
+  "This permanently deletes the {count} items this run created on this store, including any changes you made to them since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.": "Isso exclui permanentemente os {count} itens que esta execução criou nesta loja, incluindo as alterações feitas desde então. Itens atualizados ou ignorados permanecem como estão, e o uso mensal não é reembolsado.",
+  "This run can't be undone.": "Esta execução não pode ser desfeita.",
+  "Undo is only available for 30 days after a run.": "Desfazer só fica disponível por 30 dias após uma execução.",
+  "This run has nothing left to undo.": "Não há mais nada para desfazer nesta execução."
 }
