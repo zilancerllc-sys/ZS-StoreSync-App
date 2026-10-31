@@ -448,5 +448,12 @@
   "Pick exact products (up to 50)": "Scegli prodotti precisi (fino a 50)",
   "Search by title": "Cerca per titolo",
   "Search": "Cerca",
-  "No products found.": "Nessun prodotto trovato."
+  "No products found.": "Nessun prodotto trovato.",
+  "Instant sync": "Sincronizzazione istantanea",
+  "Copy product changes from {shop} about a minute after they're saved. Covers product details, not stock levels or other data types, which stay on your schedule.": "Copia le modifiche ai prodotti da {shop} circa un minuto dopo il salvataggio. Riguarda i dettagli dei prodotti, non i livelli di stock o altri tipi di dati, che seguono la tua pianificazione.",
+  "Turn on instant sync": "Attiva la sincronizzazione istantanea",
+  "Turn off instant sync": "Disattiva la sincronizzazione istantanea",
+  "Instant sync needs a paid plan.": "La sincronizzazione istantanea richiede un piano a pagamento.",
+  "Instant sync isn't included on the Free plan. Upgrade to turn it on.": "La sincronizzazione istantanea non è inclusa nel piano gratuito. Passa a un piano superiore per attivarla.",
+  "Instant sync is already on in the other direction. Turn it off on that store first.": "La sincronizzazione istantanea è già attiva nella direzione opposta. Disattivala prima in quel negozio."
 }

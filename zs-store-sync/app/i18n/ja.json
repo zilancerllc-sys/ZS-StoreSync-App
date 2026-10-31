@@ -448,5 +448,12 @@
   "Pick exact products (up to 50)": "商品を個別に選択(最大50件)",
   "Search by title": "タイトルで検索",
   "Search": "検索",
-  "No products found.": "商品が見つかりません。"
+  "No products found.": "商品が見つかりません。",
+  "Instant sync": "インスタント同期",
+  "Copy product changes from {shop} about a minute after they're saved. Covers product details, not stock levels or other data types, which stay on your schedule.": "{shop} の商品変更を保存の約1分後にコピーします。対象は商品情報で、在庫数やその他のデータはスケジュールに従います。",
+  "Turn on instant sync": "インスタント同期をオン",
+  "Turn off instant sync": "インスタント同期をオフ",
+  "Instant sync needs a paid plan.": "インスタント同期には有料プランが必要です。",
+  "Instant sync isn't included on the Free plan. Upgrade to turn it on.": "インスタント同期は無料プランに含まれていません。有効にするにはアップグレードしてください。",
+  "Instant sync is already on in the other direction. Turn it off on that store first.": "インスタント同期はすでに逆方向で有効です。先にそのストアでオフにしてください。"
 }

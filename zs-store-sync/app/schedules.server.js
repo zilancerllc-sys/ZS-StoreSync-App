@@ -23,6 +23,7 @@ import { notifySchedulePaused } from "./notify.server";
 // The lifecycle mailer needs the same "run something later" heartbeat, and
 // one timer is easier to reason about than two.
 import { runDueLifecycleEmails } from "./lifecycle.server";
+import { runDueInstantSyncs } from "./instant-sync.server";
 
 const BUSY_RETRY_MS = 15 * 60 * 1000;
 
@@ -223,6 +224,12 @@ export function startScheduleTicker() {
         if (r.length) console.log("[schedules]", JSON.stringify(r));
       },
       (err) => console.error("[schedules] tick failed:", err),
+    );
+    runDueInstantSyncs().then(
+      (r) => {
+        if (r.length) console.log("[instant-sync]", JSON.stringify(r));
+      },
+      (err) => console.error("[instant-sync] tick failed:", err),
     );
     runDueLifecycleEmails().then(
       (r) => {

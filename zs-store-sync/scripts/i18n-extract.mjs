@@ -18,6 +18,7 @@ const SOURCES = [
   "app/schedule-config.js",
   "app/credits.server.js",
   "app/undo.server.js",
+  "app/instant-sync.server.js",
   "app/lib/affiliate.server.js",
   "app/routes/webhooks.app.uninstalled.jsx",
 ];
