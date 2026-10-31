@@ -440,5 +440,13 @@
   "{n} Stock level updates": "在庫更新 {n}件",
   "{n} Translated items": "翻訳済み項目 {n}件",
   "Stock levels replaces the quantity on this store for matching variants. Locations are matched by name.": "在庫数は、一致するバリエーションのこのストアの数量を置き換えます。ロケーションは名前で照合します。",
-  "Translations copies products, collections, pages, blog posts and metaobjects, for languages enabled on both stores.": "翻訳は、両方のストアで有効な言語の商品、コレクション、ページ、ブログ記事、メタオブジェクトをコピーします。"
+  "Translations copies products, collections, pages, blog posts and metaobjects, for languages enabled on both stores.": "翻訳は、両方のストアで有効な言語の商品、コレクション、ページ、ブログ記事、メタオブジェクトをコピーします。",
+  "Dry run": "ドライラン",
+  "Check item by item": "項目ごとに確認",
+  "Checking each item — nothing is changed…": "各項目を確認しています(変更はされません)…",
+  "Item-by-item check covers Products, Collections, Pages, Discounts, Redirects and Menus.": "項目ごとの確認の対象は、商品、コレクション、ページ、ディスカウント、リダイレクト、メニューです。",
+  "Pick exact products (up to 50)": "商品を個別に選択(最大50件)",
+  "Search by title": "タイトルで検索",
+  "Search": "検索",
+  "No products found.": "商品が見つかりません。"
 }

@@ -268,7 +268,9 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
     await flushCreated();
 
     const summary =
-      mode === "sync"
+      mode === "dryrun"
+        ? `${result.created} would be created · ${result.skipped} already on this store`
+        : mode === "sync"
         ? `${result.created} new · ${result.updated} updated · ${result.skipped} unchanged`
         : result.summary;
 

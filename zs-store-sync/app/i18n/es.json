@@ -440,5 +440,13 @@
   "{n} Stock level updates": "{n} actualizaciones de stock",
   "{n} Translated items": "{n} elementos traducidos",
   "Stock levels replaces the quantity on this store for matching variants. Locations are matched by name.": "Niveles de stock reemplaza la cantidad en esta tienda para las variantes coincidentes. Las ubicaciones se relacionan por nombre.",
-  "Translations copies products, collections, pages, blog posts and metaobjects, for languages enabled on both stores.": "Traducciones copia productos, colecciones, páginas, entradas de blog y metaobjetos en los idiomas activados en ambas tiendas."
+  "Translations copies products, collections, pages, blog posts and metaobjects, for languages enabled on both stores.": "Traducciones copia productos, colecciones, páginas, entradas de blog y metaobjetos en los idiomas activados en ambas tiendas.",
+  "Dry run": "Prueba",
+  "Check item by item": "Comprobar elemento por elemento",
+  "Checking each item — nothing is changed…": "Comprobando cada elemento: no se cambia nada…",
+  "Item-by-item check covers Products, Collections, Pages, Discounts, Redirects and Menus.": "La comprobación por elemento cubre Productos, Colecciones, Páginas, Descuentos, Redirecciones y Menús.",
+  "Pick exact products (up to 50)": "Elegir productos exactos (hasta 50)",
+  "Search by title": "Buscar por título",
+  "Search": "Buscar",
+  "No products found.": "No se encontraron productos."
 }

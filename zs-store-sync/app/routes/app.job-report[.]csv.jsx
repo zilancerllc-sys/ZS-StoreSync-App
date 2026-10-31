@@ -17,6 +17,7 @@ const RESULT_BY_MARK = [
   ["↪", "skipped"],
   ["✕", "failed"],
   ["⚠", "warning"],
+  ["•", "would create"],
 ];
 
 function reportRows(logs) {

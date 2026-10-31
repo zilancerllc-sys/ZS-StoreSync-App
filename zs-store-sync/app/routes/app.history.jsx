@@ -193,7 +193,7 @@ const STATUS_LABEL = {
   stopped: "Stopped",
 };
 
-const MODE_LABEL = { migrate: "Migration", sync: "Sync", undo: "Undo" };
+const MODE_LABEL = { migrate: "Migration", sync: "Sync", undo: "Undo", dryrun: "Dry run" };
 
 export default function History() {
   const t = useT();
