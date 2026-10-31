@@ -22,6 +22,9 @@ import {
 } from "../schedule-config";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
+import { ProductFilterFields } from "../components/ProductFilterFields";
+import { StopRunButton } from "../components/StopRunButton";
+import { productFilterFromForm } from "../lib/product-filter";
 import {
   Zap,
   Loader2,
@@ -228,6 +231,7 @@ export const action = async ({ request }) => {
     mode: "sync",
     types: allowed,
     limits: migrateLimits,
+    productFilter: productFilterFromForm(form),
   });
   // null = the database rejected a second concurrent run (see app.migrate.jsx).
   if (!jobId) {
@@ -401,6 +405,7 @@ export default function Sync() {
                     })}
                   </div>
                   <input type="hidden" name="types" value={picked.join(",")} />
+                  {picked.includes("products") && <ProductFilterFields />}
                   <button className="zs-btn" disabled={busy || picked.length === 0}>
                     {busy ? (<><Loader2 size={15} className="zs-spin" /> {t("Syncing…")}</>) : (<><Zap size={15} /> {t("Sync Now")}</>)}
                   </button>
@@ -415,6 +420,7 @@ export default function Sync() {
                   <div className="zs-banner ok" style={{ background: "var(--zs-cream-tint)", color: "var(--zs-clay-deep)", borderColor: "var(--zs-border)" }}>
                     <Loader2 size={16} className="zs-spin" /> {t("Sync running in the background — live progress below.")}
                   </div>
+                  <StopRunButton jobId={activeJobId} />
                   {job?.id === activeJobId && job.logs?.length > 0 && (
                     <div className="zs-log">
                       {job.logs.map((l, i) => <div key={i}>{l}</div>)}
@@ -431,6 +437,7 @@ export default function Sync() {
                   ) : (
                     <div className="zs-banner ok">
                       <CheckCircle2 size={16} />{" "}
+                      {job.status === "stopped" && `${t("Stopped")} — `}
                       {t("Synced — {created} new, {updated} updated, {skipped} already up to date.", {
                         created: job.created,
                         updated: job.updated ?? 0,

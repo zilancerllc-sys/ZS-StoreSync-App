@@ -12,6 +12,7 @@ import { runMigration } from "./migrator.server";
 import { consumeQuota } from "./credits.server";
 import { redactPII } from "./redact.server";
 import { notifyScheduledRun, shouldNotifyForJob } from "./notify.server";
+import { productSearchQuery } from "./lib/product-filter";
 
 // A "running" job whose row hasn't been touched in this long is considered
 // dead (machine stopped, deploy, crash). This keys off updatedAt, not
@@ -85,6 +86,7 @@ export async function startMigrationJob({
   types,
   limits,
   scheduleId = null, // set only when a SyncSchedule started this run
+  productFilter = null,
 }) {
   let job;
   try {
@@ -109,7 +111,7 @@ export async function startMigrationJob({
   }
 
   // fire-and-forget: the runner keeps going after this request responds
-  runJob(job.id, { shop, sourceShop, types, limits, mode, scheduleId }).catch((err) => {
+  runJob(job.id, { shop, sourceShop, types, limits, mode, scheduleId, productFilter }).catch((err) => {
     console.error(`Migration job ${job.id} crashed:`, err);
   });
 
@@ -141,7 +143,7 @@ async function notifyIfScheduled(scheduleId, jobId) {
   }
 }
 
-async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId }) {
+async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId, productFilter }) {
   const logs = [];
   let dirty = false;
   const onLog = (msg) => {
@@ -201,8 +203,15 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
   // would revive the job as running (or roll its log back). The guard makes a
   // late write match zero rows instead.
   let lastWriteAt = Date.now();
+  let stopRequested = false;
   const flusher = setInterval(() => {
     flushQuota();
+    db.migrationJob
+      .findUnique({ where: { id: jobId }, select: { cancelRequested: true } })
+      .then((j) => {
+        if (j?.cancelRequested) stopRequested = true;
+      })
+      .catch(() => {});
     if (dirty) {
       dirty = false;
       lastWriteAt = Date.now();
@@ -236,6 +245,8 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
       mode,
       onLog,
       onConsume,
+      productQuery: productSearchQuery(productFilter),
+      shouldStop: () => stopRequested,
     });
     await flushQuota();
 
@@ -248,7 +259,7 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
     await db.migrationJob.update({
       where: { id: jobId },
       data: {
-        status: result.failed > 0 ? "partial" : "completed",
+        status: result.stopped ? "stopped" : result.failed > 0 ? "partial" : "completed",
         itemCount: result.total,
         createdCount: result.created,
         updatedCount: result.updated,

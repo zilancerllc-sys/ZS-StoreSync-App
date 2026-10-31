@@ -20,6 +20,9 @@ import {
 import { startMigrationJob, getActiveJob } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
+import { ProductFilterFields } from "../components/ProductFilterFields";
+import { StopRunButton } from "../components/StopRunButton";
+import { productFilterFromForm } from "../lib/product-filter";
 import {
   ArrowLeftRight,
   Package,
@@ -277,6 +280,7 @@ export const action = async ({ request }) => {
       mode: "migrate",
       types: runnable,
       limits: migrateLimits,
+      productFilter: productFilterFromForm(form),
     });
     // null = the database rejected a second concurrent run. The getActiveJob
     // check above can be passed by two requests at once (two tabs, a double
@@ -807,6 +811,7 @@ export default function Migrate() {
                 <input type="hidden" name="intent" value="migrate" />
                 <input type="hidden" name="sourceShop" value={selectedSource} />
                 <input type="hidden" name="types" value={picked.join(",")} />
+                {picked.includes("products") && <ProductFilterFields />}
                 <button
                   className="zs-btn"
                   disabled={!selectedSource || picked.length === 0 || running}
@@ -849,6 +854,7 @@ export default function Migrate() {
                       })}
                     </span>
                   </div>
+                  <StopRunButton jobId={activeJobId} />
                   {job?.id === activeJobId && job.logs?.length > 0 && (
                     <div className="zs-log">
                       {job.logs.map((l, i) => (
@@ -869,7 +875,9 @@ export default function Migrate() {
                   ) : (
                     <div className="zs-banner ok">
                       <CheckCircle2 size={16} />
-                      {t("Migration finished — {summary}", { summary: job.summary })}
+                      {job.status === "stopped"
+                        ? t("Migration stopped — {summary}", { summary: job.summary })
+                        : t("Migration finished — {summary}", { summary: job.summary })}
                       {job.status === "partial" ? ` ${t("(some items failed)")}` : ""}
                     </div>
                   )}
