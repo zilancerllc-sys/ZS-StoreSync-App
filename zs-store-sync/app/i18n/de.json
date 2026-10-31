@@ -427,5 +427,12 @@
   "Draft": "Entwurf",
   "Archived": "Archiviert",
   "Download report (CSV)": "Bericht herunterladen (CSV)",
-  "not reached": "nicht erreicht"
+  "not reached": "nicht erreicht",
+  "Undo": "Rückgängig",
+  "Undo this run": "Diesen Lauf rückgängig machen",
+  "Delete {count} items": "{count} Elemente löschen",
+  "This permanently deletes the {count} items this run created on this store, including any changes you made to them since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.": "Dadurch werden die {count} von diesem Lauf in diesem Shop erstellten Elemente endgültig gelöscht, einschließlich aller seitdem vorgenommenen Änderungen. Aktualisierte oder übersprungene Elemente bleiben unverändert, und das Monatskontingent wird nicht erstattet.",
+  "This run can't be undone.": "Dieser Lauf kann nicht rückgängig gemacht werden.",
+  "Undo is only available for 30 days after a run.": "Rückgängig ist nur 30 Tage nach einem Lauf möglich.",
+  "This run has nothing left to undo.": "Für diesen Lauf gibt es nichts mehr rückgängig zu machen."
 }

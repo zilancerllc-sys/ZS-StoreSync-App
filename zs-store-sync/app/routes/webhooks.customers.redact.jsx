@@ -32,6 +32,13 @@ export const action = async ({ request }) => {
     select: { id: true, logJson: true },
   });
 
+  // A customer this app created can no longer be offered for Undo.
+  if (customerId) {
+    await db.jobCreatedItem.deleteMany({
+      where: { shop, gid: `gid://shopify/Customer/${customerId}` },
+    });
+  }
+
   let scrubbed = 0;
   for (const job of jobs) {
     const logs = parseLogsJson(job.logJson);

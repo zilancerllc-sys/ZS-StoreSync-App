@@ -202,10 +202,25 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
   // in flight, and such a write landing after the final "completed" update
   // would revive the job as running (or roll its log back). The guard makes a
   // late write match zero rows instead.
+  // Created ids for Undo, written in batches like the quota above.
+  const createdGids = [];
+  const flushCreated = async () => {
+    const batch = createdGids.splice(0);
+    if (!batch.length) return;
+    try {
+      await db.jobCreatedItem.createMany({
+        data: batch.map((gid) => ({ jobId, shop, gid })),
+      });
+    } catch {
+      createdGids.push(...batch);
+    }
+  };
+
   let lastWriteAt = Date.now();
   let stopRequested = false;
   const flusher = setInterval(() => {
     flushQuota();
+    flushCreated();
     db.migrationJob
       .findUnique({ where: { id: jobId }, select: { cancelRequested: true } })
       .then((j) => {
@@ -245,10 +260,12 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
       mode,
       onLog,
       onConsume,
+      onCreated: (gid) => createdGids.push(gid),
       productQuery: productSearchQuery(productFilter),
       shouldStop: () => stopRequested,
     });
     await flushQuota();
+    await flushCreated();
 
     const summary =
       mode === "sync"
@@ -280,6 +297,7 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
     clearInterval(flusher);
     // Bill whatever the run managed to create before it died.
     await flushQuota();
+    await flushCreated();
     await db.migrationJob
       .update({
         where: { id: jobId },

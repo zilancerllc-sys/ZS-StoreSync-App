@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { useLoaderData, useFetcher, Link as RouterLink } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, Link as RouterLink } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { failStaleJobs } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import { useLocale, useT } from "../i18n";
+import { purgeExpiredItems, startUndoJob, undoableCounts } from "../undo.server";
+import { UndoRunButton } from "../components/UndoRunButton";
 import { Download } from "lucide-react";
 import { StopRunButton } from "../components/StopRunButton";
 import { downloadFile } from "../lib/download";
@@ -33,6 +35,7 @@ export const loader = async ({ request }) => {
 
   // jobs left "running" by a server restart are marked failed
   await failStaleJobs(shop);
+  await purgeExpiredItems(shop);
 
   // logJson is deliberately NOT selected: each row can hold up to 100 KB of
   // log, so sending 50 of them made this page a multi-megabyte response for a
@@ -64,9 +67,12 @@ export const loader = async ({ request }) => {
     },
   });
 
+  const undoable = await undoableCounts(shop, jobs.map((j) => j.id));
+
   return {
     jobs: jobs.map((j) => ({
       id: j.id,
+      undoable: j.status === "running" ? 0 : undoable[j.id] || 0,
       sourceShop: j.sourceShop,
       targetShop: j.targetShop,
       mode: j.mode,
@@ -185,12 +191,21 @@ const STATUS_LABEL = {
   stopped: "Stopped",
 };
 
-const MODE_LABEL = { migrate: "Migration", sync: "Sync" };
+const MODE_LABEL = { migrate: "Migration", sync: "Sync", undo: "Undo" };
 
 export default function History() {
   const t = useT();
   const locale = useLocale();
   const { jobs } = useLoaderData();
+  // An undo starts from this page, so keep its row current until it finishes.
+  const revalidator = useRevalidator();
+  const anyRunning = jobs.some((j) => j.status === "running");
+  useEffect(() => {
+    if (!anyRunning) return undefined;
+    const timer = setInterval(() => revalidator.revalidate(), 4000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anyRunning]);
   const [open, setOpen] = useState(null);
 
   // A fixed time zone keeps the server render and the browser's hydration
@@ -363,6 +378,7 @@ export default function History() {
                           <Download size={14} /> {t("Download report (CSV)")}
                         </button>
                       )}
+                      {j.undoable > 0 && <UndoRunButton jobId={j.id} count={j.undoable} />}
                       {logsById[j.id] === undefined ? (
                         <div className="zs-log">{t("Loading log…")}</div>
                       ) : (
@@ -383,5 +399,13 @@ export default function History() {
     </s-page>
   );
 }
+
+export const action = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  const form = await request.formData();
+  if (form.get("intent") !== "undo") return { ok: false, error: "Unknown action." };
+  const started = await startUndoJob(session.shop, String(form.get("jobId") || ""));
+  return started.jobId ? { ok: true, jobId: started.jobId } : { ok: false, error: started.error };
+};
 
 export const headers = (headersArgs) => boundary.headers(headersArgs);
