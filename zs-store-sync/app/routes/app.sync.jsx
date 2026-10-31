@@ -407,7 +407,7 @@ export default function Sync() {
                     })}
                   </div>
                   <input type="hidden" name="types" value={picked.join(",")} />
-                  {picked.includes("products") && <ProductFilterFields />}
+                  {picked.includes("products") && <ProductFilterFields sourceShop={src} />}
                   <NewTypeNotes picked={picked} />
                   <button className="zs-btn" disabled={busy || picked.length === 0}>
                     {busy ? (<><Loader2 size={15} className="zs-spin" /> {t("Syncing…")}</>) : (<><Zap size={15} /> {t("Sync Now")}</>)}

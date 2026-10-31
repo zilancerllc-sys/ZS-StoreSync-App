@@ -814,7 +814,7 @@ export default function Migrate() {
                 <input type="hidden" name="intent" value="migrate" />
                 <input type="hidden" name="sourceShop" value={selectedSource} />
                 <input type="hidden" name="types" value={picked.join(",")} />
-                {picked.includes("products") && <ProductFilterFields />}
+                {picked.includes("products") && <ProductFilterFields sourceShop={selectedSource} />}
                 <NewTypeNotes picked={picked} />
                 <button
                   className="zs-btn"

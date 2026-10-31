@@ -4,6 +4,7 @@
 //  These CSS custom properties are shared across every page of the app.
 // ─────────────────────────────────────────────────────────────────────────────
 export const brandStyles = `
+  .zs-btn.zs-btn-ghost{background:var(--zs-cream-soft,#fff);color:var(--zs-clay-deep);border:1px solid var(--zs-border);}
   .zs-root {
     /* ── Core palette ── */
     --zs-clay:        #A98B76;   /* primary warm brown        */

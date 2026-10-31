@@ -13,6 +13,11 @@ export function productFilterFromForm(form) {
     vendor: clean("filterVendor"),
     productType: clean("filterType"),
     status: STATUSES.includes(status) ? status : "",
+    // numeric ids from the product picker
+    ids: String(form.get("filterIds") || "")
+      .split(",")
+      .filter((id) => /^\d+$/.test(id))
+      .slice(0, 50),
   };
 }
 
@@ -26,5 +31,6 @@ export function productSearchQuery(filter) {
   if (filter.vendor) parts.push(`vendor:${quoted(filter.vendor)}`);
   if (filter.productType) parts.push(`product_type:${quoted(filter.productType)}`);
   if (filter.status) parts.push(`status:${filter.status}`);
+  if (filter.ids?.length) parts.push(`(${filter.ids.map((id) => `id:${id}`).join(" OR ")})`);
   return parts.length ? parts.join(" AND ") : null;
 }

@@ -625,8 +625,7 @@ async function migrateProducts(ctx) {
     }
 
     if (!ctx.canCreate()) {
-      counters.skipped++;
-      onLog(`↪︎ Skipped (quota reached, not created): ${p.title}`);
+      ctx.notCreated(p.title);
       continue;
     }
 
@@ -948,8 +947,7 @@ async function migrateCollections(ctx) {
     }
 
     if (!ctx.canCreate()) {
-      counters.skipped++;
-      onLog(`↪︎ Skipped (quota reached, not created): ${c.title}`);
+      ctx.notCreated(c.title);
       continue;
     }
 
@@ -1310,8 +1308,7 @@ async function migratePages(ctx) {
     }
 
     if (!ctx.canCreate()) {
-      counters.skipped++;
-      onLog(`↪︎ Skipped (quota reached, not created): ${pg.title}`);
+      ctx.notCreated(pg.title);
       continue;
     }
 
@@ -2344,8 +2341,7 @@ async function migrateRedirects(ctx) {
     }
 
     if (!ctx.canCreate()) {
-      counters.skipped++;
-      onLog(`↪︎ Skipped (quota reached, not created): ${r.path}`);
+      ctx.notCreated(r.path);
       continue;
     }
 
@@ -2622,8 +2618,7 @@ async function migrateBlogPosts(ctx) {
       }
 
       if (!ctx.canCreate()) {
-        counters.skipped++;
-        onLog(`↪︎ Skipped (quota reached, not created): ${a.title}`);
+        ctx.notCreated(a.title);
         await sleep(160);
         continue;
       }
@@ -2843,8 +2838,7 @@ async function migrateMenus(ctx) {
     }
 
     if (!ctx.canCreate()) {
-      counters.skipped++;
-      onLog(`↪︎ Skipped (quota reached, not created): ${m.title}`);
+      ctx.notCreated(m.title);
       continue;
     }
 
@@ -3314,8 +3308,7 @@ async function migrateDiscounts(ctx) {
       continue;
     }
     if (!ctx.canCreate()) {
-      counters.skipped++;
-      onLog(`↪︎ Skipped (quota reached, not created): ${d.title}`);
+      ctx.notCreated(d.title);
       continue;
     }
 
@@ -3712,6 +3705,9 @@ async function migrateTranslations(ctx) {
   }
 }
 
+// Modules that only create behind canCreate(), so they can report item by item.
+export const DRY_RUN_TYPES = ["products", "collections", "pages", "discounts", "redirects", "menus"];
+
 const RUN_ORDER = [
   "metafields",
   "files",
@@ -3759,6 +3755,20 @@ export async function runMigration({
   // before each item, so stopping goes through those same checks.
   shouldStop = () => false,
 }) {
+  const dryRun = mode === "dryrun";
+  // A dry run must never write, whatever a module tries: mutations are refused
+  // here rather than trusting every code path to check.
+  if (dryRun) {
+    const realTarget = target;
+    target = {
+      graphql: (query, options) => {
+        if (/^\s*(#graphql\s*)?mutation\b/.test(query)) {
+          throw new Error("Dry run: nothing is written.");
+        }
+        return realTarget.graphql(query, options);
+      },
+    };
+  }
   const counters = { created: 0, updated: 0, skipped: 0, failed: 0 };
   // per-type consumed counters — only items actually CREATED consume quota;
   // duplicates that are skipped and failed attempts cost nothing.
@@ -3796,7 +3806,16 @@ export async function runMigration({
     // source items to update the ones that already exist; only creates are
     // withheld (guard the create path with canCreate()).
     stopOnQuota: () => shouldStop() || (!hasQuota(currentType) && mode !== "sync"),
-    canCreate: () => hasQuota(currentType),
+    canCreate: () => !dryRun && hasQuota(currentType),
+    notCreated: (name) => {
+      if (dryRun) {
+        counters.created++;
+        onLog(`• Would create: ${name}`);
+      } else {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (quota reached, not created): ${name}`);
+      }
+    },
     // gid: what was created, so the run can be undone later
     consume: (gid) => {
       consume(currentType);

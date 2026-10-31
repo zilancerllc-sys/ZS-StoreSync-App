@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLoaderData, useFetcher } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate, unauthenticated } from "../shopify.server";
 import db from "../db.server";
 import { getUsage } from "../credits.server";
 import { getVerifiedConnection, listConnections } from "../connection.server";
-import { previewCounts } from "../migrator.server";
+import { previewCounts, DRY_RUN_TYPES } from "../migrator.server";
+import { getActiveJob, startMigrationJob } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
 import { Eye, Loader2, AlertCircle } from "lucide-react";
@@ -58,6 +59,26 @@ export const action = async ({ request }) => {
   const { admin: source } = await unauthenticated.admin(sourceShop);
   const { admin: target } = await unauthenticated.admin(shop);
 
+  if (form.get("intent") === "dryrun") {
+    const dryTypes = types.filter((t) => DRY_RUN_TYPES.includes(t));
+    if (dryTypes.length === 0) {
+      return {
+        ok: false,
+        error: "Item-by-item check covers Products, Collections, Pages, Discounts, Redirects and Menus.",
+      };
+    }
+    const busy = "A migration or sync is already running for this store. Wait for it to finish (see History).";
+    if (await getActiveJob(shop)) return { ok: false, error: busy };
+    const jobId = await startMigrationJob({
+      shop,
+      sourceShop,
+      mode: "dryrun",
+      types: dryTypes,
+      limits: {},
+    });
+    return jobId ? { ok: true, started: true, jobId } : { ok: false, error: busy };
+  }
+
   const counts = await previewCounts({ source, target, types });
   return { ok: true, counts, sourceShop };
 };
@@ -79,6 +100,7 @@ const pageStyles = `
   .zs-chk.lock{opacity:.4;cursor:not-allowed;}
   .zs-btn{background:var(--zs-clay);color:#fff;border:none;padding:12px 22px;border-radius:var(--zs-r-sm);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px;box-shadow:var(--zs-shadow-clay);}
   .zs-btn:disabled{opacity:.5;cursor:not-allowed;}
+  .zs-btn-ghost{background:var(--zs-white);color:var(--zs-clay-deep);border:1px solid var(--zs-border);}
   .zs-table{width:100%;border-collapse:collapse;margin-top:16px;}
   .zs-table th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--zs-muted);padding:10px 12px;border-bottom:1px solid var(--zs-border);}
   .zs-table td{padding:12px;border-bottom:1px solid var(--zs-border);font-size:14px;}
@@ -113,6 +135,23 @@ export default function Preview() {
 
   const busy = fetcher.state !== "idle";
   const data = fetcher.data;
+
+  // Dry runs are background jobs; poll like the Migrate page.
+  const jobFetcher = useFetcher();
+  const jobFetcherRef = useRef(jobFetcher);
+  jobFetcherRef.current = jobFetcher;
+  const jobId = data?.jobId;
+  const job = jobFetcher.data?.job?.id === jobId ? jobFetcher.data.job : null;
+  const jobDone = !!job?.finished;
+  useEffect(() => {
+    if (!jobId || jobDone) return undefined;
+    const timer = setInterval(() => {
+      if (jobFetcherRef.current.state === "idle") {
+        jobFetcherRef.current.load(`/app/jobs/${jobId}`);
+      }
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [jobId, jobDone]);
 
   const toggle = (id) => {
     if (!allowedTypes.includes(id)) return;
@@ -188,7 +227,29 @@ export default function Preview() {
                       <><Eye size={15} /> {t("Compare Counts")}</>
                     )}
                   </button>
+                  <button
+                    className="zs-btn zs-btn-ghost"
+                    name="intent"
+                    value="dryrun"
+                    disabled={busy || (jobId && !jobDone) || picked.length === 0}
+                    style={{ marginLeft: 8 }}
+                  >
+                    {t("Check item by item")}
+                  </button>
                 </fetcher.Form>
+              )}
+
+              {jobId && (
+                <div style={{ marginTop: 16 }}>
+                  <p style={{ fontSize: 13.5, fontWeight: 600 }}>
+                    {job?.summary || (job?.finished ? job.error : t("Checking each item — nothing is changed…"))}
+                  </p>
+                  {job?.logs?.length > 0 && (
+                    <div style={{ background: "var(--zs-dark)", color: "#efe7dc", borderRadius: 10, padding: "14px 16px", maxHeight: 280, overflowY: "auto", fontFamily: "monospace", fontSize: 12.5 }}>
+                      {job.logs.map((l, i) => <div key={i}>{l}</div>)}
+                    </div>
+                  )}
+                </div>
               )}
 
               {data?.error && (

@@ -59,7 +59,7 @@ export async function loadOwnerDashboard(periodKey = "7d") {
       prisma.migrationJob.groupBy({ by: ["shop"], _max: { createdAt: true } }),
       prisma.migrationJob.groupBy({
         by: ["shop"],
-        where: { createdAt: { gte: new Date(start) }, mode: { not: "undo" }, status: { in: ["completed", "partial"] } },
+        where: { createdAt: { gte: new Date(start) }, mode: { notIn: ["undo", "dryrun"] }, status: { in: ["completed", "partial"] } },
         _count: { _all: true },
         _sum: { createdCount: true },
       }),
