@@ -18,6 +18,9 @@ export const action = async ({ request }) => {
   });
   await db.migrationJob.deleteMany({ where: { shop } });
   await db.jobCreatedItem.deleteMany({ where: { shop } });
+  await db.pendingProductSync.deleteMany({
+    where: { OR: [{ ownerShop: shop }, { sourceShop: shop }] },
+  });
   await db.subscription.deleteMany({ where: { shop } });
   // The pairing code and any submitted feedback are shop data too — these were
   // previously left behind after a redact.

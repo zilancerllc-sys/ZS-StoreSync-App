@@ -33,6 +33,11 @@ api_version = "2026-10"
   # Billing lifecycle: keeps the stored plan in sync when a subscription is
   # activated, cancelled, expires, or a payment is declined. Without this
   # subscription cancellations would never downgrade the plan.
+  # Instant sync: queues changed products for stores syncing from this one.
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products/update"
+  topics = [ "products/create", "products/update" ]
+
   [[webhooks.subscriptions]]
   uri = "/webhooks/app-subscriptions-update"
   topics = [ "app_subscriptions/update" ]

@@ -23,6 +23,7 @@ import {
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
 import { ProductFilterFields, NewTypeNotes } from "../components/ProductFilterFields";
+import { setInstantSync } from "../instant-sync.server";
 import { StopRunButton } from "../components/StopRunButton";
 import { productFilterFromForm } from "../lib/product-filter";
 import {
@@ -54,6 +55,7 @@ export const loader = async ({ request }) => {
     remaining: usage.remaining,
     allowsOverage: usage.allowsOverage,
     plan: usage.plan,
+    instantSources: connections.filter((c) => c.instantSync).map((c) => c.sourceShop),
     canSchedule: planAllowsSchedule(usage.plan),
     allowedFrequencies: SCHEDULE_FREQUENCIES[usage.plan] || [],
     schedules: schedules.map((s) => ({
@@ -94,6 +96,14 @@ export const action = async ({ request }) => {
   const intent = String(form.get("intent") || "run");
   const sourceShop = String(form.get("sourceShop") || "").trim();
   const types = String(form.get("types") || "").split(",").filter(Boolean);
+
+  // ── Instant sync: on or off for one source ─────────────────
+  if (intent === "instant") {
+    const conn = await getVerifiedConnection(shop, sourceShop);
+    if (!conn) return { ok: false, error: "That store pairing isn't verified." };
+    const refused = await setInstantSync(shop, sourceShop, form.get("enabled") === "true");
+    return refused ? { ok: false, ...refused } : { ok: true };
+  }
 
   // ── Automatic sync: save or remove the schedule ───────────────────────────
   if (intent === "schedule" || intent === "unschedule") {
@@ -308,7 +318,7 @@ export default function Sync() {
   const t = useT();
   const {
     connections, allowedTypes, remaining, limits, allowsOverage,
-    plan, canSchedule, allowedFrequencies, schedules,
+    plan, canSchedule, allowedFrequencies, schedules, instantSources,
   } = useLoaderData();
   const fetcher = useFetcher();
   const jobFetcher = useFetcher();
@@ -458,6 +468,9 @@ export default function Sync() {
               )}
             </div>
 
+            {connections.length > 0 && (
+              <InstantSyncCard src={src} canUse={canSchedule} on={instantSources.includes(src)} />
+            )}
             <AutoSyncCard
               src={src}
               picked={picked}
@@ -480,6 +493,40 @@ const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", 
 // Set once and the same delta sync runs on its own. Everything is re-checked at
 // run time, so a downgrade or an unpaired store pauses the schedule instead of
 // failing quietly.
+function InstantSyncCard({ src, canUse, on }) {
+  const t = useT();
+  const fetcher = useFetcher();
+  const error = fetcher.data?.error;
+  return (
+    <div className="zs-card" style={{ marginTop: 22 }}>
+      <div className="zs-auto-head">
+        <div className="zs-auto-ico">
+          <Zap size={19} />
+        </div>
+        <div>
+          <h3>{t("Instant sync")}</h3>
+          <p>
+            {t("Copy product changes from {shop} about a minute after they're saved. Covers product details, not stock levels or other data types, which stay on your schedule.", { shop: src })}
+          </p>
+        </div>
+      </div>
+      <fetcher.Form method="post" style={{ marginTop: 12 }}>
+        <input type="hidden" name="intent" value="instant" />
+        <input type="hidden" name="sourceShop" value={src} />
+        <input type="hidden" name="enabled" value={on ? "false" : "true"} />
+        <button
+          className={on ? "zs-btn zs-btn-ghost" : "zs-btn"}
+          disabled={fetcher.state !== "idle" || (!canUse && !on)}
+        >
+          {on ? t("Turn off instant sync") : t("Turn on instant sync")}
+        </button>
+      </fetcher.Form>
+      {!canUse && <p style={{ fontSize: 12.5, margin: "8px 0 0" }}>{t("Instant sync needs a paid plan.")}</p>}
+      {error && <div className="zs-banner err" style={{ marginTop: 10 }}>{t(error)}</div>}
+    </div>
+  );
+}
+
 function AutoSyncCard({
   src,
   picked,

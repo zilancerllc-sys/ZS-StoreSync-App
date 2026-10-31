@@ -62,9 +62,24 @@ model StoreConnection {
   updatedAt     DateTime @updatedAt
 
   codeVerified  Boolean  @default(false)
+  // copy product changes within minutes of them happening on sourceShop
+  instantSync   Boolean  @default(false)
 
   @@unique([ownerShop, sourceShop])
   @@index([ownerShop])
+  @@index([sourceShop, instantSync])
+}
+
+// A source product waiting to be copied by instant sync.
+model PendingProductSync {
+  id         String   @id @default(cuid())
+  ownerShop  String
+  sourceShop String
+  productId  String
+  createdAt  DateTime @default(now())
+
+  @@unique([ownerShop, sourceShop, productId])
+  @@index([createdAt])
 }
 
 // ── A migration / sync run ──────────────────────────────────────────────────
