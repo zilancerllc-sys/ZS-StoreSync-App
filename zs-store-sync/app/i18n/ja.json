@@ -411,5 +411,20 @@
   "{shop} is paired with this store": "{shop} はこのストアと連携済みです",
   "{source} is paired with {shop}. Pick what to copy and run it — anything that already exists is skipped, so you can run it as many times as you like.": "{source} は {shop} と連携済みです。コピーする内容を選んで実行してください。既存のものはスキップされるので、何度でも実行できます。",
   "— Starter syncs weekly, Growth daily, Pro every 6 hours.": "— Starter は毎週、Growth は毎日、Pro は6時間ごとに同期します。",
-  "★ Most Popular": "★ いちばん人気"
+  "★ Most Popular": "★ いちばん人気",
+  "Stop this run": "この実行を停止",
+  "Stopping…": "停止しています…",
+  "Stopped": "停止済み",
+  "Migration stopped — {summary}": "移行を停止しました — {summary}",
+  "Only copy some products (optional)": "一部の商品のみコピー(任意)",
+  "Products must match every field you fill in. Leave all blank to copy all products. Applies to this run only.": "入力したすべての項目に一致する商品のみコピーします。すべて空欄にするとすべての商品をコピーします。今回の実行にのみ適用されます。",
+  "Tag": "タグ",
+  "Vendor": "販売元",
+  "Product type": "商品タイプ",
+  "Status": "ステータス",
+  "Any status": "すべてのステータス",
+  "Active": "有効",
+  "Draft": "下書き",
+  "Archived": "アーカイブ済み",
+  "Download report (CSV)": "レポートをダウンロード(CSV)"
 }

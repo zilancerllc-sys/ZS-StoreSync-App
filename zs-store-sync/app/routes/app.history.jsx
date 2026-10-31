@@ -6,6 +6,9 @@ import db from "../db.server";
 import { failStaleJobs } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import { useLocale, useT } from "../i18n";
+import { Download } from "lucide-react";
+import { StopRunButton } from "../components/StopRunButton";
+import { downloadFile } from "../lib/download";
 import {
   ArrowLeftRight, ChevronDown, CheckCircle2, AlertCircle, Clock, XCircle,
 } from "lucide-react";
@@ -114,6 +117,7 @@ const pageStyles = `
   .zs-status.running{background:var(--zs-camel-soft);color:var(--zs-clay-deep);}
   .zs-status.failed{background:#fbeaea;color:#9a3412;}
   .zs-status.queued{background:#eee;color:#777;}
+  .zs-status.stopped{background:#eee;color:#555;}
   .zs-chev{color:var(--zs-camel);transition:transform .2s;}
   .zs-chev.open{transform:rotate(180deg);}
 
@@ -178,6 +182,7 @@ const STATUS_LABEL = {
   completed: "Completed",
   partial: "Partial",
   failed: "Failed",
+  stopped: "Stopped",
 };
 
 const MODE_LABEL = { migrate: "Migration", sync: "Sync" };
@@ -346,6 +351,17 @@ export default function History() {
                         <div style={{ color: "#9a3412", fontSize: 13, marginBottom: 12 }}>
                           {t("Error: {message}", { message: j.error })}
                         </div>
+                      )}
+                      {j.status === "running" && <StopRunButton jobId={j.id} />}
+                      {j.status !== "running" && (
+                        <button
+                          type="button"
+                          className="zs-btn zs-btn-ghost"
+                          style={{ marginBottom: 12 }}
+                          onClick={() => downloadFile(`/app/job-report.csv?id=${j.id}`, "zs-storesync-report.csv")}
+                        >
+                          <Download size={14} /> {t("Download report (CSV)")}
+                        </button>
                       )}
                       {logsById[j.id] === undefined ? (
                         <div className="zs-log">{t("Loading log…")}</div>

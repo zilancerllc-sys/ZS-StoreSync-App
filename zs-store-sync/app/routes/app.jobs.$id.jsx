@@ -29,7 +29,17 @@ export const loader = async ({ request, params }) => {
       summary: job.summary,
       error: job.error,
       logs: parseLogsJson(job.logJson),
-      finished: ["completed", "partial", "failed"].includes(job.status),
+      finished: ["completed", "partial", "failed", "stopped"].includes(job.status),
     },
   };
+};
+
+// Stop button. Same shop scope as the loader; a finished run matches nothing.
+export const action = async ({ request, params }) => {
+  const { session } = await authenticate.admin(request);
+  const { count } = await db.migrationJob.updateMany({
+    where: { id: params.id, shop: session.shop, status: "running" },
+    data: { cancelRequested: true },
+  });
+  return { ok: count > 0 };
 };

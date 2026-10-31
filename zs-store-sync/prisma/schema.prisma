@@ -65,8 +65,10 @@ model MigrationJob {
   // comma separated data types: "products,collections,pages,..."
   dataTypes     String   @default("")
 
-  // "queued" | "running" | "completed" | "failed" | "partial"
+  // "queued" | "running" | "completed" | "failed" | "partial" | "stopped"
   status        String   @default("queued")
+  // Set by the Stop button; the runner checks it between items.
+  cancelRequested Boolean @default(false)
 
   itemCount     Int      @default(0)   // total processed
   createdCount  Int      @default(0)

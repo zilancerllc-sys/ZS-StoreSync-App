@@ -176,8 +176,8 @@ async function publishToOnlineStore(ctx, id, label) {
 //  PRODUCTS
 // ═════════════════════════════════════════════════════════════════════════════
 const Q_PRODUCTS = `#graphql
-  query Products($cursor: String) {
-    products(first: 25, after: $cursor) {
+  query Products($cursor: String, $query: String) {
+    products(first: 25, after: $cursor, query: $query) {
       pageInfo { hasNextPage endCursor }
       edges { node {
         id title handle descriptionHtml vendor productType tags status templateSuffix
@@ -511,7 +511,7 @@ async function migrateProducts(ctx) {
     source,
     Q_PRODUCTS,
     "products",
-    {},
+    { query: ctx.productQuery },
     async (n) => onLog(`Fetched ${n} products from source…`),
   );
   onLog(`Total ${products.length} products found. Importing…`);
@@ -3398,6 +3398,11 @@ export async function runMigration({
   // restart, deploy, crash) must still be charged for what it already created,
   // otherwise the whole run is free.
   onConsume = () => {},
+  // products(query:) string narrowing which source products are copied
+  productQuery = null,
+  // true once the merchant pressed Stop. Every module already checks quota
+  // before each item, so stopping goes through those same checks.
+  shouldStop = () => false,
 }) {
   const counters = { created: 0, updated: 0, skipped: 0, failed: 0 };
   // per-type consumed counters — only items actually CREATED consume quota;
@@ -3407,6 +3412,7 @@ export async function runMigration({
 
   // true while the current type still has quota left
   const hasQuota = (type) => {
+    if (shouldStop()) return false;
     const limit = limits[type];
     if (limit == null || limit === Infinity) return true;
     return (consumed[type] || 0) < limit;
@@ -3422,15 +3428,19 @@ export async function runMigration({
   const ctx = {
     source,
     target,
-    onLog,
+    // A stopped run ends through the quota checks; don't report it as quota.
+    onLog: (msg) => {
+      if (!(shouldStop() && /^Quota reached/.test(msg))) onLog(msg);
+    },
     counters,
     mode,
+    productQuery,
     hasQuota: () => hasQuota(currentType),
     // In migrate mode, exhausting quota ends the module — there is nothing left
     // to do. In sync mode updates cost nothing, so keep scanning the remaining
     // source items to update the ones that already exist; only creates are
     // withheld (guard the create path with canCreate()).
-    stopOnQuota: () => !hasQuota(currentType) && mode !== "sync",
+    stopOnQuota: () => shouldStop() || (!hasQuota(currentType) && mode !== "sync"),
     canCreate: () => hasQuota(currentType),
     consume: () => consume(currentType),
     setType: (t) => {
@@ -3451,7 +3461,11 @@ export async function runMigration({
   // one module at a time, so before/after subtraction attributes every count
   // correctly without threading a type through every runner.
   const statsByType = {};
+  if (productQuery && types.includes("products")) {
+    onLog(`Only copying products matching: ${productQuery}`);
+  }
   for (const t of ordered) {
+    if (shouldStop()) break;
     currentType = t;
     onLog(`── ${t.toUpperCase()} ──`);
     const before = { ...counters };
@@ -3468,6 +3482,9 @@ export async function runMigration({
     };
   }
 
+  const stopped = shouldStop();
+  if (stopped) onLog("Stopped — everything copied before this point stays on the store.");
+
   const total =
     counters.created + counters.updated + counters.skipped + counters.failed;
 
@@ -3475,6 +3492,7 @@ export async function runMigration({
 
   return {
     ...counters,
+    stopped,
     total,
     consumed: consumedTotal,
     consumedByType: consumed, // { products: 5, collections: 3, ... }

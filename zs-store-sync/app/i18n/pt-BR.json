@@ -411,5 +411,20 @@
   "{shop} is paired with this store": "{shop} está vinculada a esta loja",
   "{source} is paired with {shop}. Pick what to copy and run it — anything that already exists is skipped, so you can run it as many times as you like.": "{source} está vinculada a {shop}. Escolha o que copiar e execute — tudo que já existe é ignorado, então você pode executar quantas vezes quiser.",
   "— Starter syncs weekly, Growth daily, Pro every 6 hours.": "— o Starter sincroniza semanalmente, o Growth diariamente e o Pro a cada 6 horas.",
-  "★ Most Popular": "★ Mais popular"
+  "★ Most Popular": "★ Mais popular",
+  "Stop this run": "Parar esta execução",
+  "Stopping…": "Parando…",
+  "Stopped": "Parado",
+  "Migration stopped — {summary}": "Migração parada — {summary}",
+  "Only copy some products (optional)": "Copiar apenas alguns produtos (opcional)",
+  "Products must match every field you fill in. Leave all blank to copy all products. Applies to this run only.": "Os produtos devem corresponder a todos os campos preenchidos. Deixe tudo em branco para copiar todos os produtos. Vale apenas para esta execução.",
+  "Tag": "Tag",
+  "Vendor": "Fornecedor",
+  "Product type": "Tipo de produto",
+  "Status": "Status",
+  "Any status": "Qualquer status",
+  "Active": "Ativo",
+  "Draft": "Rascunho",
+  "Archived": "Arquivado",
+  "Download report (CSV)": "Baixar relatório (CSV)"
 }

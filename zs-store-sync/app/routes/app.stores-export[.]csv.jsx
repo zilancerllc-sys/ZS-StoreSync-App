@@ -6,14 +6,7 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { requireOwnerShop } from "../lib/owner.server";
-
-function csvCell(v) {
-  if (v === null || v === undefined) return "";
-  let s = String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
+import { csvCell } from "../lib/csv";
 
 export const loader = async ({ request }) => {
   // This route reads every shop's row, so a plain merchant session is not
