@@ -15,7 +15,7 @@ swap_size_mb = 512
   # Must match [access_scopes] in shopify.app.toml — /auth/login (source-store
   # authorization) grants exactly these scopes, so a missing scope here breaks
   # that data type when reading from source stores.
-  SCOPES = 'read_products,write_products,read_content,write_content,read_files,write_files,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_discounts,write_discounts,read_online_store_navigation,write_online_store_navigation,read_customers,write_customers,read_orders,write_orders,read_draft_orders,write_draft_orders,read_publications,write_publications,read_locations,read_inventory,write_inventory,read_translations,write_translations'
+  SCOPES = 'read_products,write_products,read_content,write_content,read_files,write_files,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_discounts,write_discounts,read_online_store_navigation,write_online_store_navigation,read_customers,write_customers,read_orders,write_orders,read_draft_orders,write_draft_orders,read_publications,write_publications,read_locations,read_inventory,write_inventory,read_translations,write_translations,read_locales'
   SHOPIFY_APP_URL = 'https://zs-store-sync.fly.dev'
 
 [http_service]
