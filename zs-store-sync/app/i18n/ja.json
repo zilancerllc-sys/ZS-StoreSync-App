@@ -426,5 +426,6 @@
   "Active": "有効",
   "Draft": "下書き",
   "Archived": "アーカイブ済み",
-  "Download report (CSV)": "レポートをダウンロード(CSV)"
+  "Download report (CSV)": "レポートをダウンロード(CSV)",
+  "not reached": "未実行"
 }
