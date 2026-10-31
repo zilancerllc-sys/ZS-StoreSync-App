@@ -1004,6 +1004,7 @@ const Q_REFERENCED_NODES = `#graphql
       ... on Product { id handle }
       ... on Collection { id handle }
       ... on Page { id handle }
+      ... on Article { id handle }
       ... on Metaobject { id handle type }
       ... on ProductVariant { id sku }
     }
@@ -1057,6 +1058,11 @@ async function getTargetPageIndex(ctx) {
   return idx;
 }
 
+const Q_TARGET_ARTICLE_BY_HANDLE = `#graphql
+  query ArticleByHandle($q: String!) {
+    articles(first: 1, query: $q) { edges { node { id } } }
+  }`;
+
 // find the target-store equivalent of a resolved source node
 async function findOnTarget(ctx, n) {
   const { target } = ctx;
@@ -1089,6 +1095,13 @@ async function findOnTarget(ctx, n) {
       if (!n.handle) return null;
       const idx = await getTargetPageIndex(ctx);
       return idx.get(n.handle) || null;
+    }
+    case "Article": {
+      if (!n.handle) return null;
+      const d = await gql(target, Q_TARGET_ARTICLE_BY_HANDLE, {
+        q: `handle:${qv(n.handle)}`,
+      });
+      return d?.articles?.edges?.[0]?.node?.id || null;
     }
     case "Metaobject": {
       if (!n.type || !n.handle) return null;
@@ -3353,6 +3366,8 @@ const RUNNERS = {
   metafields: migrateMetafields,
   orders: migrateOrders,
   customers: migrateCustomers,
+  inventory: migrateInventory,
+  translations: migrateTranslations,
 };
 
 // Order matters:
@@ -3364,11 +3379,341 @@ const RUNNERS = {
 //    resolve its members by handle on the target;
 //  • menus after the resources they link to.
 // All cross-references use live handle/SKU/filename lookups, not stored maps.
+// ═════════════════════════════════════════════════════════════════════════════
+//  STOCK LEVELS
+//
+//  Quantities live per location, so a level is copied to the target location
+//  with the same name. Two single-location stores map to each other whatever
+//  their locations are called. Variants are matched by product handle and
+//  variant title, falling back to SKU.
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_SOURCE_INVENTORY = `#graphql
+  query SourceInventory($cursor: String) {
+    inventoryItems(first: 25, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id tracked
+        variant { title sku product { handle title } }
+        inventoryLevels(first: 10) { edges { node {
+          location { name }
+          quantities(names: ["available"]) { name quantity }
+        } } }
+      } }
+    }
+  }`;
+
+const Q_LOCATIONS = `#graphql
+  query Locations {
+    locations(first: 50) { edges { node { id name } } }
+  }`;
+
+const Q_TARGET_VARIANT_STOCK = `#graphql
+  query TargetVariantStock($handle: String!) {
+    productByHandle(handle: $handle) {
+      variants(first: 100) { edges { node {
+        title sku
+        inventoryItem { id tracked }
+      } } }
+    }
+  }`;
+
+const M_INVENTORY_TRACK = `#graphql
+  mutation TrackItem($id: ID!, $input: InventoryItemInput!) {
+    inventoryItemUpdate(id: $id, input: $input) {
+      inventoryItem { id }
+      userErrors { field message }
+    }
+  }`;
+
+const M_INVENTORY_ACTIVATE = `#graphql
+  mutation ActivateStock($inventoryItemId: ID!, $locationId: ID!) {
+    inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) {
+      inventoryLevel { id }
+      userErrors { field message }
+    }
+  }`;
+
+const M_INVENTORY_SET = `#graphql
+  mutation SetStock($input: InventorySetQuantitiesInput!) {
+    inventorySetQuantities(input: $input) {
+      userErrors { field message }
+    }
+  }`;
+
+const NEEDS_PERMISSION = /access denied|access scope|not approved|required access/i;
+
+async function setStock(ctx, quantities) {
+  const send = async () => {
+    const d = await gql(ctx.target, M_INVENTORY_SET, {
+      input: { name: "available", reason: "correction", quantities },
+    });
+    return d?.inventorySetQuantities?.userErrors || [];
+  };
+  let errs = await send();
+  // A variant isn't stocked at a location until it's activated there.
+  if (errs.length && /stocked|not active|activat/i.test(errText(errs))) {
+    for (const q of quantities) {
+      await gql(ctx.target, M_INVENTORY_ACTIVATE, {
+        inventoryItemId: q.inventoryItemId,
+        locationId: q.locationId,
+      });
+    }
+    errs = await send();
+  }
+  return errs;
+}
+
+async function migrateInventory(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+
+  let items, sourceLocations, targetLocations;
+  try {
+    const names = (d) => (d?.locations?.edges || []).map((e) => e.node);
+    sourceLocations = names(await gql(source, Q_LOCATIONS));
+    targetLocations = names(await gql(target, Q_LOCATIONS));
+    items = await fetchAll(source, Q_SOURCE_INVENTORY, "inventoryItems", {}, (n) =>
+      onLog(`Fetched ${n} stock items…`),
+    );
+  } catch (err) {
+    if (NEEDS_PERMISSION.test(err.message)) {
+      onLog(
+        "⚠ Stock can't be copied yet — open ZS StoreSync on both stores to approve the new inventory permission.",
+      );
+      return;
+    }
+    throw err;
+  }
+
+  const byName = new Map(targetLocations.map((l) => [l.name.toLowerCase(), l]));
+  const oneToOne = sourceLocations.length === 1 && targetLocations.length === 1;
+  const locationFor = (name) =>
+    byName.get(String(name).toLowerCase()) || (oneToOne ? targetLocations[0] : null);
+
+  const targetVariants = new Map();
+  const variantsOf = async (handle) => {
+    if (!targetVariants.has(handle)) {
+      const d = await gql(target, Q_TARGET_VARIANT_STOCK, { handle });
+      targetVariants.set(
+        handle,
+        (d?.productByHandle?.variants?.edges || []).map((e) => e.node),
+      );
+    }
+    return targetVariants.get(handle);
+  };
+
+  for (const item of items) {
+    if (ctx.stopOnQuota()) {
+      onLog("Quota reached — stopping stock levels.");
+      break;
+    }
+    const variant = item.variant;
+    const name = `${variant?.product?.title} / ${variant?.title}`;
+    if (!variant || !item.tracked) {
+      counters.skipped++;
+      continue;
+    }
+
+    try {
+      const candidates = await variantsOf(variant.product.handle);
+      const match =
+        candidates.find((v) => v.title === variant.title) ||
+        (variant.sku && candidates.find((v) => v.sku === variant.sku));
+      if (!match) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (not on this store): ${name}`);
+        continue;
+      }
+
+      const quantities = [];
+      const unmatched = [];
+      for (const { node: level } of item.inventoryLevels?.edges || []) {
+        const location = locationFor(level.location?.name);
+        if (!location) {
+          unmatched.push(level.location?.name);
+          continue;
+        }
+        quantities.push({
+          inventoryItemId: match.inventoryItem.id,
+          locationId: location.id,
+          quantity: level.quantities?.[0]?.quantity ?? 0,
+          changeFromQuantity: null,
+        });
+      }
+      if (unmatched.length) {
+        onLog(`  ⚠ No location named ${unmatched.join(", ")} on this store — ${name}`);
+      }
+      if (!quantities.length) {
+        counters.skipped++;
+        continue;
+      }
+
+      if (!match.inventoryItem.tracked) {
+        await gql(target, M_INVENTORY_TRACK, {
+          id: match.inventoryItem.id,
+          input: { tracked: true },
+        });
+      }
+      const errs = await setStock(ctx, quantities);
+      if (errs.length) {
+        counters.failed++;
+        onLog(`✕ Stock failed: ${name} — ${errText(errs)}`);
+      } else {
+        counters.updated++;
+        consume();
+        onLog(`↻ Stock: ${name}`);
+      }
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ Stock error: ${name} — ${String(err.message).slice(0, 120)}`);
+    }
+    await sleep(120);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  TRANSLATIONS
+//
+//  Copies translations for languages enabled on both stores. A translation is
+//  registered against a digest of the TARGET's own content, so the digest is
+//  always read from the target. Migrate keeps translations the target already
+//  has; sync replaces them.
+// ═════════════════════════════════════════════════════════════════════════════
+const TRANSLATED_TYPES = ["PRODUCT", "COLLECTION", "PAGE", "ARTICLE", "METAOBJECT"];
+
+const Q_SHOP_LOCALES = `#graphql
+  query ShopLocales {
+    shopLocales { locale primary }
+  }`;
+
+const Q_SOURCE_TRANSLATIONS = `#graphql
+  query SourceTranslations($type: TranslatableResourceType!, $locale: String!, $cursor: String) {
+    translatableResources(first: 50, resourceType: $type, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        resourceId
+        translations(locale: $locale) { key value }
+      } }
+    }
+  }`;
+
+const Q_TARGET_TRANSLATABLE = `#graphql
+  query TargetTranslatable($id: ID!, $locale: String!) {
+    translatableResource(resourceId: $id) {
+      translatableContent { key digest }
+      translations(locale: $locale) { key }
+    }
+  }`;
+
+const M_TRANSLATIONS_REGISTER = `#graphql
+  mutation RegisterTranslations($resourceId: ID!, $translations: [TranslationInput!]!) {
+    translationsRegister(resourceId: $resourceId, translations: $translations) {
+      userErrors { field message }
+    }
+  }`;
+
+async function migrateTranslations(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+
+  let sourceLocales, targetLocales;
+  try {
+    sourceLocales = (await gql(source, Q_SHOP_LOCALES))?.shopLocales || [];
+    targetLocales = (await gql(target, Q_SHOP_LOCALES))?.shopLocales || [];
+  } catch (err) {
+    if (NEEDS_PERMISSION.test(err.message)) {
+      onLog(
+        "⚠ Translations can't be copied yet — open ZS StoreSync on both stores to approve the new translations permission.",
+      );
+      return;
+    }
+    throw err;
+  }
+
+  const onTarget = new Set(targetLocales.map((l) => l.locale));
+  const wanted = sourceLocales.filter((l) => !l.primary).map((l) => l.locale);
+  const locales = wanted.filter((l) => onTarget.has(l));
+  const missing = wanted.filter((l) => !onTarget.has(l));
+  if (missing.length) {
+    onLog(`⚠ Add these languages to this store first: ${missing.join(", ")}`);
+  }
+  if (!locales.length) {
+    onLog("No languages in common between the two stores.");
+    return;
+  }
+
+  for (const locale of locales) {
+    for (const type of TRANSLATED_TYPES) {
+      if (ctx.stopOnQuota()) {
+        onLog("Quota reached — stopping translations.");
+        return;
+      }
+      const resources = await fetchAll(source, Q_SOURCE_TRANSLATIONS, "translatableResources", {
+        type,
+        locale,
+      });
+
+      for (const res of resources) {
+        if (!res.translations?.length) continue;
+        if (ctx.stopOnQuota()) {
+          onLog("Quota reached — stopping translations.");
+          return;
+        }
+        const label = `${type.toLowerCase()} ${res.resourceId.split("/").pop()} (${locale})`;
+        try {
+          const targetId = await mapGid(ctx, res.resourceId);
+          if (!targetId) {
+            counters.skipped++;
+            onLog(`↪︎ Skipped (not on this store): ${label}`);
+            continue;
+          }
+          const d = await gql(target, Q_TARGET_TRANSLATABLE, { id: targetId, locale });
+          const digests = new Map(
+            (d?.translatableResource?.translatableContent || []).map((c) => [c.key, c.digest]),
+          );
+          const existing = new Set(
+            (d?.translatableResource?.translations || []).map((t) => t.key),
+          );
+          const translations = res.translations
+            .filter((t) => t.value && digests.has(t.key))
+            .filter((t) => ctx.mode === "sync" || !existing.has(t.key))
+            .map((t) => ({
+              locale,
+              key: t.key,
+              value: t.value,
+              translatableContentDigest: digests.get(t.key),
+            }));
+          if (!translations.length) {
+            counters.skipped++;
+            continue;
+          }
+          const r = await gql(target, M_TRANSLATIONS_REGISTER, {
+            resourceId: targetId,
+            translations,
+          });
+          const errs = r?.translationsRegister?.userErrors;
+          if (errs?.length) {
+            counters.failed++;
+            onLog(`✕ Translation failed: ${label} — ${errText(errs)}`);
+          } else {
+            counters.updated++;
+            consume();
+            onLog(`↻ Translated: ${label}`);
+          }
+        } catch (err) {
+          counters.failed++;
+          onLog(`✕ Translation error: ${label} — ${String(err.message).slice(0, 120)}`);
+        }
+        await sleep(120);
+      }
+    }
+  }
+}
+
 const RUN_ORDER = [
   "metafields",
   "files",
   "metaobjects",
   "products",
+  "inventory",
   "collections",
   "pages",
   "blogPosts",
@@ -3376,6 +3721,8 @@ const RUN_ORDER = [
   "redirects",
   // menus link to collections/pages/blogs by handle — run after them
   "menus",
+  // needs products, collections, pages and articles to exist on the target
+  "translations",
   "orders",
   "customers",
 ];

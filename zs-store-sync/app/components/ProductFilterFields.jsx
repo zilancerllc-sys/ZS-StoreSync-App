@@ -2,6 +2,26 @@ import { useT } from "../i18n";
 
 // Optional fields inside the Migrate and Sync run forms; read on the server by
 // productFilterFromForm (app/lib/product-filter.js).
+// What the two overwrite-style data types do, shown once they're picked.
+export function NewTypeNotes({ picked }) {
+  const t = useT();
+  const note = { margin: "8px 0", fontSize: 12.5, color: "#8a7d70" };
+  return (
+    <>
+      {picked.includes("inventory") && (
+        <p style={note}>
+          {t("Stock levels replaces the quantity on this store for matching variants. Locations are matched by name.")}
+        </p>
+      )}
+      {picked.includes("translations") && (
+        <p style={note}>
+          {t("Translations copies products, collections, pages, blog posts and metaobjects, for languages enabled on both stores.")}
+        </p>
+      )}
+    </>
+  );
+}
+
 export function ProductFilterFields() {
   const t = useT();
   const field = { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, fontWeight: 600 };

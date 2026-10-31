@@ -434,5 +434,11 @@
   "This permanently deletes the {count} items this run created on this store, including any changes you made to them since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.": "Dadurch werden die {count} von diesem Lauf in diesem Shop erstellten Elemente endgültig gelöscht, einschließlich aller seitdem vorgenommenen Änderungen. Aktualisierte oder übersprungene Elemente bleiben unverändert, und das Monatskontingent wird nicht erstattet.",
   "This run can't be undone.": "Dieser Lauf kann nicht rückgängig gemacht werden.",
   "Undo is only available for 30 days after a run.": "Rückgängig ist nur 30 Tage nach einem Lauf möglich.",
-  "This run has nothing left to undo.": "Für diesen Lauf gibt es nichts mehr rückgängig zu machen."
+  "This run has nothing left to undo.": "Für diesen Lauf gibt es nichts mehr rückgängig zu machen.",
+  "Stock levels": "Lagerbestände",
+  "Translations": "Übersetzungen",
+  "{n} Stock level updates": "{n} Lagerbestands-Updates",
+  "{n} Translated items": "{n} übersetzte Elemente",
+  "Stock levels replaces the quantity on this store for matching variants. Locations are matched by name.": "Lagerbestände ersetzt die Menge in diesem Shop für passende Varianten. Standorte werden über den Namen zugeordnet.",
+  "Translations copies products, collections, pages, blog posts and metaobjects, for languages enabled on both stores.": "Übersetzungen kopiert Produkte, Kategorien, Seiten, Blogbeiträge und Metaobjekte für Sprachen, die in beiden Shops aktiviert sind."
 }

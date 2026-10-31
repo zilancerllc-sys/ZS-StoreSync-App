@@ -434,5 +434,11 @@
   "This permanently deletes the {count} items this run created on this store, including any changes you made to them since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.": "Isso exclui permanentemente os {count} itens que esta execução criou nesta loja, incluindo as alterações feitas desde então. Itens atualizados ou ignorados permanecem como estão, e o uso mensal não é reembolsado.",
   "This run can't be undone.": "Esta execução não pode ser desfeita.",
   "Undo is only available for 30 days after a run.": "Desfazer só fica disponível por 30 dias após uma execução.",
-  "This run has nothing left to undo.": "Não há mais nada para desfazer nesta execução."
+  "This run has nothing left to undo.": "Não há mais nada para desfazer nesta execução.",
+  "Stock levels": "Níveis de estoque",
+  "Translations": "Traduções",
+  "{n} Stock level updates": "{n} atualizações de estoque",
+  "{n} Translated items": "{n} itens traduzidos",
+  "Stock levels replaces the quantity on this store for matching variants. Locations are matched by name.": "Níveis de estoque substitui a quantidade nesta loja para as variantes correspondentes. As localizações são associadas pelo nome.",
+  "Translations copies products, collections, pages, blog posts and metaobjects, for languages enabled on both stores.": "Traduções copia produtos, coleções, páginas, posts de blog e metaobjetos nos idiomas ativados nas duas lojas."
 }
