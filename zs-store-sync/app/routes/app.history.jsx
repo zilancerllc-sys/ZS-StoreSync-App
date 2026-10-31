@@ -313,7 +313,7 @@ export default function History() {
                                     <td className="ty">{t(TYPE_LABEL[ty] || ty)}</td>
                                     {empty ? (
                                       <td className="none" colSpan={4}>
-                                        {t("nothing to migrate")}
+                                        {j.status === "stopped" && !j.stats[ty] ? t("not reached") : t("nothing to migrate")}
                                       </td>
                                     ) : (
                                       <>

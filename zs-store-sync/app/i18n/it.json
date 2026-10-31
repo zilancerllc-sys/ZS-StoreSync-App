@@ -426,5 +426,6 @@
   "Active": "Attivo",
   "Draft": "Bozza",
   "Archived": "Archiviato",
-  "Download report (CSV)": "Scarica il report (CSV)"
+  "Download report (CSV)": "Scarica il report (CSV)",
+  "not reached": "non raggiunto"
 }
