@@ -141,7 +141,7 @@ export default function Preview() {
   const jobFetcherRef = useRef(jobFetcher);
   jobFetcherRef.current = jobFetcher;
   const jobId = data?.jobId;
-  const job = jobFetcher.data?.job?.id === jobId ? jobFetcher.data.job : null;
+  const job = jobId && jobFetcher.data?.job?.id === jobId ? jobFetcher.data.job : null;
   const jobDone = !!job?.finished;
   useEffect(() => {
     if (!jobId || jobDone) return undefined;
