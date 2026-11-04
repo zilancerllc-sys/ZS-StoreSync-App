@@ -23,6 +23,7 @@
 //    SHOPIFY_APP_URL    Base URL for links back into the app.
 // ═════════════════════════════════════════════════════════════════════════════
 
+import { welcomeOfferCard } from "./welcome-offer.js";
 export const APP_NAME = process.env.APP_NAME || "ZS StoreSync";
 
 const FROM =
@@ -262,6 +263,7 @@ export function welcomeEmailHtml({
   chips = [],
   highlights = [],
   helpLinks = [],
+  offer = null,
 }) {
   const ctaUrl = `${APP_URL}${cta.path}`;
 
@@ -366,6 +368,8 @@ export function welcomeEmailHtml({
 
         <tr><td style="padding:30px 36px 18px;">${bigButton}</td></tr>
 
+        ${offer ? `<tr><td style="padding:4px 20px 22px;">${welcomeOfferCard({ offer, shop, replyTo: REPLY_TO, appName: APP_NAME, dark: "#2B231D", light: "#E8DCCB" })}</td></tr>` : ""}
+
         ${stepsBlock}
         ${chipsBlock}
         ${highlightsBlock}
@@ -390,7 +394,7 @@ export async function sendWelcomeEmail({ to, ...opts }) {
   return sendEmail({
     to,
     replyTo: REPLY_TO,
-    subject: `Welcome to ${APP_NAME} — here's how to start`,
+    subject: opts.subject || `Welcome to ${APP_NAME} — here's how to start`,
     html: welcomeEmailHtml(opts),
     unsubscribeToken: opts.token,
   });

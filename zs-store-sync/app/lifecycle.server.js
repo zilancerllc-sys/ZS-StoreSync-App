@@ -52,6 +52,25 @@ const COPY = {
   // Where the welcome button goes, relative to SHOPIFY_APP_URL.
   welcomeCta: { path: "/app/start", label: "Set up your first migration" },
 
+  welcomeSubject: "Welcome to ZS StoreSync: we'll help you run your first migration, free",
+
+  // The free setup card in the welcome: a new store gets one email, not two.
+  welcomeOffer: {
+    kicker: "Free setup",
+    title: "Moving stores? We'll run your first migration with you",
+    text: "Tell us which store you are copying from and what you want to move. We'll check the plan with you, connect both stores and run the first copy, at no cost.",
+    steps: [
+      { title: "Reply to us", text: "The source store, the new store, and what to move: products, pages, menus…" },
+      { title: "We run it", text: "We connect both stores and copy everything over, skipping anything already there." },
+      { title: "You check it", text: "Look over the new store and tell us if anything needs another pass." },
+    ],
+    ctaLabel: "Help me migrate, free",
+    replyBody: "Hi! Please help me run my first ZS StoreSync migration.\n\nCopy from (store):\nCopy to (store):\nWhat to move:\n\n",
+    note:
+      "Or WhatsApp us on +8801408270201. We work through a standard Shopify collaborator " +
+      "request: you approve it, never share a password, and can remove it any time.",
+  },
+
   // Optional line under the button.
   welcomeClosing:
     "Re-run a migration whenever you like — anything that already exists is " +
@@ -92,6 +111,8 @@ const WELCOME_CONTENT = {
   steps: COPY.welcomeSteps,
   cta: COPY.welcomeCta,
   closing: COPY.welcomeClosing,
+  subject: COPY.welcomeSubject,
+  offer: COPY.welcomeOffer,
   chips: COPY.welcomeChips,
   highlights: COPY.welcomeHighlights,
   helpLinks: COPY.welcomeHelpLinks,
