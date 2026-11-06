@@ -103,14 +103,79 @@ export async function getConnectionCode(shop) {
   }
 }
 
+// ─── Cut off stores that pull from this shop ─────────────────────────────────
+// SECURITY: getVerifiedConnection trusts the stored codeVerified flag, so
+// changing the code alone left every store that had once entered it able to
+// keep migrating, syncing and instant-syncing this shop's data. Revoking
+// clears the flag and removes the pairs' schedules and queued instant syncs;
+// running jobs are asked to stop through the same cancelRequested flag the
+// History "Stop" button uses. `ownerShop` narrows it to one pairing.
+// Returns the Prisma operations so callers can put them in a transaction.
+function revokeSourcePairingsOps(sourceShop, ownerShop = null) {
+  const pair = ownerShop
+    ? { sourceShop, ownerShop }
+    : { sourceShop, ownerShop: { not: sourceShop } };
+  return [
+    db.storeConnection.updateMany({
+      where: pair,
+      data: { codeVerified: false, instantSync: false },
+    }),
+    db.syncSchedule.deleteMany({ where: pair }),
+    db.pendingProductSync.deleteMany({ where: pair }),
+    db.migrationJob.updateMany({
+      where: {
+        sourceShop,
+        status: "running",
+        shop: ownerShop || { not: sourceShop },
+      },
+      data: { cancelRequested: true },
+    }),
+  ];
+}
+
+// Stores currently allowed to pull from this shop (for its Settings page).
+export async function listPullingStores(sourceShop) {
+  return db.storeConnection.findMany({
+    where: { sourceShop, codeVerified: true, ownerShop: { not: sourceShop } },
+    select: { id: true, ownerShop: true, createdAt: true },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+// Revoke one pairing. Filtering on BOTH id and sourceShop means a store can
+// only revoke pairings that read its own data, whatever id is posted.
+export async function revokePullingStore(sourceShop, connectionId) {
+  const conn = await db.storeConnection.findFirst({
+    where: { id: String(connectionId || ""), sourceShop },
+    select: { ownerShop: true },
+  });
+  if (!conn) return false;
+  await db.$transaction(revokeSourcePairingsOps(sourceShop, conn.ownerShop));
+  return true;
+}
+
+// Revoke every pairing and forget the code (used on app/uninstalled, so a
+// reinstall starts with a fresh code instead of resurrecting old pairings).
+export async function revokeAllPullingStores(sourceShop) {
+  await db.$transaction([
+    ...revokeSourcePairingsOps(sourceShop),
+    db.shopSecret.deleteMany({ where: { shop: sourceShop } }),
+  ]);
+}
+
 // ─── Regenerate a shop's code (revokes the old one) ──────────────────────────
 export async function regenerateConnectionCode(shop) {
   const code = await uniqueCode();
-  await db.shopSecret.upsert({
-    where: { shop },
-    update: { connectionCode: code },
-    create: { shop, connectionCode: code },
-  });
+  // The Settings page promises the old code is revoked immediately, so the
+  // pairings made with it go in the same transaction as the new code.
+  await db.$transaction([
+    db.shopSecret.upsert({
+      where: { shop },
+      update: { connectionCode: code },
+      create: { shop, connectionCode: code },
+    }),
+    ...revokeSourcePairingsOps(shop),
+  ]);
   return code;
 }
 

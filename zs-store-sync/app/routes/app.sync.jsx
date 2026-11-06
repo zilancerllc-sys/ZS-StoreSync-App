@@ -89,6 +89,38 @@ export const loader = async ({ request }) => {
 const Q_SHOP_EMAIL = `#graphql
   { shop { email } }`;
 
+// Scheduled-run mail goes to whatever address is saved here, so a store could
+// point it at strangers' inboxes. Format and length (254) are checked by
+// normalizeNotifyEmail; on top of that a store may switch to a NEW address
+// (not its own contact email or one already on its schedules) only a few
+// times a day. Held in memory per machine, like the connection-code limits.
+const NEW_EMAIL_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_NEW_EMAILS = 3;
+const newEmailChanges = new Map(); // shop → timestamps
+
+async function isKnownAddress(shop, email) {
+  const [contact, saved] = await Promise.all([
+    db.merchantContact.findUnique({ where: { shop }, select: { email: true } }),
+    db.syncSchedule.findFirst({
+      where: { ownerShop: shop, notifyEmail: email },
+      select: { id: true },
+    }),
+  ]);
+  return Boolean(saved) || contact?.email?.trim().toLowerCase() === email;
+}
+
+function takeNewEmailSlot(shop, now = Date.now()) {
+  const list = (newEmailChanges.get(shop) || []).filter(
+    (t) => now - t < NEW_EMAIL_WINDOW_MS,
+  );
+  if (list.length >= MAX_NEW_EMAILS) {
+    newEmailChanges.set(shop, list);
+    return false;
+  }
+  newEmailChanges.set(shop, [...list, now]);
+  return true;
+}
+
 export const action = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
@@ -148,6 +180,13 @@ export const action = async ({ request }) => {
           return {
             ok: false,
             error: `"${typed.slice(0, 80)}" isn't a valid email address.`,
+          };
+        }
+        if (!(await isKnownAddress(shop, notifyEmail)) && !takeNewEmailSlot(shop)) {
+          return {
+            ok: false,
+            error:
+              "You've changed the notification email several times today. Try again tomorrow, or use your store's contact email.",
           };
         }
       } else {

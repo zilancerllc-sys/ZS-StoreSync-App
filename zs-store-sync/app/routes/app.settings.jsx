@@ -5,6 +5,8 @@ import { authenticate } from "../shopify.server";
 import {
   getConnectionCode,
   regenerateConnectionCode,
+  listPullingStores,
+  revokePullingStore,
 } from "../connection.server";
 import { getEmailPreference, setEmailPreference } from "../lifecycle.server";
 import { brandStyles } from "./zs-styles.js";
@@ -18,6 +20,7 @@ import {
   ShieldCheck,
   Info,
   Loader2,
+  Store,
 } from "lucide-react";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
@@ -25,9 +28,15 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const code = await getConnectionCode(session.shop);
   const pref = await getEmailPreference(session.shop);
+  const pulling = await listPullingStores(session.shop);
   return {
     shop: session.shop,
     code,
+    pulling: pulling.map((c) => ({
+      id: c.id,
+      shop: c.ownerShop,
+      connectedAt: c.createdAt.toISOString(),
+    })),
     // No row yet means the store installed before lifecycle mail existed;
     // treat that as on, matching the default for new installs.
     emailOptedIn: pref ? pref.optedIn : true,
@@ -45,6 +54,12 @@ export const action = async ({ request }) => {
   if (form.get("intent") === "regenerate") {
     const code = await regenerateConnectionCode(session.shop);
     return { ok: true, code };
+  }
+  if (form.get("intent") === "revoke") {
+    // revokePullingStore filters on this shop as the source, so a posted id
+    // for someone else's pairing matches nothing.
+    const revoked = await revokePullingStore(session.shop, form.get("id"));
+    return { ok: revoked, revoked };
   }
   if (form.get("intent") === "email-pref") {
     const optedIn = form.get("optedIn") === "on";
@@ -98,12 +113,17 @@ const pageStyles = `
   .zs-pref{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:18px;}
   .zs-pref-check{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--zs-dark);cursor:pointer;}
   .zs-pref-check input{width:17px;height:17px;accent-color:var(--zs-clay);cursor:pointer;flex-shrink:0;}
+  .zs-pull{list-style:none;margin:16px 0 0;padding:0;}
+  .zs-pull li{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--zs-border);font-size:13.5px;}
+  .zs-pull-date{font-size:12px;color:var(--zs-muted);margin-top:2px;}
+  .zs-pull-empty{font-size:13px;color:var(--zs-muted);margin-top:14px;}
   .zs-pref-ok{display:flex;align-items:center;gap:6px;margin-top:12px;font-size:13px;font-weight:600;color:var(--zs-sage-deep);}
 `;
 
 export default function Settings() {
   const t = useT();
-  const { shop, code: initialCode, emailOptedIn, notifyEmail } = useLoaderData();
+  const { shop, code: initialCode, emailOptedIn, notifyEmail, pulling } = useLoaderData();
+  const revokeFetcher = useFetcher();
   const prefFetcher = useFetcher();
   const fetcher = useFetcher();
   const [copied, setCopied] = useState(false);
@@ -202,6 +222,53 @@ export default function Settings() {
                   )}
                 </button>
               </fetcher.Form>
+            </div>
+
+            <div className="zs-card" style={{ marginTop: 20 }}>
+              <div className="zs-card-head">
+                <div className="ico">
+                  <Store size={22} />
+                </div>
+                <div>
+                  <h3>{t("Stores pulling from this store")}</h3>
+                  <p>
+                    {t("These stores entered this store's connection code and can copy its data. Revoke any you don't recognize.")}
+                  </p>
+                </div>
+              </div>
+
+              {pulling.length === 0 ? (
+                <div className="zs-pull-empty">
+                  {t("No other store is connected to this store.")}
+                </div>
+              ) : (
+                <ul className="zs-pull">
+                  {pulling.map((p) => {
+                    const busy =
+                      revokeFetcher.state !== "idle" &&
+                      revokeFetcher.formData?.get("id") === p.id;
+                    return (
+                      <li key={p.id}>
+                        <div>
+                          <b>{p.shop}</b>
+                          <div className="zs-pull-date">
+                            {t("Connected {date}", {
+                              date: new Date(p.connectedAt).toLocaleDateString(),
+                            })}
+                          </div>
+                        </div>
+                        <revokeFetcher.Form method="post">
+                          <input type="hidden" name="intent" value="revoke" />
+                          <input type="hidden" name="id" value={p.id} />
+                          <button className="zs-regen-btn" disabled={busy}>
+                            {busy ? t("Revoking…") : t("Revoke")}
+                          </button>
+                        </revokeFetcher.Form>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </div>
 
             <div className="zs-card" style={{ marginTop: 20 }}>
