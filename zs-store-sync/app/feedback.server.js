@@ -7,8 +7,7 @@
 //    RESEND_API_KEY   Resend API key. If unset, feedback is stored but no
 //                     email is sent (delivery is skipped, not an error).
 //    FEEDBACK_TO      Recipient inbox (default: contact@zilancer.com)
-//    FEEDBACK_FROM    Verified Resend sender
-//                     (default: "ZS StoreSync <feedback@zilancer.com>")
+//    The sender is fixed in notify.server.js ("ZS StoreSync <contact@zilancer.com>").
 // ═════════════════════════════════════════════════════════════════════════════
 import db from "./db.server";
 // One Resend call site for the whole app, so sender config and error handling

@@ -17,8 +17,8 @@
 //  Environment:
 //    RESEND_API_KEY     Resend key. Unset = mail is skipped, never an error.
 //    APP_NAME           Shown to merchants, e.g. "ZS StoreSync".
-//    FEEDBACK_FROM      Verified sender.
-//    MAIL_REPLY_TO      Where replies go.
+//    FEEDBACK_FROM      Ignored: the sender is always contact@zilancer.com.
+//    MAIL_REPLY_TO      Ignored: replies always go to contact@zilancer.com.
 //    MAIL_FROM_ADDRESS  Postal address, required by CAN-SPAM.
 //    SHOPIFY_APP_URL    Base URL for links back into the app.
 // ═════════════════════════════════════════════════════════════════════════════
@@ -26,13 +26,15 @@
 import { welcomeOfferCard } from "./welcome-offer.js";
 export const APP_NAME = process.env.APP_NAME || "ZS StoreSync";
 
-const FROM =
-  process.env.FEEDBACK_FROM || `${APP_NAME} <noreply@zilancer.com>`;
+// Always contact@, whatever FEEDBACK_FROM says: mail from a noreply@ address
+// that asks the merchant for feedback reads as bulk and lands in Promotions or
+// spam, and every message in this file goes to a merchant (or to the team).
+const FROM = `${APP_NAME} <contact@zilancer.com>`;
 
 // Sending from noreply@ means a merchant who hits Reply gets a bounce, which
 // is a poor way to treat someone answering a mail that asked for feedback.
 // Every merchant email therefore carries a Reply-To that a human reads.
-const REPLY_TO = process.env.MAIL_REPLY_TO || "contact@zilancer.com";
+const REPLY_TO = "contact@zilancer.com";
 
 // Minimal HTML escaping so shop names and error text can't break the markup.
 export function esc(s = "") {
@@ -68,7 +70,9 @@ export async function sendEmail({ to, subject, html, replyTo, unsubscribeToken }
         ...(unsubscribeToken
           ? {
               headers: {
-                "List-Unsubscribe": `<${unsubscribeUrl(unsubscribeToken)}>`,
+                // The mailto: fallback is for clients that don't do the
+                // one-click POST; it lands in an inbox a person reads.
+                "List-Unsubscribe": `<${unsubscribeUrl(unsubscribeToken)}>, <mailto:contact@zilancer.com?subject=unsubscribe>`,
                 "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
               },
             }
