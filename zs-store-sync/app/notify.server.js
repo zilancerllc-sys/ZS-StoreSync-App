@@ -277,7 +277,7 @@ export function welcomeEmailText({
     "Start here:",
     `${APP_URL}${cta.path || "/app"}`,
     "",
-    "Short on time? Reply to this email and we will set it up on your store for you at no cost. " +
+    "If you get stuck, reply to this email and I'll help you set it up. " +
       "You can also reach me on WhatsApp: +8801408270201.",
     "",
     "Masud",

@@ -56,7 +56,7 @@ const COPY = {
 
   // One sentence for the plain-text welcome, after "Thanks for installing on <store>."
   welcomeTextBlurb:
-    "It copies products, collections, pages, menus, discounts and more from one Shopify store into another, with no spreadsheets and no developer.",
+    "It copies products, collections, pages, menus, redirects and more from one Shopify store into another, with no spreadsheets and no developer.",
 
   // The free setup card in the welcome: a new store gets one email, not two.
   welcomeOffer: {

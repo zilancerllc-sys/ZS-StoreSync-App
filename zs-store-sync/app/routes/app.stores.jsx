@@ -30,7 +30,9 @@ export const loader = async ({ request }) => {
     syncReviewsCached(APP_HANDLE),
     new Promise((r) => setTimeout(() => r(null), 6000)),
   ]);
-  const data = { ...(await loadOwnerDashboard(period)), reviews };
+  // The app's client id (public, App Bridge already exposes it) builds the
+  // admin deep link in the status emails.
+  const data = { ...(await loadOwnerDashboard(period)), reviews, apiKey: process.env.SHOPIFY_API_KEY || "" };
   // App Store listing visits and keywords come from GA4; slow or missing GA4
   // must never hold up the rest of the page.
   const traffic = await Promise.race([
@@ -290,33 +292,50 @@ const TABS = [
   ["left", "Left", (r) => !r.active && !r.shut],
 ];
 
-// The free setup offer as a short personal letter: plain text from a person
-// lands where merchants read mail, a designed one lands in Promotions.
-function setupLetter(shop) {
-  return [
+// A store that hasn't started gets a plain status notice about that store, not
+// an offer: Gmail files offer wording under Promotions, a status note under
+// Updates. Only states the dashboard computed; one link, to the fix.
+function adminLink(shop, apiKey, path) {
+  return apiKey ? `https://${shop}/admin/apps/${apiKey}${path}` : "";
+}
+
+function statusLetter(r, apiKey) {
+  const shop = r.shop;
+  const connected = r.stage === "Connected a store";
+  const link = adminLink(shop, apiKey, connected ? "/app/migrate" : "/app/start");
+  const subject = `ZS StoreSync hasn't copied anything to ${shop} yet`;
+  const fact = connected
+    ? `I checked ${shop}: another store is connected, but no migration has finished yet, so nothing has been copied.`
+    : `I checked ${shop}: ZS StoreSync is installed, but no other store is connected yet and nothing has been copied.`;
+  const step = connected
+    ? "To copy your data, open New Migration in ZS StoreSync, choose what to migrate and click Run Migration."
+    : "To start, install ZS StoreSync on the store you are copying from, copy its connection code, and paste it on the Get started page in ZS StoreSync.";
+  const body = [
     "Hi,",
     "",
-    `Thanks for installing ZS StoreSync on ${shop}. I noticed you haven't copied any data yet, so I wanted to check in.`,
+    fact,
     "",
-    "Your first migration takes three steps:",
+    step + (link ? (connected ? " New Migration is here:" : " Get started is here:") : ""),
+    ...(link ? [link] : []),
     "",
-    "1. Tell us which store you're copying from.",
-    "2. Install ZS StoreSync there too.",
-    "3. Paste that store's connection code.",
+    "Reply to this email and I'll do it for you.",
     "",
-    "If you would rather not do it yourself, reply to this email with the store you are moving from and what you need (products, collections, pages, customers), and we will set it up on your store for you at no cost. You can also reach me on WhatsApp: +8801408270201.",
+    "WhatsApp: +8801408270201",
     "",
     "Masud",
     "ZS StoreSync team",
   ].join("\n");
+  return { subject, body };
 }
 
-function mailtoFor(r) {
+function mailtoFor(r, apiKey) {
   const setup = r.stage === "Installed" || r.stage === "Connected a store";
-  const subject = setup ? "Can I set up ZS StoreSync for you?" : "How is ZS StoreSync working for you?";
-  const body = setup
-    ? setupLetter(r.shop)
-    : "Hi,\n\nThanks for using ZS StoreSync. Is everything working the way you want? If anything could be better, just reply.\n\nBest,\nZilancer LLC · ZS StoreSync";
+  const { subject, body } = setup
+    ? statusLetter(r, apiKey)
+    : {
+        subject: "How is ZS StoreSync working for you?",
+        body: "Hi,\n\nThanks for using ZS StoreSync. Is everything working the way you want? If anything could be better, just reply.\n\nBest,\nZilancer LLC · ZS StoreSync",
+      };
   return `mailto:${r.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
@@ -468,7 +487,7 @@ export default function OwnerDashboard() {
                             </button>
                           )
                         )}
-                        {r.email && r.active && <a className="od-btn" href={mailtoFor(r)} target="_blank" rel="noreferrer">Email</a>}
+                        {r.email && r.active && <a className="od-btn" href={mailtoFor(r, d.apiKey)} target="_blank" rel="noreferrer">Email</a>}
                         <label className="od-check"><input type="checkbox" checked={!!r.reviewedAt} onChange={(e) => post("reviewed", r.shop, e.target.checked ? "1" : "0")} /> reviewed</label>
                         <a className="od-btn" href={`https://${r.shop}`} target="_blank" rel="noreferrer" title="Open this store in a new tab">View store</a>
                       </div>
