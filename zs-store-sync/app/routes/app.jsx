@@ -11,6 +11,7 @@ import prisma from "../db.server";
 import { I18nProvider, useT } from "../i18n";
 import { messagesFor, resolveLocale } from "../i18n/messages.server";
 
+import SetupBar from "../components/SetupBar.jsx";
 const TAWK_SRC = "https://embed.tawk.to/6a538d517c60fa1d457184bb/1jtb60286";
 
 // Support chat, loaded only when the merchant asks for it.
@@ -171,6 +172,7 @@ function AppShell({ apiKey, shop, supportEmail, plan, isOwner }) {
         <s-link href="/app/settings">{t("Settings")}</s-link>
         {isOwner && <s-link href="/app/stores">Owner dashboard</s-link>}
       </s-app-nav>
+      <SetupBar appName="ZS StoreSync" shop={shop} email={supportEmail} />
       <Outlet />
     </AppProvider>
   );
