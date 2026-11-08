@@ -13,25 +13,25 @@ const CSS = `
 .zs-sb-wrap{padding:10px 12px 2px}
 .zs-sb{position:relative;overflow:hidden;display:flex;align-items:center;gap:16px;flex-wrap:wrap;
   background:linear-gradient(90deg,#0b5a2a 0%,#0e6b31 45%,#0b5a2a 100%);border:2px solid #39d353;
-  border-radius:999px;padding:8px 46px 8px 22px;color:#fff;box-shadow:0 6px 18px rgba(14,107,49,.22);
-  font-family:inherit;line-height:1.3}
+  border-radius:999px;padding:9px 48px 9px 24px;color:#fff;box-shadow:0 6px 18px rgba(14,107,49,.22);
+  font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.3;min-height:52px}
 .zs-sb::before,.zs-sb::after{content:"";position:absolute;width:90px;height:90px;border-radius:50%;
   background:radial-gradient(circle at 50% 50%,rgba(76,217,100,.45),rgba(76,217,100,0) 70%);pointer-events:none}
 .zs-sb::before{left:-30px;bottom:-45px}.zs-sb::after{right:-30px;top:-45px}
-.zs-sb-gift{font-size:30px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.25))}
+.zs-sb-gift{font-size:32px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.25))}
 .zs-sb-sep{width:1px;align-self:stretch;background:rgba(255,255,255,.45);margin:4px 0}
-.zs-sb-head{font-weight:800;font-size:19px;white-space:nowrap;letter-spacing:-.2px}
-.zs-sb-hl{background:#f5e732;color:#0b5a2a;border-radius:8px;padding:2px 8px;margin-right:6px}
-.zs-sb-text{flex:1 1 280px;font-size:16px}
+.zs-sb-head{font-weight:800;font-size:22px;white-space:nowrap;letter-spacing:-.2px}
+.zs-sb-hl{background:#f5e732;color:#0b5a2a;border-radius:8px;padding:3px 10px;margin-right:8px}
+.zs-sb-text{flex:1 1 280px;font-size:18px;font-weight:500}
 .zs-sb-app{color:#5dff7a;font-weight:800}
 .zs-sb-free{color:#f5e732;font-weight:800;position:relative;white-space:nowrap}
 .zs-sb-free::after{content:"";position:absolute;left:-6px;right:-10px;bottom:-6px;height:6px;
   border-bottom:2px solid #f5e732;border-radius:0 0 50% 50%}
 .zs-sb-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:#0b5a2a;font-weight:800;
-  font-size:15px;text-decoration:none;padding:8px 16px 8px 10px;border-radius:999px;white-space:nowrap;
+  font-size:16px;text-decoration:none;padding:9px 18px 9px 10px;border-radius:999px;white-space:nowrap;
   box-shadow:0 3px 10px rgba(0,0,0,.18);transition:transform .15s}
 .zs-sb-btn:hover{transform:translateY(-1px)}
-.zs-sb-wa{width:26px;height:26px;border-radius:50%;background:#25D366;display:inline-flex;align-items:center;justify-content:center}
+.zs-sb-wa{width:30px;height:30px;border-radius:50%;background:#25D366;display:inline-flex;align-items:center;justify-content:center}
 .zs-sb-x{position:absolute;right:14px;top:50%;transform:translateY(-50%);background:transparent;border:0;
   color:#fff;font-size:20px;line-height:1;cursor:pointer;padding:4px;opacity:.75}
 .zs-sb-x:hover{opacity:1}
