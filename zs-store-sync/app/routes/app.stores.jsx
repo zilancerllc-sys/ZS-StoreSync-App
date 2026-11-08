@@ -290,11 +290,32 @@ const TABS = [
   ["left", "Left", (r) => !r.active && !r.shut],
 ];
 
+// The free setup offer as a short personal letter: plain text from a person
+// lands where merchants read mail, a designed one lands in Promotions.
+function setupLetter(shop) {
+  return [
+    "Hi,",
+    "",
+    `Thanks for installing ZS StoreSync on ${shop}. I noticed you haven't copied any data yet, so I wanted to check in.`,
+    "",
+    "Your first migration takes three steps:",
+    "",
+    "1. Tell us which store you're copying from.",
+    "2. Install ZS StoreSync there too.",
+    "3. Paste that store's connection code.",
+    "",
+    "If you would rather not do it yourself, reply to this email with the store you are moving from and what you need (products, collections, pages, customers), and we will set it up on your store for you at no cost. You can also reach me on WhatsApp: +8801408270201.",
+    "",
+    "Masud",
+    "ZS StoreSync team",
+  ].join("\n");
+}
+
 function mailtoFor(r) {
   const setup = r.stage === "Installed" || r.stage === "Connected a store";
-  const subject = setup ? "Want a hand with your first store migration?" : "How is ZS StoreSync working for you?";
+  const subject = setup ? "Can I set up ZS StoreSync for you?" : "How is ZS StoreSync working for you?";
   const body = setup
-    ? "Hi,\n\nThanks for installing ZS StoreSync. I noticed you haven't copied any data yet. Tell me which store you're moving from and what you need (products, collections, pages, customers…) and we'll run the first migration with you, free.\n\nBest,\nZilancer LLC · ZS StoreSync"
+    ? setupLetter(r.shop)
     : "Hi,\n\nThanks for using ZS StoreSync. Is everything working the way you want? If anything could be better, just reply.\n\nBest,\nZilancer LLC · ZS StoreSync";
   return `mailto:${r.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
