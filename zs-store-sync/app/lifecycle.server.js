@@ -56,11 +56,7 @@ const COPY = {
   // Where the welcome button goes, relative to SHOPIFY_APP_URL.
   welcomeCta: { path: "/app/start", label: "Set up your first migration" },
 
-  welcomeSubject: "Welcome to ZS StoreSync",
-
-  // One sentence for the plain-text welcome, after "Thanks for installing on <store>."
-  welcomeTextBlurb:
-    "It copies products, collections, pages, menus, redirects and more from one Shopify store into another, with no spreadsheets and no developer.",
+  welcomeSubject: "Welcome to ZS StoreSync: we'll help you run your first migration, free",
 
   // The free setup card in the welcome: a new store gets one email, not two.
   welcomeOffer: {
@@ -115,10 +111,15 @@ const COPY = {
 
 // Everything sendWelcomeEmail takes from COPY, in one place for both callers.
 const WELCOME_CONTENT = {
-  textBlurb: COPY.welcomeTextBlurb,
+  blurb: COPY.welcomeBlurb,
   steps: COPY.welcomeSteps,
   cta: COPY.welcomeCta,
+  closing: COPY.welcomeClosing,
   subject: COPY.welcomeSubject,
+  offer: COPY.welcomeOffer,
+  chips: COPY.welcomeChips,
+  highlights: COPY.welcomeHighlights,
+  helpLinks: COPY.welcomeHelpLinks,
 };
 
 const FEEDBACK_DELAY_MS = 2 * 24 * 60 * 60 * 1000;
