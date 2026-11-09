@@ -228,6 +228,7 @@ model MerchantContact {
   // Set on app/uninstalled — an uninstalled store must stop hearing from us.
   uninstalledAt    DateTime?
   reviewAskSentAt  DateTime? // review request sent from the owner dashboard
+  uninstallAskSentAt DateTime? // once, 2-24h after an uninstall: why did you remove it?
 
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

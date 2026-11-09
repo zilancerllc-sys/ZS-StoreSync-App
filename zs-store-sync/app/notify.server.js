@@ -302,6 +302,53 @@ export async function sendWelcomeEmail({ to, ...opts }) {
   });
 }
 
+// ─── 1b. Uninstalled → one question ──────────────────────────────────────────
+// Sent once, a few hours after an uninstall (lifecycle ticker). Plain text; a
+// reply is the whole interface: a number, or a sentence, lands in the inbox.
+const UNINSTALL_REASONS = [
+  "It didn't copy something I needed",
+  "Too expensive for my store",
+  "My move was done and I didn't need it anymore",
+  "I was only testing or comparing apps",
+  "Something else",
+];
+
+export function uninstallAskText({ shop, token }) {
+  const lines = [
+    "Hi,",
+    "",
+    `Sorry to see you go. You removed ${APP_NAME} from ${shop}.`,
+    "",
+    "What was the main reason? Just reply with a number:",
+    "",
+    ...UNINSTALL_REASONS.map((r, i) => `${i + 1}. ${r}`),
+    "",
+    "A person reads every reply.",
+    "",
+    "Shopify asks us to delete your store's details 48 hours after an uninstall, and we do. If you'd like us to tell you once we add what you needed, reply YES and we'll keep just your email for that.",
+    "",
+    "Masud",
+    `${APP_NAME} team`,
+  ];
+  if (token) {
+    lines.push("");
+    if (!/not configured/.test(POSTAL_ADDRESS)) lines.push(POSTAL_ADDRESS);
+    lines.push(`Unsubscribe: ${unsubscribeUrl(token)}`);
+  }
+  return lines.join("\n");
+}
+
+export async function sendUninstallAskEmail({ to, shop, token }) {
+  return sendEmail({
+    to,
+    from: PERSONAL_FROM,
+    replyTo: REPLY_TO,
+    subject: `Why did you remove ${APP_NAME}? (one question)`,
+    text: uninstallAskText({ shop, token }),
+    unsubscribeToken: token,
+  });
+}
+
 // ─── 2. Feedback nudge, two days in ──────────────────────────────────────────
 // Points at the in-app rating widget rather than asking for a public review by
 // email: it is the flow Shopify sanctions, and it already exists in the app.

@@ -3,6 +3,7 @@
 //
 //    install        → welcome
 //    install + 2d   → feedback nudge
+//    uninstall + 2-24h → one question: why did you remove it? (once)
 //    then           → an occasional product update
 //
 //  Consent, because this is the part with rules attached:
@@ -27,8 +28,11 @@ import {
   sendWelcomeEmail,
   sendFeedbackEmail,
   sendReviewRequestEmail,
+  sendUninstallAskEmail,
 } from "./notify.server";
 import { logAppEvent } from "./lib/app-events.server";
+import { isOwnerShop } from "./lib/owner.server";
+import { isNoEmail } from "./lib/no-email";
 
 // ╔═══════════════════════════════════════════════════════════════════════════╗
 // ║  COPY — the only part that differs per app. Everything else in this file  ║
@@ -118,6 +122,10 @@ const WELCOME_CONTENT = {
 };
 
 const FEEDBACK_DELAY_MS = 2 * 24 * 60 * 60 * 1000;
+
+// The "why did you remove it?" question: 2 to 24 hours after the uninstall.
+const UNINSTALL_ASK_MIN_MS = 2 * 60 * 60 * 1000;
+const UNINSTALL_ASK_MAX_MS = 24 * 60 * 60 * 1000;
 
 // A week between product updates was the original plan. Fortnightly is the
 // setting here because a weekly promo to a list this size buys unsubscribes and
@@ -361,6 +369,36 @@ export async function runDueLifecycleEmails(now = new Date()) {
       experience: COPY.feedbackExperience,
     }).catch(() => false);
     results.push({ shop: c.shop, kind: "feedback", sent });
+  }
+
+  // ── Uninstalled: one question, a few hours later ──
+  // Between 2 and 24 hours after the uninstall: late enough not to land while
+  // they are still in the admin, and well before shop/redact deletes the
+  // contact 48 hours on. Once per shop, ever: the claim sets uninstallAskSentAt
+  // before the send. A reinstall clears uninstalledAt, so it drops out.
+  const leftCandidates = await db.merchantContact.findMany({
+    where: {
+      optedIn: true,
+      unsubscribedAt: null,
+      uninstallAskSentAt: null,
+      email: { not: null },
+      uninstalledAt: {
+        gte: new Date(now.getTime() - UNINSTALL_ASK_MAX_MS),
+        lte: new Date(now.getTime() - UNINSTALL_ASK_MIN_MS),
+      },
+    },
+    take: 25,
+  });
+  for (const c of leftCandidates) {
+    if (isOwnerShop(c.shop) || isNoEmail({ shop: c.shop, email: c.email })) continue;
+    const claimed = await db.merchantContact.updateMany({
+      where: { id: c.id, uninstallAskSentAt: null, uninstalledAt: { not: null } },
+      data: { uninstallAskSentAt: now },
+    });
+    if (claimed.count !== 1) continue;
+    const sent = await sendUninstallAskEmail({ to: c.email, shop: c.shop, token: c.unsubscribeToken }).catch(() => false);
+    if (sent) logAppEvent(c.shop, "uninstall_ask");
+    results.push({ shop: c.shop, kind: "uninstall-ask", sent });
   }
 
   return results;
