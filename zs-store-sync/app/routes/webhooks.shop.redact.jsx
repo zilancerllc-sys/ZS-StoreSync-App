@@ -28,6 +28,9 @@ export const action = async ({ request }) => {
   await db.feedback.deleteMany({ where: { shop } });
   // Holds the merchant's email address, so it goes with everything else.
   await db.merchantContact.deleteMany({ where: { shop } });
+  // Store name/plan and the install/uninstall history are about the shop too.
+  await db.storeMeta.deleteMany({ where: { shop } });
+  await db.appEvent.deleteMany({ where: { shop } });
 
   // Jobs where this shop was the SOURCE belong to a different merchant, so the
   // rows stay (that merchant's own migration history). Their logs, however,

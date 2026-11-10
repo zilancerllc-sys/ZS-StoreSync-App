@@ -1,4 +1,5 @@
-import { authenticate, unauthenticated } from "../shopify.server";
+import { unauthenticated } from "../shopify.server";
+import { authenticateWebhook } from "../lib/webhook-auth.server";
 import { setPlan } from "../credits.server";
 import db from "../db.server";
 import { isAffiliateEnabled, syncAffiliate } from "../lib/affiliate.server";
@@ -16,7 +17,9 @@ const NAME_TO_PLAN = {
 };
 
 export const action = async ({ request }) => {
-  const { shop, payload } = await authenticate.webhook(request);
+  // The CANCELLED event for an uninstall arrives after the token is gone;
+  // authenticate.webhook alone answered those with a 500 on every retry.
+  const { shop, payload } = await authenticateWebhook(request);
 
   // Affiliate commissions follow the real subscription state. Fire-and-forget.
   if (isAffiliateEnabled()) {
