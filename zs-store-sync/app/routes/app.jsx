@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { isCompShop } from "../credits.server";
-import { Outlet, useLoaderData, useRouteError } from "react-router";
+import { Await, Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { MessageCircle } from "lucide-react";
@@ -12,6 +12,8 @@ import { I18nProvider, useT } from "../i18n";
 import { messagesFor, resolveLocale } from "../i18n/messages.server";
 
 import SetupBar from "../components/SetupBar.jsx";
+import SetupStatus from "../components/SetupStatus.jsx";
+import { setupStatus } from "../lib/setup-status.server";
 const TAWK_SRC = "https://embed.tawk.to/6a538d517c60fa1d457184bb/1jtb60286";
 
 // Support chat, loaded only when the merchant asks for it.
@@ -126,6 +128,8 @@ export const loader = async ({ request }) => {
   ]);
 
   return {
+    // Not awaited: the page renders at once, the setup bar fills in after.
+    setup: setupStatus(session.shop).catch(() => null),
     apiKey: process.env.SHOPIFY_API_KEY || "",
     shop: session.shop,
     supportEmail: contact?.email || null,
@@ -144,16 +148,16 @@ export function shouldRevalidate({ nextUrl, defaultShouldRevalidate }) {
 }
 
 export default function App() {
-  const { apiKey, shop, supportEmail, plan, isOwner, locale, messages } = useLoaderData();
+  const { apiKey, shop, supportEmail, plan, isOwner, locale, messages, setup } = useLoaderData();
 
   return (
     <I18nProvider locale={locale} messages={messages}>
-      <AppShell apiKey={apiKey} shop={shop} supportEmail={supportEmail} plan={plan} isOwner={isOwner} />
+      <AppShell apiKey={apiKey} shop={shop} supportEmail={supportEmail} plan={plan} isOwner={isOwner} setup={setup} />
     </I18nProvider>
   );
 }
 
-function AppShell({ apiKey, shop, supportEmail, plan, isOwner }) {
+function AppShell({ apiKey, shop, supportEmail, plan, isOwner, setup }) {
   const t = useT();
 
   // v2's AppProvider takes only children and apiKey, and always injects App
@@ -173,6 +177,11 @@ function AppShell({ apiKey, shop, supportEmail, plan, isOwner }) {
         {isOwner && <s-link href="/app/stores">Owner dashboard</s-link>}
       </s-app-nav>
       <SetupBar appName="ZS StoreSync" shop={shop} email={supportEmail} />
+      <Suspense fallback={null}>
+        <Await resolve={setup} errorElement={null}>
+          {(status) => <SetupStatus status={status} />}
+        </Await>
+      </Suspense>
       <Outlet />
     </AppProvider>
   );

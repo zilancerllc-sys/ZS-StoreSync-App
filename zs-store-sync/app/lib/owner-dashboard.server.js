@@ -22,6 +22,8 @@
 import prisma from "../db.server";
 import { unauthenticated } from "../shopify.server";
 import { isOwnerShop } from "./owner.server";
+import { isCompShop } from "../credits.server";
+import { blockerFrom, BLOCKER_LABEL } from "./setup-status.server";
 
 const DAY = 24 * 3600 * 1000;
 export const PERIODS = {
@@ -45,14 +47,14 @@ export async function loadOwnerDashboard(periodKey = "7d") {
   const now = Date.now();
   const start = period === "all" ? 0 : startOfUtcDay(now) - (PERIODS[period].days - 1) * DAY;
 
-  const [contacts, sessions, events, subsRows, connGroups, sourceRows, jobGroups, lastJobs, periodJobs, scheduleGroups, metas] =
+  const [contacts, sessions, events, subsRows, connGroups, sourceRows, jobGroups, lastJobs, periodJobs, scheduleGroups, metas, allConns, secrets, offline, lastRuns, allSchedules] =
     await Promise.all([
       prisma.merchantContact.findMany(),
       prisma.session.findMany({
         select: { shop: true, email: true, firstName: true, lastName: true, accountOwner: true },
       }),
       prisma.appEvent.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.subscription.findMany({ select: { shop: true, plan: true } }),
+      prisma.subscription.findMany({ select: { shop: true, plan: true, usageJson: true, periodStart: true } }),
       prisma.storeConnection.groupBy({ by: ["ownerShop"], _count: { _all: true } }),
       prisma.storeConnection.findMany({ select: { sourceShop: true }, distinct: ["sourceShop"] }),
       prisma.migrationJob.groupBy({ by: ["shop", "status"], _count: { _all: true } }),
@@ -65,6 +67,20 @@ export async function loadOwnerDashboard(periodKey = "7d") {
       }),
       prisma.syncSchedule.groupBy({ by: ["ownerShop"], where: { enabled: true }, _count: { _all: true } }),
       prisma.storeMeta.findMany(),
+      // For "Stuck at": the same inputs the merchant's setup bar reads.
+      prisma.storeConnection.findMany({
+        select: { ownerShop: true, sourceShop: true, codeVerified: true },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.shopSecret.findMany({ select: { shop: true } }),
+      prisma.session.findMany({ where: { isOnline: false }, select: { shop: true, accessToken: true } }),
+      prisma.migrationJob.findMany({
+        where: { mode: { in: ["migrate", "sync"] } },
+        orderBy: { createdAt: "desc" },
+        distinct: ["shop"],
+        select: { shop: true, id: true, status: true, error: true, statsJson: true, sourceShop: true, failedCount: true },
+      }),
+      prisma.syncSchedule.findMany({ select: { ownerShop: true, sourceShop: true, enabled: true, lastError: true } }),
     ]);
 
   const contactOf = Object.fromEntries(contacts.map((c) => [c.shop, c]));
@@ -81,6 +97,18 @@ export async function loadOwnerDashboard(periodKey = "7d") {
   const lastJobOf = Object.fromEntries(lastJobs.map((g) => [g.shop, g._max.createdAt]));
   const periodOf = Object.fromEntries(periodJobs.map((g) => [g.shop, { runs: g._count._all, items: g._sum.createdCount || 0 }]));
   const schedulesOf = Object.fromEntries(scheduleGroups.map((g) => [g.ownerShop, g._count._all]));
+  const subOf = Object.fromEntries(subsRows.map((r) => [r.shop, r]));
+  const connsOf = {};
+  const pullingSet = new Set();
+  for (const c of allConns) {
+    (connsOf[c.ownerShop] ||= []).push(c);
+    if (c.codeVerified && c.ownerShop !== c.sourceShop) pullingSet.add(c.sourceShop);
+  }
+  const secretSet = new Set(secrets.map((x) => x.shop));
+  const liveShops = new Set(offline.filter((x) => x.accessToken).map((x) => x.shop));
+  const lastRunOf = Object.fromEntries(lastRuns.map((j) => [j.shop, j]));
+  const schedulesListOf = {};
+  for (const x of allSchedules) (schedulesListOf[x.ownerShop] ||= []).push(x);
   const sessionOf = {};
   for (const s of sessions) {
     if (!sessionOf[s.shop] || (s.accountOwner && !sessionOf[s.shop].accountOwner)) sessionOf[s.shop] = s;
@@ -137,9 +165,25 @@ export async function loadOwnerDashboard(periodKey = "7d") {
               ? "Source store"
               : "Installed";
 
+    // The same first blocker the merchant sees at the top of their admin.
+    const blocker = active
+      ? blockerFrom({
+          conns: connsOf[shop] || [],
+          liveShops,
+          pulling: pullingSet.has(shop),
+          hasCode: secretSet.has(shop),
+          lastRun: lastRunOf[shop] || null,
+          sub: subOf[shop] || null,
+          comp: isCompShop(shop),
+          schedules: schedulesListOf[shop] || [],
+          now,
+        })
+      : null;
+
     rows.push({
       shop,
       email,
+      stuckAt: blocker ? BLOCKER_LABEL[blocker.code] || "" : "",
       name: [s?.firstName, s?.lastName].filter(Boolean).join(" "),
       storeName: meta?.storeName || "",
       storePlan: meta?.storePlan || "",

@@ -461,7 +461,7 @@ export default function OwnerDashboard() {
                       <div className="od-small">{r.storeName ? r.shop.replace(".myshopify.com", "") + " · " : ""}{r.email || "no email"}{r.name ? ` · ${r.name}` : ""}</div>
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>{fmtDate(r.installedAt)}{r.uninstalledAt && <div className="od-small">left {fmtDate(r.uninstalledAt)}</div>}</td>
-                    <td><span className={`od-chip ${STAGE_CLASS[r.stage]}`}>{r.stage}</span>{r.stuck && <div className="od-small" style={{ color: "var(--zs-warn)" }}>stuck</div>}{r.storeState === "unknown" && <div className="od-small" style={{ maxWidth: 220, whiteSpace: "normal" }}>store check failed{r.storePlan ? `: ${r.storePlan.replace(/^error: /, "")}` : ""}</div>}</td>
+                    <td><span className={`od-chip ${STAGE_CLASS[r.stage]}`}>{r.stage}</span>{r.stuck && <div className="od-small" style={{ color: "var(--zs-warn)" }}>stuck</div>}{r.stuckAt && <div className="od-small" style={{ color: "var(--zs-warn)" }}>Stuck at: {r.stuckAt}</div>}{r.storeState === "unknown" && <div className="od-small" style={{ maxWidth: 220, whiteSpace: "normal" }}>store check failed{r.storePlan ? `: ${r.storePlan.replace(/^error: /, "")}` : ""}</div>}</td>
                     <td>{r.paid ? <span className="od-chip ok">{r.plan}</span> : <span className="od-chip mut">free</span>}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{r.connections}{r.schedules ? <div className="od-small">{r.schedules} auto-sync</div> : null}{r.isSource ? <div className="od-small">source store</div> : null}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{r.widgetShownAt ? ago(r.widgetShownAt) : <span className="od-small">never</span>}</td>
