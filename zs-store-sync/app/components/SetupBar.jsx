@@ -1,11 +1,12 @@
 /* eslint-disable react/prop-types */
-// Free setup bar at the top of every app page. One click opens WhatsApp with a
-// message the merchant reviews and sends themselves (app, store, email), so
-// nothing is sent on their behalf. Dismissible for 7 days: Built for Shopify
-// asks that admin banners can be closed.
+// Free setup bar at the top of every app page. One click opens WhatsApp or the
+// merchant's email app with a message they review and send themselves (app,
+// store, email), so nothing is sent on their behalf. Dismissible for 7 days: Built for Shopify asks that
+// admin banners can be closed.
 import { useEffect, useState } from "react";
 
 const WHATSAPP = "8801408270201";
+const EMAIL = "contact@zilancer.com";
 const HIDE_KEY = "zs_setup_bar_hidden_until";
 const HIDE_DAYS = 7;
 
@@ -31,6 +32,8 @@ const CSS = `
   font-size:16px;text-decoration:none;padding:9px 18px 9px 10px;border-radius:999px;white-space:nowrap;
   box-shadow:0 3px 10px rgba(0,0,0,.18);transition:transform .15s}
 .zs-sb-btn:hover{transform:translateY(-1px)}
+.zs-sb-btns{display:flex;gap:8px;flex-wrap:wrap}
+.zs-sb-btn.zs-sb-mail{background:transparent;color:#fff;border:2px solid rgba(255,255,255,.85);box-shadow:none;padding:7px 16px 7px 12px}
 .zs-sb-wa{width:30px;height:30px;border-radius:50%;background:#25D366;display:inline-flex;align-items:center;justify-content:center}
 .zs-sb-x{position:absolute;right:14px;top:50%;transform:translateY(-50%);background:transparent;border:0;
   color:#fff;font-size:20px;line-height:1;cursor:pointer;padding:4px;opacity:.75}
@@ -60,6 +63,9 @@ export default function SetupBar({ appName, shop, email }) {
     `Store: ${shop || ""}` +
     (email ? `\nEmail: ${email}` : "");
   const href = `https://wa.me/${WHATSAPP}?text=${encodeURIComponent(message)}`;
+  const mailHref =
+    `mailto:${EMAIL}?subject=${encodeURIComponent(`Free setup for ${appName}`)}` +
+    `&body=${encodeURIComponent(message)}`;
 
   const close = () => {
     try {
@@ -84,6 +90,7 @@ export default function SetupBar({ appName, shop, email }) {
           Let our team set up <span className="zs-sb-app">{appName}</span> in your store for{" "}
           <span className="zs-sb-free">FREE</span>.
         </span>
+        <span className="zs-sb-btns">
         <a className="zs-sb-btn" href={href} target="_blank" rel="noopener noreferrer">
           <span className="zs-sb-wa" aria-hidden="true">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff">
@@ -93,6 +100,11 @@ export default function SetupBar({ appName, shop, email }) {
           Chat on WhatsApp
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
         </a>
+        <a className="zs-sb-btn zs-sb-mail" href={mailHref} target="_blank" rel="noopener noreferrer">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
+          Email us
+        </a>
+        </span>
         <button type="button" className="zs-sb-x" onClick={close} aria-label="Close">×</button>
       </div>
     </div>
