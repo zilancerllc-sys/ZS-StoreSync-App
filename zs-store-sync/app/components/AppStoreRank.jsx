@@ -61,6 +61,7 @@ export default function AppStoreRank({ r }) {
   const fetcher = useFetcher();
   const [kw, setKw] = useState("");
   const [comp, setComp] = useState("");
+  const [shown, setShown] = useState(20); // keywords listed; Load more adds 20
   if (!r) return null;
   const busy = (intent) => fetcher.state !== "idle" && fetcher.formData?.get("intent") === intent;
   const post = (data) => fetcher.submit(data, { method: "post" });
@@ -112,7 +113,7 @@ export default function AppStoreRank({ r }) {
         <table className="rk-tbl">
           <thead><tr><th>Keyword</th><th>Position</th><th>Day</th><th>Week</th><th>30 days</th><th>Difficulty</th><th>Top 3</th><th /></tr></thead>
           <tbody>
-            {kws.map((k) => (
+            {kws.slice(0, shown).map((k) => (
               <tr key={k.key}>
                 <td><a href={`https://apps.shopify.com/search?q=${encodeURIComponent(k.key)}`} target="_blank" rel="noreferrer" style={{ color: "inherit" }}>{k.key}</a></td>
                 <td>{k.day ? pos(k.position) : <span className="rk-mut">not read yet</span>}{k.position != null && <div className="rk-mut">page {Math.ceil(k.position / 24)}</div>}</td>
@@ -128,6 +129,11 @@ export default function AppStoreRank({ r }) {
           </tbody>
         </table>
       </div>
+      {kws.length > shown && (
+        <div style={{ textAlign: "center", padding: "10px 0" }}>
+          <button className="od-btn" onClick={() => setShown((n) => n + 20)}>Load more ({kws.length - shown} more keywords)</button>
+        </div>
+      )}
       <div className="rk-add">
         <input placeholder="Add a search keyword, e.g. copy products" value={kw} onChange={(e) => setKw(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add("keyword", kw, setKw)} />

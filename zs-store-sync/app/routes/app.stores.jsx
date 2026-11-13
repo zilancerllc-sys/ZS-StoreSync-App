@@ -344,6 +344,7 @@ export default function OwnerDashboard() {
   const navigate = useNavigate();
   const fetcher = useFetcher();
   const [tab, setTab] = useState("all");
+  const [shown, setShown] = useState(20); // stores listed; Load more adds 20
   const [q, setQ] = useState("");
   const [showTest, setShowTest] = useState(false);
   const [dl, setDl] = useState(false);
@@ -454,7 +455,7 @@ export default function OwnerDashboard() {
             <table className="od-table">
               <thead><tr>{["Store", "Installed", "Stage", "Plan", "Connected", "Last run", "Runs", "Review", ""].map((h) => <th key={h}>{h}</th>)}</tr></thead>
               <tbody>
-                {rows.map((r) => (
+                {rows.slice(0, shown).map((r) => (
                   <tr key={r.shop} className={r.isTest ? "test" : ""}>
                     <td>
                       <div className="od-shop"><a href={`https://${r.shop}`} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>{r.storeName || r.shop.replace(".myshopify.com", "")}</a>{r.isTest && <span className="od-chip mut" style={{ marginLeft: 6 }}>test</span>}{r.isDev && <span className="od-chip mut" style={{ marginLeft: 6 }}>dev</span>}</div>
@@ -498,6 +499,11 @@ export default function OwnerDashboard() {
               </tbody>
             </table>
           </div>
+          {rows.length > shown && (
+            <div style={{ textAlign: "center", padding: "12px 0 0" }}>
+              <button className="od-btn" onClick={() => setShown((n) => n + 20)}>Load more ({rows.length - shown} more stores)</button>
+            </div>
+          )}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", gap: 12, flexWrap: "wrap" }}>
             <span className="od-note" style={{ margin: 0 }}>{d.lastChecked ? `Stores last checked ${ago(d.lastChecked)}. ` : "Press Check stores once to match Partners. "}{d.reviews ? `${d.reviews.matched.length} of ${d.reviews.reviews} App Store reviews matched to a store${d.reviews.unmatched.length ? ` (no store found for ${d.reviews.unmatched.map((u) => u.name).join(", ")}: tick reviewed by hand)` : ""}. ` : "App Store reviews are matched to stores by store name. "}<a href="https://apps.shopify.com/zs-storesync/reviews" target="_blank" rel="noreferrer">Check the reviews</a>.</span>
             <button className="od-btn" disabled={dl} onClick={async () => { setDl(true); try { await downloadFile("/app/stores-export.csv", "installed-stores.csv"); } finally { setDl(false); } }}>{dl ? "Preparing…" : "Download CSV"}</button>
