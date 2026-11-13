@@ -489,5 +489,9 @@
   "Your last migration from {shop} finished, but {n} items failed.": "La tua ultima migrazione da {shop} è terminata, ma {n} elementi non sono riusciti.",
   "ZS StoreSync copies data from one of your Shopify stores into another. Three steps:": "ZS StoreSync copia i dati da uno dei tuoi negozi Shopify a un altro. Tre passaggi:",
   "ZS StoreSync is no longer installed on {shop}, so its data can't be read.": "ZS StoreSync non è più installata su {shop}, quindi i suoi dati non si possono leggere.",
-  "{shop} is connected, but nothing has been copied yet.": "{shop} è collegato, ma non è stato ancora copiato nulla."
+  "{shop} is connected, but nothing has been copied yet.": "{shop} è collegato, ma non è stato ancora copiato nulla.",
+  "Enjoying ZS StoreSync? Leave a review": "Ti piace ZS StoreSync? Lascia una recensione",
+  "A short review on the Shopify App Store helps other merchants find the app.": "Una breve recensione sullo Shopify App Store aiuta altri commercianti a trovare l'app.",
+  "Leave a review": "Lascia una recensione",
+  "Dismiss": "Ignora"
 }

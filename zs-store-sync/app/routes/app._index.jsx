@@ -10,6 +10,7 @@ import { listConnections } from "../connection.server";
 import { brandStyles } from "./zs-styles.js";
 import { RECOMMENDED_APPS } from "../recommended-apps";
 import { useT } from "../i18n";
+import { isNoEmail } from "../lib/no-email.js";
 import {
   ArrowLeftRight, Package, Layers, FileText, Image, Users,
   ShoppingCart, Boxes, Tag, Zap, ShieldCheck, BookOpen,
@@ -68,7 +69,15 @@ export const loader = async ({ request }) => {
     (c) => c.codeVerified && c.authorized,
   ).length;
 
+  // review card: only after a real migration or sync finished, never for no-contact stores
+  const finishedRuns = isNoEmail({ shop })
+    ? 0
+    : await db.migrationJob.count({
+        where: { shop, status: "completed", mode: { in: ["migrate", "sync"] }, undoOfJobId: null },
+      });
+
   return {
+    reviewAsk: finishedRuns > 0,
     needsSetup: readyConnections === 0,
     stats: {
       totalJobs: await db.migrationJob.count({ where: { shop } }),
@@ -424,6 +433,54 @@ function StarRow({ value, hover, onPick, onHover, interactive }) {
   );
 }
 
+// ─── "Enjoying ZS StoreSync? Leave a review" card ────────────────────────────
+// The loader asks for it only after the first completed migration or sync run;
+// once dismissed or used it stays hidden.
+const REVIEW_CARD_KEY = "zsReviewCardDismissed";
+function ReviewCard() {
+  const t = useT();
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(REVIEW_CARD_KEY)) return;
+    } catch {
+      // storage blocked: still show it; dismissing then lasts this visit
+    }
+    setShow(true);
+  }, []);
+  const hide = () => {
+    try { localStorage.setItem(REVIEW_CARD_KEY, "1"); } catch { /* this visit only */ }
+    setShow(false);
+  };
+  if (!show) return null;
+  return (
+    <div className="zs-reveal zs-d7">
+      <div className="zs-fb-banner">
+        <button className="zs-fb-banner-close" type="button" onClick={hide} aria-label={t("Dismiss")}>
+          <X size={16} />
+        </button>
+        <div className="zs-fb-icon"><Star size={28} /></div>
+        <div className="zs-fb-copy">
+          <h2 className="zs-fb-title">{t("Enjoying ZS StoreSync? Leave a review")}</h2>
+          <p className="zs-fb-sub">
+            {t("A short review on the Shopify App Store helps other merchants find the app.")}
+          </p>
+        </div>
+        <a
+          className="zs-fb-cta"
+          style={{ textDecoration: "none" }}
+          href={APP_STORE_REVIEW_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={hide}
+        >
+          <Star size={16} /> {t("Leave a review")}
+        </a>
+      </div>
+    </div>
+  );
+}
+
 // ─── Feedback rating modal ────────────────────────────────────────────────────
 // Flow: pick stars → 1-3 asks for a written note that we email to the team;
 // 4-5 invites the merchant to leave a public App Store review.
@@ -604,7 +661,7 @@ const TYPE_LABEL = {
 
 export default function Index() {
   const t = useT();
-  const { stats, plan, jobs, needsSetup } = useLoaderData();
+  const { stats, plan, jobs, needsSetup, reviewAsk } = useLoaderData();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // Session-only dismissal — the banner returns on the next page load.
   const [feedbackDismissed, setFeedbackDismissed] = useState(false);
@@ -903,6 +960,8 @@ export default function Index() {
                 </div>
               </div>
             </div>
+
+            {reviewAsk && <ReviewCard />}
 
             {!feedbackDismissed && (
               <div className="zs-reveal zs-d7">
