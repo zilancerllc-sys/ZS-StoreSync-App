@@ -31,7 +31,7 @@ export const RECOMMENDED_APPS = [
     category: "Upsell & AOV",
     description: "Black Friday bundles in minutes: quantity breaks, buy X get Y and gift boxes on your product pages. Free plan and free setup.",
     link: "https://apps.shopify.com/zs-bundles?utm_source=zs-storesync&utm_medium=email&utm_campaign=recommended",
-    icon: "https://cdn.shopify.com/app-store/listing_images/b44c74a529875edac929e9118bea66f1/icon/CI7M4OubhZgDEAE=.png",
+    icon: "https://cdn.shopify.com/app-store/listing_images/b44c74a529875edac929e9118bea66f1/icon/CLKFpa72h5gDEAE=.jpeg",
     colorClass: "sage",
     badge: "Free plan available",
   },
