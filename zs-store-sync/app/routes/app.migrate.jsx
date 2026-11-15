@@ -136,7 +136,7 @@ export const action = async ({ request }) => {
       return {
         ok: false,
         error:
-          "That connection code doesn't match this store. Ask the source store's owner for the code in ZS StoreSync → Settings on that store.",
+          "That connection code doesn't match that store. Open ZS StoreSync on the source store, choose “Copy FROM this store” in Get Started, and copy the code shown there.",
       };
     }
 
@@ -420,8 +420,14 @@ export default function Migrate() {
   const revalidator = useRevalidator();
   const [activeJobId, setActiveJobId] = useState(null);
 
+  // A pairing is usable only while the source is installed AND the code it
+  // was made with is still that store's code. Unverified rows (the source
+  // changed its code) used to show "Authorized", got pre-selected, and the
+  // run then failed with "hasn't been verified".
+  const usable = (c) => c.authorized && c.codeVerified;
+  const codeRef = useRef(null);
   const [selectedSource, setSelectedSource] = useState(
-    connections.find((c) => c.authorized)?.sourceShop || "",
+    connections.find(usable)?.sourceShop || "",
   );
   const [domain, setDomain] = useState("");
   const [code, setCode] = useState("");
@@ -517,7 +523,7 @@ export default function Migrate() {
 
   const cData = connectFetcher.data;
   const result = runFetcher.data;
-  const authedConns = connections.filter((c) => c.authorized);
+  const authedConns = connections.filter(usable);
 
   return (
     <s-page heading={t("New Migration")}>
@@ -560,6 +566,7 @@ export default function Migrate() {
                   />
                   <input
                     className="zs-input code"
+                    ref={codeRef}
                     name="code"
                     placeholder={t("Code · ZS7K-92QT")}
                     aria-label={t("Connection code")}
@@ -583,7 +590,10 @@ export default function Migrate() {
               <div className="zs-code-hint">
                 <KeyRound size={14} />
                 <span>
-                  {t("The source store's owner finds its connection code in ZS StoreSync → Settings on that store.")}
+                  {t("The code is shown on the source store in ZS StoreSync → Get Started → “Copy FROM this store”.")}{" "}
+                  {connections.length === 0 && (
+                    <RouterLink to="/app/start?role=to">{t("First time? Use the step-by-step setup.")}</RouterLink>
+                  )}
                 </span>
               </div>
 
@@ -636,7 +646,7 @@ export default function Migrate() {
                       return (
                         <div
                           key={c.id}
-                          className={`zs-conn ${isSel ? "sel" : ""} ${c.authorized ? "" : "unauth"}`}
+                          className={`zs-conn ${isSel ? "sel" : ""} ${usable(c) ? "" : "unauth"}`}
                         >
                           {/* The row itself is not the control: it already
                               contains buttons, and nesting interactive
@@ -648,7 +658,7 @@ export default function Migrate() {
                             className="zs-conn-left"
                             aria-pressed={isSel}
                             onClick={() =>
-                              !isConfirming && setSelectedSource(c.sourceShop)
+                              !isConfirming && usable(c) && setSelectedSource(c.sourceShop)
                             }
                           >
                             <div className="zs-conn-ico">
@@ -701,7 +711,19 @@ export default function Migrate() {
                               </div>
                             ) : (
                               <>
-                                {c.authorized ? (
+                                {!c.codeVerified ? (
+                                  <button
+                                    className="zs-pill no"
+                                    title={t("This store's code was changed. Enter its new code above to use it again.")}
+                                    onClick={() => {
+                                      setDomain(c.sourceShop);
+                                      setCode("");
+                                      codeRef.current?.focus();
+                                    }}
+                                  >
+                                    <KeyRound size={11} /> {t("Code changed — enter new code")}
+                                  </button>
+                                ) : c.authorized ? (
                                   <span className="zs-pill ok">
                                     <CheckCircle2 size={12} /> {t("Authorized")}
                                   </span>
@@ -717,7 +739,7 @@ export default function Migrate() {
                                       });
                                     }}
                                   >
-                                    <Link2 size={11} /> {t("Needs auth — authorize")}
+                                    <Link2 size={11} /> {t("App not installed there — install")}
                                   </button>
                                 )}
                                 <button

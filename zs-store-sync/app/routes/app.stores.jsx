@@ -163,6 +163,7 @@ const EVENT_TEXT = {
   uninstall: () => "uninstalled",
   plan: (e) => `plan → ${e.detail}`,
   review_request: () => "review requested",
+  setup: (e) => `setup · ${e.detail || ""}`,
 };
 
 // Merchants over time (line) with installs / uninstalls (bars) underneath.

@@ -144,12 +144,12 @@ export default function SetupStatus({ status: first }) {
       copy = {
         tone: "amber",
         title: t("No store has used this store's connection code yet."),
-        text: t("Copying FROM this store? Install ZS StoreSync on the store you copy TO, open Get Started there and paste the code shown in Settings here. Copying INTO this store? Connect the other store in Get Started."),
+        text: t("Copying FROM this store? Open ZS StoreSync on the store you copy INTO, go to Get Started → “Copy INTO this store” and paste this store's address and code. Copying INTO this store? Choose “Copy INTO this store” in Get Started."),
       };
       actions = (
         <>
-          <Link className="zsss-ss-btn" to="/app/settings">{t("See connection code")}</Link>
-          <Link className="zsss-ss-btn ghost" to="/app/start">{t("Get Started")}</Link>
+          <Link className="zsss-ss-btn" to="/app/start?role=from">{t("Show code and steps")}</Link>
+          <Link className="zsss-ss-btn ghost" to="/app/start?role=to">{t("Copy INTO this store")}</Link>
         </>
       );
       break;
@@ -157,7 +157,7 @@ export default function SetupStatus({ status: first }) {
       copy = {
         tone: "amber",
         title: t("No store is connected yet, so there is nothing to copy."),
-        text: t("Connect the store you're copying from in three short steps. Our team can also set it up for you free."),
+        text: t("Tell ZS StoreSync whether this store has the data or receives it, and it walks you through the rest. Our team can also set it up for you free."),
       };
       actions = <Link className="zsss-ss-btn" to="/app/start">{t("Connect a store")}</Link>;
       break;
@@ -271,13 +271,17 @@ export default function SetupStatus({ status: first }) {
             <p>{t("ZS StoreSync copies data from one of your Shopify stores into another. Three steps:")}</p>
             <ol>
               <li>{t("Install ZS StoreSync on both stores.")}</li>
-              <li>{t("On the store you copy FROM, open Settings and copy its connection code.")}</li>
-              <li>{t("On the store you copy TO, open Get Started and paste the code. Then pick what to copy and start.")}</li>
+              <li>{t("On the store that has the data, choose “Copy FROM this store” and copy the code.")}</li>
+              <li>{t("On the store you are filling, choose “Copy INTO this store” and paste the code. Then pick what to copy and start.")}</li>
             </ol>
-            <p>{t("Stuck anywhere? A bar at the top of every page tells you what is missing and how to fix it. Our team can also set it up for you free.")}</p>
+            <p><b>{t("Which store is this one?")}</b></p>
+            <div className="zsss-wl-f" style={{ justifyContent: "flex-start" }}>
+              <Link className="zsss-ss-btn" to="/app/start?role=from" onClick={closeWelcome}>{t("It has the data (copy FROM)")}</Link>
+              <Link className="zsss-ss-btn" to="/app/start?role=to" onClick={closeWelcome}>{t("It receives the data (copy INTO)")}</Link>
+            </div>
+            <p style={{ marginTop: 14 }}>{t("Stuck anywhere? A bar at the top of every page tells you what is missing and how to fix it. Our team can also set it up for you free.")}</p>
             <div className="zsss-wl-f">
               <button type="button" className="zsss-ss-btn ghost" onClick={closeWelcome}>{t("Close")}</button>
-              <Link className="zsss-ss-btn" to="/app/start" onClick={closeWelcome}>{t("Get started")}</Link>
             </div>
           </div>
         </div>

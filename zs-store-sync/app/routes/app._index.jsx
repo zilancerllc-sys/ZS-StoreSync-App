@@ -6,7 +6,7 @@ import db from "../db.server";
 import { getUsage, PLAN_LABEL } from "../credits.server";
 import { failStaleJobs } from "../jobs.server";
 import { recordFeedback } from "../feedback.server";
-import { listConnections } from "../connection.server";
+import { listConnections, listPullingStores } from "../connection.server";
 import { brandStyles } from "./zs-styles.js";
 import { RECOMMENDED_APPS } from "../recommended-apps";
 import { useT } from "../i18n";
@@ -76,9 +76,16 @@ export const loader = async ({ request }) => {
         where: { shop, status: "completed", mode: { in: ["migrate", "sync"] }, undoOfJobId: null },
       });
 
+  // A store that only hands its data to another store has nothing to set up
+  // here; telling it to "connect the store you're copying from" sent the
+  // merchant looking for a third store.
+  const pullingStores =
+    readyConnections === 0 ? (await listPullingStores(shop)).map((p) => p.ownerShop) : [];
+
   return {
     reviewAsk: finishedRuns > 0,
-    needsSetup: readyConnections === 0,
+    needsSetup: readyConnections === 0 && pullingStores.length === 0,
+    sourceFor: pullingStores,
     stats: {
       totalJobs: await db.migrationJob.count({ where: { shop } }),
       itemsMigrated: totalMigrated._sum.createdCount || 0,
@@ -661,7 +668,7 @@ const TYPE_LABEL = {
 
 export default function Index() {
   const t = useT();
-  const { stats, plan, jobs, needsSetup, reviewAsk } = useLoaderData();
+  const { stats, plan, jobs, needsSetup, reviewAsk, sourceFor } = useLoaderData();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // Session-only dismissal — the banner returns on the next page load.
   const [feedbackDismissed, setFeedbackDismissed] = useState(false);
@@ -738,8 +745,8 @@ export default function Index() {
   ];
 
   const steps = [
-    { title: t("Get the connection code"), desc: t("On the {source} store, open ZS StoreSync → {settings} and copy its connection code.", { source: <b>{t("source")}</b>, settings: <b>{t("Settings")}</b> }) },
-    { title: t("Connect the source"), desc: t("On {page}, enter the source store domain and paste the connection code to authorize.", { page: <b>{t("New Migration")}</b> }) },
+    { title: t("Get the connection code"), desc: t("On the {source} store, open ZS StoreSync → {page} → “Copy FROM this store” and copy its code.", { source: <b>{t("source")}</b>, page: <b>{t("Get Started")}</b> }) },
+    { title: t("Connect the source"), desc: t("On the store you copy into, open {page} → “Copy INTO this store”, enter the source store's address and paste its code.", { page: <b>{t("Get Started")}</b> }) },
     { title: t("Pick what to move"), desc: t("Choose the data types — products, collections, pages, files & more. {preview} counts before you run.", { preview: <b>{t("Preview")}</b> }) },
     { title: t("Run & sync later"), desc: t("Run it — duplicates are skipped. Come back anytime and use {sync} to pull only what's new.", { sync: <b>{t("Sync Changes")}</b> }) },
   ];
@@ -791,12 +798,25 @@ export default function Index() {
               <div className="zs-setup-cta zs-reveal zs-d2">
                 <div className="zs-setup-ico"><Rocket size={20} /></div>
                 <div className="zs-setup-txt">
-                  <h3>{t("Connect the store you're copying from")}</h3>
+                  <h3>{t("Connect your two stores")}</h3>
                   <p>
-                    {t("Migrations need a second store paired with this one. It takes three steps — we'll walk you through each.")}
+                    {t("Install ZS StoreSync on both stores, then tell it which one has the data. It takes about 2 minutes and we walk you through each step.")}
                   </p>
                 </div>
-                <RouterLink to="/app/start" className="zs-btn-primary">{t("Get started")} <span>→</span></RouterLink>
+                <RouterLink to="/app/start?role=from" className="zs-btn-primary">{t("This store has the data")} <span>→</span></RouterLink>
+                <RouterLink to="/app/start?role=to" className="zs-btn-primary">{t("This store receives the data")} <span>→</span></RouterLink>
+              </div>
+            )}
+            {!needsSetup && sourceFor?.length > 0 && (
+              <div className="zs-setup-cta zs-reveal zs-d2">
+                <div className="zs-setup-ico"><Rocket size={20} /></div>
+                <div className="zs-setup-txt">
+                  <h3>{t("This store is a source")}</h3>
+                  <p>
+                    {t("{stores} can copy data from this store. Migrations and syncs are started from inside that store, not here.", { stores: sourceFor.join(", ") })}
+                  </p>
+                </div>
+                <RouterLink to="/app/start?role=from" className="zs-btn-primary">{t("See connection")} <span>→</span></RouterLink>
               </div>
             )}
 

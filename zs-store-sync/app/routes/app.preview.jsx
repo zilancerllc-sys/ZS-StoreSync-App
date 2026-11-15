@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useLoaderData, useFetcher } from "react-router";
+import { useLoaderData, useFetcher, Link as RouterLink } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate, unauthenticated } from "../shopify.server";
 import db from "../db.server";
@@ -175,7 +175,11 @@ export default function Preview() {
             <div className="zs-card">
               {connections.length === 0 ? (
                 <div className="zs-banner err">
-                  <AlertCircle size={16} /> {t("No authorized source stores yet. Connect one on the Migrate page first.")}
+                  <AlertCircle size={16} />{" "}
+                  <span>
+                    {t("No store is connected to copy from yet.")}{" "}
+                    <RouterLink to="/app/start">{t("Connect your stores in Get Started")}</RouterLink>
+                  </span>
                 </div>
               ) : (
                 <fetcher.Form method="post">
@@ -265,7 +269,7 @@ export default function Preview() {
                       <th>{t("Data Type")}</th>
                       <th>{t("Source ({shop})", { shop: data.sourceShop })}</th>
                       <th>{t("This Store")}</th>
-                      <th>{t("Likely New")}</th>
+                      <th>{t("Could be new")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -281,8 +285,13 @@ export default function Preview() {
                               <td className="num">{c.source}</td>
                               <td className="num">{c.target}</td>
                               <td>
+                                {/* Counts can't tell which items match: 20 in the
+                                    source and 30 here used to read "+0" even when
+                                    all 20 were new. Show the honest range. */}
                                 <span className="zs-diff">
-                                  +{Math.max(c.source - c.target, 0)}
+                                  {c.target === 0 || c.source === 0
+                                    ? `+${c.source}`
+                                    : `${Math.max(c.source - c.target, 0)}–${c.source}`}
                                 </span>
                               </td>
                             </>
@@ -301,6 +310,11 @@ export default function Preview() {
                     })}
                   </tbody>
                 </table>
+              )}
+              {data?.ok && data.counts && (
+                <p style={{ fontSize: 12.5, color: "var(--zs-muted)", marginTop: 10, lineHeight: 1.55 }}>
+                  {t("Counts alone can't tell which items already exist here, so “Could be new” is a range. “Check item by item” matches each item and tells you exactly what would be created or skipped, without changing anything.")}
+                </p>
               )}
             </div>
           </div>

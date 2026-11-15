@@ -421,7 +421,11 @@ export default function Sync() {
             <div className="zs-card">
               {connections.length === 0 ? (
                 <div className="zs-banner err">
-                  <AlertCircle size={16} /> {t("No authorized source stores. Connect one on the Migrate page.")}
+                  <AlertCircle size={16} />{" "}
+                  <span>
+                    {t("No store is connected to copy from yet.")}{" "}
+                    <RouterLink to="/app/start">{t("Connect your stores in Get Started")}</RouterLink>
+                  </span>
                 </div>
               ) : (
                 <fetcher.Form method="post">

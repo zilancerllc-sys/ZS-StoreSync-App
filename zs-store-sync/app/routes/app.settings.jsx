@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useLoaderData, useFetcher } from "react-router";
+import { useLoaderData, useFetcher, Link as RouterLink } from "react-router";
+import { copyText } from "../lib/copy-text";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import {
@@ -126,15 +127,18 @@ export default function Settings() {
   const revokeFetcher = useFetcher();
   const prefFetcher = useFetcher();
   const fetcher = useFetcher();
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState(null); // null | "ok" | "fail"
+  // Regenerating disconnects every store using the old code, so it asks first
+  // (inline: a browser confirm() dialog is blocked in the embedded admin).
+  const [confirmRegen, setConfirmRegen] = useState(false);
 
   const code = fetcher.data?.code || initialCode;
   const regenerating = fetcher.state !== "idle";
+  const regenerated = !!fetcher.data?.code && fetcher.state === "idle";
 
-  const copy = () => {
-    navigator.clipboard?.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
+  const copy = async () => {
+    setCopied((await copyText(code)) ? "ok" : "fail");
+    setTimeout(() => setCopied(null), 2200);
   };
 
   return (
@@ -167,10 +171,13 @@ export default function Settings() {
               <div className="zs-code-box">
                 <span className="zs-code">{code}</span>
                 <button
-                  className={`zs-copy ${copied ? "done" : ""}`}
+                  type="button"
+                  className={`zs-copy ${copied === "ok" ? "done" : ""}`}
                   onClick={copy}
                 >
-                  {copied ? (
+                  {copied === "fail" ? (
+                    t("Select it and copy by hand")
+                  ) : copied ? (
                     <>
                       <Check size={15} /> {t("Copied")}
                     </>
@@ -196,31 +203,61 @@ export default function Settings() {
                   })}
                 </li>
                 <li>
-                  {t("Go to {page} and enter this store's domain.", {
-                    page: <b>{t("New Migration")}</b>,
+                  {t("Go to {page}, choose “Copy INTO this store” and enter this store's address: {shop}", {
+                    page: <b>{t("Get Started")}</b>,
+                    shop: <b>{shop}</b>,
                   })}
                 </li>
                 <li>
                   {t("When asked, paste this connection code to authorize the transfer.")}
                 </li>
               </ol>
+              <div style={{ marginTop: 4, fontSize: 13 }}>
+                <RouterLink to="/app/start?role=from">{t("Open the step-by-step setup")}</RouterLink>
+              </div>
 
-              <fetcher.Form method="post" className="zs-regen">
+              <fetcher.Form
+                method="post"
+                className="zs-regen"
+                onSubmit={() => setConfirmRegen(false)}
+              >
                 <input type="hidden" name="intent" value="regenerate" />
                 <span className="zs-regen-txt">
-                  {t("Regenerating creates a new code and immediately revokes the old one. Any store using the old code will need the new one.")}
+                  {confirmRegen
+                    ? pulling.length
+                      ? t("Make a new code? {n} connected store(s) will be disconnected and their automatic syncs removed until they enter the new code.", { n: pulling.length })
+                      : t("Make a new code? The current code stops working right away.")
+                    : regenerated
+                      ? t("New code created. The old one no longer works.")
+                      : t("Regenerating creates a new code and immediately revokes the old one. Any store using the old code will need the new one.")}
                 </span>
-                <button className="zs-regen-btn" disabled={regenerating}>
-                  {regenerating ? (
-                    <>
-                      <Loader2 size={14} className="zs-spin" /> {t("Generating…")}
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw size={14} /> {t("Regenerate code")}
-                    </>
-                  )}
-                </button>
+                {confirmRegen ? (
+                  <span style={{ display: "flex", gap: 8 }}>
+                    <button type="button" className="zs-regen-btn" onClick={() => setConfirmRegen(false)}>
+                      {t("Cancel")}
+                    </button>
+                    <button className="zs-regen-btn" disabled={regenerating}>
+                      <RefreshCw size={14} /> {t("Yes, make a new code")}
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="zs-regen-btn"
+                    disabled={regenerating}
+                    onClick={() => setConfirmRegen(true)}
+                  >
+                    {regenerating ? (
+                      <>
+                        <Loader2 size={14} className="zs-spin" /> {t("Generating…")}
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={14} /> {t("Regenerate code")}
+                      </>
+                    )}
+                  </button>
+                )}
               </fetcher.Form>
             </div>
 
