@@ -16,6 +16,8 @@ import { downloadFile } from "../lib/download";
 import { addTarget, loadRanks, removeTarget, runRankCheck } from "../lib/app-store-rank.server";
 import { RANK } from "../lib/app-store-rank.config";
 import AppStoreRank from "../components/AppStoreRank";
+import EmailStats from "../components/EmailStats";
+import { loadEmailStats } from "../lib/email-stats.server";
 
 // This app's App Store listing, where reviews are read from.
 const APP_HANDLE = "zs-storesync";
@@ -43,7 +45,9 @@ export const loader = async ({ request }) => {
     console.error("[rank] load failed:", e?.message || e);
     return null;
   });
-  return { ...data, traffic, rank };
+  // Email delivery / open / click numbers, recorded by ZS Bundles from Resend.
+  const emails = await loadEmailStats("zs-storesync");
+  return { ...data, traffic, rank, emails };
 };
 
 export const action = async ({ request }) => {
@@ -418,6 +422,9 @@ export default function OwnerDashboard() {
         <Traffic t={d.traffic} label={label} />
 
         <AppStoreRank r={d.rank} />
+
+
+        <EmailStats e={d.emails} />
 
         <div className="od-two">
           <div className="od-card">

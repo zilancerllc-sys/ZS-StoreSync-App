@@ -36,6 +36,8 @@ async function sendFeedbackEmail({ shop, rating, message }) {
     replyTo: FEEDBACK_TO,
     subject,
     html,
+    type: "team",
+    shop,
   });
 }
 

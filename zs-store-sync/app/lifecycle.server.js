@@ -365,7 +365,7 @@ export async function runDueLifecycleEmails(now = new Date()) {
     if (claimed.count !== 1) continue;
 
     const sent = await sendFeedbackEmail({
-      to: c.email,
+      to: c.email, shop: c.shop,
       token: c.unsubscribeToken,
       experience: COPY.feedbackExperience,
     }).catch(() => false);
@@ -413,7 +413,7 @@ export async function requestReview(shop) {
   if (!c || !c.email) return { ok: false, reason: "no email address on file" };
   if (c.uninstalledAt) return { ok: false, reason: "the store has uninstalled" };
   if (!c.optedIn || c.unsubscribedAt) return { ok: false, reason: "the store unsubscribed from email" };
-  const sent = await sendReviewRequestEmail({ to: c.email, token: c.unsubscribeToken }).catch(() => false);
+  const sent = await sendReviewRequestEmail({ to: c.email, shop: c.shop, token: c.unsubscribeToken }).catch(() => false);
   if (!sent) return { ok: false, reason: "the email could not be sent" };
   await db.merchantContact.update({ where: { shop }, data: { reviewAskSentAt: new Date() } });
   logAppEvent(shop, "review_request");

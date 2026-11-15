@@ -24,6 +24,11 @@
 // ═════════════════════════════════════════════════════════════════════════════
 
 import { welcomeOfferCard } from "./welcome-offer.js";
+import { emailTags } from "./lib/email-track.js";
+
+// The app tag on every email (lib/email-track.js): delivery, opens and
+// clicks show on the owner dashboard's Emails card.
+const EMAIL_APP = "zs-storesync";
 export const APP_NAME = process.env.APP_NAME || "ZS StoreSync";
 
 // Always contact@, whatever FEEDBACK_FROM says: mail from a noreply@ address
@@ -52,7 +57,7 @@ export function esc(s = "") {
 // "Unsubscribe" button (it POSTs to /unsubscribe/:token).
 // `text` alone sends a plain-text mail (no html part); `from` overrides the
 // sender (the uninstall question goes out as "Masud from ZS StoreSync").
-export async function sendEmail({ to, subject, html, text, replyTo, unsubscribeToken, from }) {
+export async function sendEmail({ type, shop, to, subject, html, text, replyTo, unsubscribeToken, from }) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey || !to) return false;
 
@@ -70,6 +75,7 @@ export async function sendEmail({ to, subject, html, text, replyTo, unsubscribeT
         subject,
         ...(html ? { html } : {}),
         ...(text ? { text } : {}),
+        tags: emailTags({ app: EMAIL_APP, type, shop, subject }),
         ...(unsubscribeToken
           ? {
               headers: {
@@ -143,6 +149,8 @@ export async function notifyScheduledRun({ to, shop, sourceShop, job }) {
        </table>`;
 
   return sendEmail({
+    type: "merchant_alert",
+    shop,
     to,
     replyTo: REPLY_TO,
     subject,
@@ -153,6 +161,8 @@ export async function notifyScheduledRun({ to, shop, sourceShop, job }) {
 // ─── A schedule turned itself off ────────────────────────────────────────────
 export async function notifySchedulePaused({ to, shop, sourceShop, reason }) {
   return sendEmail({
+    type: "merchant_alert",
+    shop,
     to,
     replyTo: REPLY_TO,
     subject: `Automatic sync paused — ${shop}`,
@@ -399,6 +409,8 @@ export function welcomeEmailHtml({
 
 export async function sendWelcomeEmail({ to, ...opts }) {
   return sendEmail({
+    shop: opts.shop,
+    type: "welcome",
     to,
     replyTo: REPLY_TO,
     subject: opts.subject || `Welcome to ${APP_NAME} — here's how to start`,
@@ -446,6 +458,8 @@ export function uninstallAskText({ shop, token }) {
 
 export async function sendUninstallAskEmail({ to, shop, token }) {
   return sendEmail({
+    type: "uninstall_ask",
+    shop,
     to,
     from: PERSONAL_FROM,
     replyTo: REPLY_TO,
@@ -460,7 +474,7 @@ export async function sendUninstallAskEmail({ to, shop, token }) {
 // email: it is the flow Shopify sanctions, and it already exists in the app.
 // Deliberately does not name the store — the merchant knows which one they
 // installed, and the domain added nothing but clutter.
-export async function sendFeedbackEmail({ to, token, experience = "experience" }) {
+export async function sendFeedbackEmail({ shop, to, token, experience = "experience" }) {
   const body = `
     <h2 style="margin:0 0 14px;font-size:21px;">How's ${esc(APP_NAME)} working out?</h2>
     <p style="font-size:15px;line-height:1.65;margin:0 0 16px;">
@@ -482,6 +496,8 @@ export async function sendFeedbackEmail({ to, token, experience = "experience" }
     </p>`;
 
   return sendEmail({
+    shop,
+    type: "feedback",
     to,
     replyTo: REPLY_TO,
     subject: `How's ${APP_NAME} working out?`,
@@ -491,7 +507,7 @@ export async function sendFeedbackEmail({ to, token, experience = "experience" }
 }
 
 // ─── 3. Product update ───────────────────────────────────────────────────────
-export async function sendPromoEmail({ to, token, apps, headline, intro }) {
+export async function sendPromoEmail({ shop, to, token, apps, headline, intro }) {
   const body = `
     <h2 style="margin:0 0 12px;font-size:21px;">${esc(headline)}</h2>
     <p style="font-size:15px;line-height:1.65;margin:0 0 18px;">${esc(intro)}</p>
@@ -499,6 +515,8 @@ export async function sendPromoEmail({ to, token, apps, headline, intro }) {
     ${appsSection(apps, "Other apps from the same studio")}`;
 
   return sendEmail({
+    shop,
+    type: "promo",
     to,
     replyTo: REPLY_TO,
     subject: headline,
@@ -513,7 +531,7 @@ export async function sendPromoEmail({ to, token, apps, headline, intro }) {
 // "reply instead" line is an addition, never a gate in front of the review.
 const REVIEW_REQUEST_URL = "https://apps.shopify.com/zs-storesync#modal-show=WriteReviewModal";
 
-export async function sendReviewRequestEmail({ to, token }) {
+export async function sendReviewRequestEmail({ shop, to, token }) {
   const body = `
     <h2 style="margin:0 0 14px;font-size:21px;">How is ${esc(APP_NAME)} working for you?</h2>
     <p style="font-size:15px;line-height:1.65;margin:0 0 16px;">
@@ -528,6 +546,8 @@ export async function sendReviewRequestEmail({ to, token }) {
     </p>`;
 
   return sendEmail({
+    shop,
+    type: "review_ask",
     to,
     replyTo: REPLY_TO,
     subject: `A quick favour from the ${APP_NAME} team`,
@@ -541,6 +561,8 @@ export async function sendReviewRequestEmail({ to, token }) {
 // variants, or made one huge change). Nothing in that batch was written.
 export async function notifyLiveStockPaused({ to, shop, sourceShop, reason }) {
   return sendEmail({
+    type: "merchant_alert",
+    shop,
     to,
     replyTo: REPLY_TO,
     subject: `Live stock sync paused — ${shop}`,
