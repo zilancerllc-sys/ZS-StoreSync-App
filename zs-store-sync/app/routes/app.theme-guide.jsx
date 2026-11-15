@@ -1,14 +1,115 @@
-import { Link as RouterLink } from "react-router";
+import { useState } from "react";
+import { Link as RouterLink, useLoaderData, useFetcher } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
+import db from "../db.server";
+import { getUsage, filterAllowedTypes } from "../credits.server";
+import { getVerifiedConnection, listConnections } from "../connection.server";
+import { startMigrationJob, getActiveJob } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
-import { Palette, AlertCircle } from "lucide-react";
+import { Palette, AlertCircle, Lock, CheckCircle2, Wand2 } from "lucide-react";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-  return null;
+  const { session } = await authenticate.admin(request);
+  const connections = (await listConnections(session.shop)).filter((c) => c.authorized && c.codeVerified);
+  const usage = await getUsage(session.shop);
+  return {
+    connections: connections.map((c) => c.sourceShop),
+    canTheme: (usage.limits.theme || 0) > 0,
+    themeLeft: usage.remaining.theme || 0,
+  };
 };
+
+export const action = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
+  const form = await request.formData();
+  const sourceShop = String(form.get("sourceShop") || "").trim();
+  const conn = await getVerifiedConnection(shop, sourceShop);
+  if (!conn) return { ok: false, error: "That store pairing isn't verified." };
+  const { allowed } = await filterAllowedTypes(shop, ["theme"]);
+  if (!allowed.length) return { ok: false, error: "Automatic theme copy is on the Growth and Pro plans." };
+  const usage = await getUsage(shop);
+  const left = Math.max((usage.limits.theme || 0) - (usage.usage.theme || 0), 0);
+  if (!left) return { ok: false, error: "Monthly limit reached for: theme. Upgrade your plan for more." };
+  const srcSession = await db.session.findFirst({ where: { shop: sourceShop, isOnline: false } });
+  if (!srcSession?.accessToken) return { ok: false, error: "Source not authorized." };
+  const busy = "A migration or sync is already running for this store. Wait for it to finish (see History).";
+  if (await getActiveJob(shop)) return { ok: false, error: busy };
+  const jobId = await startMigrationJob({
+    shop,
+    sourceShop,
+    mode: "migrate",
+    types: ["theme"],
+    limits: { theme: left },
+    options: { themeLicence: form.get("licence") === "on" },
+  });
+  return jobId ? { ok: true, started: true } : { ok: false, error: busy };
+};
+
+function AutoCopyCard() {
+  const t = useT();
+  const { connections, canTheme } = useLoaderData();
+  const fetcher = useFetcher();
+  const [src, setSrc] = useState(connections[0] || "");
+  const [licence, setLicence] = useState(false);
+  const res = fetcher.data;
+  return (
+    <div className="zs-card">
+      <div className="zs-step">
+        <span className="zs-num">
+          <Wand2 size={14} />
+        </span>
+        <div style={{ flex: 1 }}>
+          <h3>{t("Or let ZS StoreSync copy it")}</h3>
+          <p>{t("Copies the source store's live theme into this store as a new, unpublished theme, then checks that the products, collections, pages, menus and images it points at are here, and lists app blocks that need their app installed. A Theme Store theme is licensed per store, so only your customizations are copied onto the same theme, which must already be on this store. Undo in History deletes the copy.")}</p>
+          <p style={{ fontSize: 12.5, color: "var(--zs-muted)" }}>{t("This needs a theme permission Shopify grants separately. Until Shopify approves it, a run tells you it is waiting and nothing changes — use the steps below meanwhile.")}</p>
+          {!canTheme ? (
+            <div className="zs-warn">
+              <Lock size={15} />
+              <span>
+                {t("Automatic theme copy is on the Growth and Pro plans.")} <RouterLink to="/app/plan">{t("See plans")}</RouterLink>
+              </span>
+            </div>
+          ) : connections.length === 0 ? (
+            <p>{t("No authorized source stores. Connect one on the Migrate page.")}</p>
+          ) : (
+            <fetcher.Form method="post" style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
+              <select name="sourceShop" value={src} onChange={(e) => setSrc(e.target.value)} aria-label={t("Source store")} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--zs-border)", maxWidth: 360 }}>
+                {connections.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13 }}>
+                <input type="checkbox" name="licence" checked={licence} onChange={(e) => setLicence(e.target.checked)} />
+                <span>{t("If it's a custom theme (not from the Theme Store): I own it, or my licence lets me use it on this store too.")}</span>
+              </label>
+              <button className="zs-btn-theme" disabled={fetcher.state !== "idle"}>
+                {t("Copy the theme")}
+              </button>
+            </fetcher.Form>
+          )}
+          {res?.error && (
+            <div className="zs-warn">
+              <AlertCircle size={15} /> {t(res.error)}
+            </div>
+          )}
+          {res?.started && (
+            <div className="zs-warn">
+              <CheckCircle2 size={15} />
+              <span>
+                {t("Started. Follow it in {history}.", { history: <RouterLink to="/app/history">{t("History")}</RouterLink> })}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const pageStyles = `
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600&family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
@@ -28,6 +129,8 @@ const pageStyles = `
   .zs-warn{display:flex;gap:10px;align-items:flex-start;background:var(--zs-cream-tint);border:1px solid var(--zs-border);border-radius:var(--zs-r-sm);padding:13px 15px;font-size:13px;line-height:1.6;color:var(--zs-clay-deep);margin-top:16px;}
   .zs-warn svg{flex-shrink:0;margin-top:2px;}
   .zs-warn a,.zs-step a{color:var(--zs-clay-deep);font-weight:700;}
+  .zs-btn-theme{align-self:flex-start;background:var(--zs-clay);color:#fff;border:none;padding:11px 20px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;}
+  .zs-btn-theme:disabled{opacity:.5;cursor:not-allowed;}
 `;
 
 function Step({ n, title, children }) {
@@ -59,6 +162,8 @@ export default function ThemeGuide() {
             <p className="zs-sub">
               {t("Shopify has its own way to move a theme between stores: download it from one store and upload it to the other. Then ZS StoreSync copies the content the theme points at, so its sections show the right products, pages, menus and images.")}
             </p>
+
+            <AutoCopyCard />
 
             <Step n={1} title={t("Download the theme from the source store")}>
               <p>

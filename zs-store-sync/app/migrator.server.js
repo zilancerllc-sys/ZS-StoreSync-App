@@ -14,10 +14,21 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
 import { customerRef } from "./redact.server";
 import { sourcesFromRuleSet } from "./lib/collection-sources";
 import { completeProduct, mediaInputs, chunk, MAX_VARIANTS } from "./lib/product-paging.js";
-import { priceFieldsFor, ruleIsActive, describePriceRule, currencyDecimals } from "./lib/price-rules.js";
+import {
+  isCustomizationFile,
+  fileTooBig,
+  themeReferences,
+  appBlockHandles,
+  isThemeApprovalError,
+  buildZip,
+  copyName,
+  LIMITS as THEME_LIMITS,
+} from "./lib/theme-core.js";
+import { priceFieldsFor, ruleIsActive, currencyDecimals } from "./lib/price-rules.js";
 import {
   productSnapshot,
   productWouldChange,
@@ -663,7 +674,6 @@ async function migrateProducts(ctx) {
     async (n) => onLog(`Fetched ${n} products from source…`),
   );
   onLog(`Total ${products.length} products found. Importing…`);
-  if (ruleIsActive(ctx.priceRule)) onLog(`Price rule: ${describePriceRule(ctx.priceRule)}`);
 
   for (const p of products) {
     if (ctx.stopOnQuota()) {
@@ -2140,18 +2150,21 @@ async function migrateCustomers(ctx) {
 // ═════════════════════════════════════════════════════════════════════════════
 //  ORDERS
 //  NOTE: requires Protected Customer Data approval + read_orders / write_orders.
-//  read_orders only exposes the last 60 days; full history needs the separately
-//  approved read_all_orders scope. Best-effort: recreates
-//  orders with their line items (as titled custom items), addresses, note, tags
-//  and financial status. Inventory is bypassed and no emails are sent.
+//  The app holds read_all_orders (approved by Shopify), so the whole order
+//  history is read, oldest first, once the source store has accepted the
+//  updated permissions; until then Shopify returns the last 60 days only and
+//  the log says so. Recreates orders with their original date, line items (as
+//  titled custom items), addresses, note, tags and financial status. Inventory
+//  is bypassed and no emails are sent.
 // ═════════════════════════════════════════════════════════════════════════════
 const Q_ORDERS = `#graphql
   query Orders($cursor: String) {
     orders(first: 25, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       edges { node {
-        id name email note tags currencyCode displayFinancialStatus
+        id name email note tags currencyCode displayFinancialStatus processedAt
         lineItems(first: 50) {
+          pageInfo { hasNextPage endCursor }
           edges { node {
             title quantity sku
             originalUnitPriceSet { shopMoney { amount currencyCode } }
@@ -2168,6 +2181,22 @@ const Q_ORDERS = `#graphql
       } }
     }
   }`;
+
+const Q_ORDER_MORE_LINES = `#graphql
+  query OrderMoreLines($id: ID!, $cursor: String) {
+    order(id: $id) {
+      lineItems(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges { node {
+          title quantity sku
+          originalUnitPriceSet { shopMoney { amount currencyCode } }
+        } }
+      }
+    }
+  }`;
+
+const Q_APP_SCOPES = `#graphql
+  query AppScopes { currentAppInstallation { accessScopes { handle } } }`;
 
 const Q_TARGET_ORDER_BY_NAME = `#graphql
   query OrderByName($q: String!) {
@@ -2212,17 +2241,62 @@ const ORDER_FIN_STATUS = new Set([
   "VOIDED",
 ]);
 
+// Pages through a connection lazily, so a store with years of orders isn't
+// loaded into memory before the first one is copied (and a run that reaches
+// its quota stops reading).
+async function* pages(admin, query, rootKey, variables = {}) {
+  let cursor = null;
+  do {
+    const data = await gql(admin, query, { ...variables, cursor });
+    const conn = data?.[rootKey];
+    yield (conn?.edges || []).map((e) => e.node);
+    cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+    if (cursor) await sleep(250);
+  } while (cursor);
+}
+
+async function orderHistoryNotice(ctx) {
+  try {
+    const d = await gql(ctx.source, Q_APP_SCOPES);
+    const scopes = new Set((d?.currentAppInstallation?.accessScopes || []).map((x) => x.handle));
+    if (scopes.has("read_all_orders")) {
+      ctx.onLog("Reading the full order history, oldest first.");
+    } else {
+      ctx.onLog(
+        "⚠ The source store hasn't accepted ZS StoreSync's updated permissions yet, so Shopify only shows the last 60 days of its orders. Open ZS StoreSync on the source store once and approve, then run Orders again for the older ones.",
+      );
+    }
+  } catch {
+    /* the notice is a courtesy; the run goes on */
+  }
+}
+
 async function migrateOrders(ctx) {
   const { source, target, onLog, counters, hasQuota, consume } = ctx;
-  const orders = await fetchAll(source, Q_ORDERS, "orders", {}, (n) =>
-    onLog(`Fetched ${n} orders…`),
-  );
-  onLog(`Total ${orders.length} orders found. Importing…`);
-
-  for (const o of orders) {
+  await orderHistoryNotice(ctx);
+  let seen = 0;
+  outer: for await (const page of pages(source, Q_ORDERS, "orders")) {
+  seen += page.length;
+  onLog(`Fetched ${seen} orders…`);
+  for (const o of page) {
     if (!hasQuota()) {
       onLog("Quota reached — stopping orders.");
-      break;
+      break outer;
+    }
+    if (o.lineItems?.pageInfo?.hasNextPage) {
+      try {
+        let cursor = o.lineItems.pageInfo.endCursor;
+        while (cursor) {
+          const d = await gql(source, Q_ORDER_MORE_LINES, { id: o.id, cursor });
+          const li = d?.order?.lineItems;
+          o.lineItems.edges.push(...(li?.edges || []));
+          cursor = li?.pageInfo?.hasNextPage ? li.pageInfo.endCursor : null;
+        }
+      } catch (err) {
+        counters.failed++;
+        onLog(`✕ Couldn't read all line items of ${o.name} — ${String(err.message).slice(0, 100)}`);
+        continue;
+      }
     }
     try {
       const copied = await alreadyCopied(ctx, o, {
@@ -2266,6 +2340,8 @@ async function migrateOrders(ctx) {
       tags: [...(o.tags || []), sourceTag("zss-order", o.id)],
       currency: o.currencyCode || undefined,
       lineItems,
+      // keep the original order date, so reports on this store line up
+      processedAt: o.processedAt || undefined,
     };
     if (ORDER_FIN_STATUS.has(o.displayFinancialStatus)) {
       order.financialStatus = o.displayFinancialStatus;
@@ -2299,6 +2375,8 @@ async function migrateOrders(ctx) {
     }
     await sleep(250);
   }
+  }
+  onLog(`Total ${seen} orders read.`);
 
   // Draft orders are migrated as part of the orders module — they share the
   // same per-plan quota (consume() below still checks the "orders" limit).
@@ -3638,6 +3716,523 @@ async function migrateDiscounts(ctx) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  GIFT CARDS
+//
+//  Shopify never shows an app a gift card's full code (only its last four
+//  characters), so a card can't be copied with its code. Each enabled,
+//  unexpired card with money left becomes a NEW card on this store worth its
+//  current balance, with the same expiry, note and customer (matched by email).
+//  Shopify gives the new card a new code; the log shows the last four
+//  characters of old and new so the merchant can tell customers. No email is
+//  sent to anyone. The source card stays active on the old store, so the log
+//  reminds the merchant to deactivate it there to stop it being spent twice.
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_GIFT_CARDS = `#graphql
+  query GiftCards($cursor: String) {
+    giftCards(first: 50, after: $cursor, query: "status:enabled") {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id lastCharacters enabled expiresOn note
+        balance { amount currencyCode }
+        customer { defaultEmailAddress { emailAddress } }
+      } }
+    }
+  }`;
+
+const Q_TARGET_GIFT_CARD_NOTES = `#graphql
+  query TargetGiftCards($cursor: String) {
+    giftCards(first: 250, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id note } }
+    }
+  }`;
+
+const M_GIFT_CARD_CREATE = `#graphql
+  mutation CreateGiftCard($input: GiftCardCreateInput!) {
+    giftCardCreate(input: $input) {
+      giftCard { id lastCharacters }
+      userErrors { field message code }
+    }
+  }`;
+
+const GC_MARK = /\[zss-gc-(\d+)\]/;
+
+async function migrateGiftCards(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+  let cards;
+  let copied;
+  try {
+    cards = await fetchAll(source, Q_GIFT_CARDS, "giftCards", {}, (n) => onLog(`Fetched ${n} gift cards…`));
+    copied = new Set();
+    for (const g of await fetchAll(target, Q_TARGET_GIFT_CARD_NOTES, "giftCards")) {
+      const m = GC_MARK.exec(g.note || "");
+      if (m) copied.add(m[1]);
+    }
+  } catch (err) {
+    if (NEEDS_PERMISSION.test(err.message)) {
+      onLog("⚠ Gift cards can't be copied yet — open ZS StoreSync on both stores to approve the gift card permission.");
+      return;
+    }
+    throw err;
+  }
+  onLog(`Total ${cards.length} active gift cards found. Copying the ones with a balance…`);
+  const today = new Date().toISOString().slice(0, 10);
+  let made = 0;
+
+  for (const g of cards) {
+    if (ctx.stopOnQuota()) {
+      onLog("Quota reached — stopping gift cards.");
+      break;
+    }
+    const sid = String(g.id).split("/").pop();
+    const label = `gift card …${g.lastCharacters}`;
+    const amount = Number(g.balance?.amount || 0);
+    if (!g.enabled || !(amount > 0)) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped ${label} — no balance left`);
+      continue;
+    }
+    if (g.expiresOn && g.expiresOn < today) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped ${label} — expired on ${g.expiresOn}`);
+      continue;
+    }
+    if (copied.has(sid)) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped (already copied): ${label}`);
+      continue;
+    }
+    if (!ctx.canCreate()) {
+      ctx.notCreated(`${label} (${g.balance.amount} ${g.balance.currencyCode})`);
+      continue;
+    }
+    const input = {
+      initialValue: String(g.balance.amount),
+      note: `${g.note ? `${g.note} ` : ""}[zss-gc-${sid}] Copied by ZS StoreSync from gift card …${g.lastCharacters}`.slice(0, 5000),
+    };
+    if (g.expiresOn) input.expiresOn = g.expiresOn;
+    const email = g.customer?.defaultEmailAddress?.emailAddress;
+    let customerNote = "";
+    if (email) {
+      try {
+        const r = await gql(target, Q_TARGET_CUSTOMER_BY_EMAIL, { q: `email:${qv(email)}` });
+        const cid = r?.customers?.edges?.[0]?.node?.id;
+        if (cid) input.customerId = cid;
+        else customerNote = " (its customer isn't on this store yet — copy Customers first to link it)";
+      } catch {
+        customerNote = " (customer not linked)";
+      }
+    }
+    try {
+      const d = await gql(target, M_GIFT_CARD_CREATE, { input });
+      const errs = d?.giftCardCreate?.userErrors;
+      if (errs?.length) {
+        counters.failed++;
+        onLog(`✕ Failed: ${label} — ${errText(errs)}`);
+      } else {
+        const card = d?.giftCardCreate?.giftCard;
+        counters.created++;
+        made++;
+        consume(card?.id);
+        onLog(`✓ Gift card …${g.lastCharacters} → new card …${card?.lastCharacters} worth ${g.balance.amount} ${g.balance.currencyCode}${customerNote}`);
+      }
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ Error: ${label} — ${String(err.message).slice(0, 120)}`);
+    }
+    await sleep(200);
+  }
+  if (made) {
+    onLog(
+      `⚠ ${made} gift card(s) now have new codes on this store (Shopify doesn't let apps copy the original codes). Send customers their new codes from Products › Gift cards here, and deactivate the old cards on the source store so the balance can't be spent twice.`,
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  STORE POLICIES
+//  Refund, privacy, terms of service, terms of sale, shipping, contact, legal
+//  notice and cancellation policies. Migrate fills only policies this store
+//  hasn't written yet; sync replaces them.
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_SHOP_POLICIES = `#graphql
+  query ShopPolicies { shop { shopPolicies { type title body } } }`;
+
+const M_SHOP_POLICY_UPDATE = `#graphql
+  mutation UpdatePolicy($shopPolicy: ShopPolicyInput!) {
+    shopPolicyUpdate(shopPolicy: $shopPolicy) {
+      shopPolicy { type }
+      userErrors { field message }
+    }
+  }`;
+
+async function migratePolicies(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+  let src;
+  let tgt;
+  try {
+    src = (await gql(source, Q_SHOP_POLICIES))?.shop?.shopPolicies || [];
+    tgt = (await gql(target, Q_SHOP_POLICIES))?.shop?.shopPolicies || [];
+  } catch (err) {
+    if (NEEDS_PERMISSION.test(err.message)) {
+      onLog("⚠ Store policies can't be copied yet — open ZS StoreSync on both stores to approve the policies permission.");
+      return;
+    }
+    throw err;
+  }
+  const have = new Map(tgt.map((p) => [p.type, p.body || ""]));
+  for (const p of src) {
+    if (ctx.stopOnQuota()) {
+      onLog("Quota reached — stopping policies.");
+      break;
+    }
+    const label = p.title || p.type;
+    if (!String(p.body || "").trim()) {
+      counters.skipped++;
+      continue;
+    }
+    const existing = have.get(p.type) || "";
+    if (existing.trim()) {
+      if (ctx.mode !== "sync") {
+        counters.skipped++;
+        onLog(`↪︎ Skipped (exists): ${label}`);
+        continue;
+      }
+      if (existing === p.body) {
+        counters.skipped++;
+        continue;
+      }
+    } else if (!ctx.canCreate()) {
+      ctx.notCreated(label);
+      continue;
+    }
+    if (ctx.dryRun) {
+      counters.skipped++;
+      continue;
+    }
+    try {
+      const d = await gql(target, M_SHOP_POLICY_UPDATE, { shopPolicy: { type: p.type, body: p.body } });
+      const errs = d?.shopPolicyUpdate?.userErrors;
+      if (errs?.length) {
+        counters.failed++;
+        onLog(`✕ Failed: ${label} — ${errText(errs)}`);
+      } else if (existing.trim()) {
+        counters.updated++;
+        onLog(`↻ Updated: ${label}`);
+      } else {
+        counters.created++;
+        consume();
+        onLog(`✓ ${label}`);
+      }
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ Error: ${label} — ${String(err.message).slice(0, 120)}`);
+    }
+    await sleep(200);
+  }
+  onLog("  Store names, emails and addresses inside policy text are copied as written — check them on this store.");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  THEME (live theme of the source → an UNPUBLISHED theme on this store)
+//
+//  Theme Store theme: the same theme must already be on this store; it is
+//  duplicated and only the customizations are written into the duplicate.
+//  Custom theme: copied whole as a new unpublished theme, after the merchant
+//  confirmed they own it or have a licence (ctx.options.themeLicence).
+//  Every write needs Shopify's write_themes exemption; until it is granted the
+//  run says it is waiting for approval and points at the step-by-step guide.
+//  Undo deletes the created theme.
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_THEMES = `#graphql
+  query Themes {
+    themes(first: 50) { nodes { id name role themeStoreId processing processingFailed } }
+  }`;
+
+const Q_THEME_FILES = `#graphql
+  query ThemeFiles($id: ID!, $cursor: String) {
+    theme(id: $id) {
+      files(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          filename size
+          body {
+            __typename
+            ... on OnlineStoreThemeFileBodyText { content }
+            ... on OnlineStoreThemeFileBodyBase64 { contentBase64 }
+            ... on OnlineStoreThemeFileBodyUrl { url }
+          }
+        }
+      }
+    }
+  }`;
+
+const M_STAGED_UPLOAD = `#graphql
+  mutation StageThemeZip($input: [StagedUploadInput!]!) {
+    stagedUploadsCreate(input: $input) {
+      stagedTargets { url resourceUrl parameters { name value } }
+      userErrors { field message }
+    }
+  }`;
+
+const M_THEME_CREATE = `#graphql
+  mutation ThemeCreate($source: URL!, $name: String!) {
+    themeCreate(source: $source, name: $name, role: UNPUBLISHED) {
+      theme { id name }
+      userErrors { field message code }
+    }
+  }`;
+
+const M_THEME_DUPLICATE = `#graphql
+  mutation ThemeDuplicate($id: ID!, $name: String) {
+    themeDuplicate(id: $id, name: $name) {
+      newTheme { id name }
+      userErrors { field message code }
+    }
+  }`;
+
+const M_THEME_FILES_UPSERT = `#graphql
+  mutation ThemeFilesUpsert($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+    themeFilesUpsert(themeId: $themeId, files: $files) {
+      upsertedThemeFiles { filename }
+      userErrors { field filename message code }
+    }
+  }`;
+
+const Q_THEME_STATUS = `#graphql
+  query ThemeStatus($id: ID!) { theme(id: $id) { id processing processingFailed } }`;
+
+const Q_TARGET_MENU_HANDLES = `#graphql
+  query MenuHandles { menus(first: 250) { nodes { handle } } }`;
+const Q_TARGET_BLOG_BY_HANDLE = `#graphql
+  query BlogByHandle($q: String!) { blogs(first: 1, query: $q) { nodes { handle } } }`;
+
+const THEME_WAITING =
+  "⏳ Theme copy is waiting for Shopify to approve ZS StoreSync's theme permission (write_themes). Nothing was changed. Until then, copy the theme with Shopify's own download and upload — see Copy your theme in the app menu.";
+
+async function readThemeFiles(admin, themeId, onLog) {
+  const files = [];
+  let cursor = null;
+  for (let page = 0; page < 1000; page++) {
+    const d = await gql(admin, Q_THEME_FILES, { id: themeId, cursor });
+    const conn = d?.theme?.files;
+    files.push(...(conn?.nodes || []));
+    cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+    if (!cursor) break;
+    if (page % 5 === 4) onLog(`Read ${files.length} theme files…`);
+    await sleep(200);
+  }
+  return files;
+}
+
+async function fileBytes(f) {
+  const b = f.body || {};
+  if (b.__typename === "OnlineStoreThemeFileBodyText") return Buffer.from(b.content || "", "utf8");
+  if (b.__typename === "OnlineStoreThemeFileBodyBase64") return Buffer.from(b.contentBase64 || "", "base64");
+  if (b.__typename === "OnlineStoreThemeFileBodyUrl" && b.url) {
+    const res = await fetch(b.url);
+    if (!res.ok) throw new Error(`download failed (${res.status})`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+  return null;
+}
+
+// Do the products, collections, pages, blogs, menus and images the theme
+// points at exist here? Missing ones are listed (the editor shows them blank).
+async function checkThemeReferences(ctx, texts) {
+  const refs = new Map();
+  const apps = new Set();
+  for (const t of texts) {
+    for (const r of themeReferences(t)) refs.set(`${r.kind}/${r.handle}`, r);
+    for (const a of appBlockHandles(t)) apps.add(a);
+  }
+  const missing = [];
+  let menus = null;
+  let files = null;
+  for (const r of refs.values()) {
+    try {
+      let ok = true;
+      if (r.kind === "products") ok = !!(await gql(ctx.target, Q_TARGET_PRODUCT_ID_BY_HANDLE, { handle: r.handle }))?.productByHandle;
+      else if (r.kind === "collections") ok = !!(await gql(ctx.target, Q_TARGET_COLLECTION_BY_HANDLE, { handle: r.handle }))?.collectionByHandle;
+      else if (r.kind === "pages") ok = (await getTargetPageIndex(ctx)).has(r.handle);
+      else if (r.kind === "blogs") ok = !!(await gql(ctx.target, Q_TARGET_BLOG_BY_HANDLE, { q: `handle:${qv(r.handle)}` }))?.blogs?.nodes?.length;
+      else if (r.kind === "linklists") {
+        if (!menus) menus = new Set(((await gql(ctx.target, Q_TARGET_MENU_HANDLES))?.menus?.nodes || []).map((m) => m.handle));
+        ok = menus.has(r.handle);
+      } else if (r.kind === "shop_images") {
+        if (!files) files = await getTargetFileIndex(ctx);
+        ok = files.has(r.handle);
+      }
+      if (!ok) missing.push(`${r.kind.replace("linklists", "menu").replace("shop_images", "image")} "${r.handle}"`);
+    } catch {
+      /* a failed check is not a missing item */
+    }
+  }
+  if (missing.length) {
+    ctx.onLog(
+      `  ⚠ The theme points at ${missing.length} thing(s) not on this store yet: ${missing.slice(0, 15).join(", ")}${missing.length > 15 ? "…" : ""}. Copy them (Files, Products, Collections, Pages, Blog posts, Menus) and they'll show up, or re-pick them in the theme editor.`,
+    );
+  } else if (refs.size) {
+    ctx.onLog(`  ✓ All ${refs.size} products, collections, pages, menus and images the theme points at are on this store.`);
+  }
+  if (apps.size) {
+    ctx.onLog(`  ⚠ Blocks from these apps only show once the same app is installed here: ${[...apps].join(", ")}.`);
+  }
+}
+
+async function waitForTheme(ctx, themeId) {
+  for (let i = 0; i < 40; i++) {
+    const d = await gql(ctx.target, Q_THEME_STATUS, { id: themeId });
+    if (d?.theme?.processingFailed) return "failed";
+    if (d?.theme && !d.theme.processing) return "ready";
+    await sleep(3000);
+  }
+  return "slow";
+}
+
+async function upsertThemeFiles(ctx, themeId, files) {
+  let written = 0;
+  for (const batch of chunk(files, THEME_LIMITS.upsertBatch)) {
+    const d = await gql(ctx.target, M_THEME_FILES_UPSERT, { themeId, files: batch });
+    const errs = d?.themeFilesUpsert?.userErrors || [];
+    if (errs.length) {
+      const text = errs.map((e) => `${e.filename || ""} ${e.message}`.trim()).join(" | ").slice(0, 300);
+      if (isThemeApprovalError(text)) throw new Error(text);
+      ctx.onLog(`  ⚠ Some theme files weren't written: ${text}`);
+    }
+    written += d?.themeFilesUpsert?.upsertedThemeFiles?.length || 0;
+    await sleep(500);
+  }
+  return written;
+}
+
+async function migrateTheme(ctx) {
+  const { source, target, onLog, counters, consume } = ctx;
+  const srcThemes = (await gql(source, Q_THEMES))?.themes?.nodes || [];
+  const live = srcThemes.find((t) => t.role === "MAIN");
+  if (!live) {
+    counters.skipped++;
+    onLog("↪︎ The source store has no published theme to copy.");
+    return;
+  }
+  onLog(`Source theme: ${live.name}${live.themeStoreId ? " (from the Shopify Theme Store)" : " (custom theme)"}`);
+  if (!ctx.canCreate()) {
+    ctx.notCreated(`theme ${live.name}`);
+    return;
+  }
+
+  const allFiles = await readThemeFiles(source, live.id, onLog);
+  onLog(`Read ${allFiles.length} theme files.`);
+  const isStore = live.themeStoreId != null;
+  const wanted = isStore ? allFiles.filter((f) => isCustomizationFile(f.filename)) : allFiles;
+
+  const skipped = [];
+  const prepared = [];
+  let zipBytes = 0;
+  for (const f of wanted) {
+    const why = fileTooBig(f.filename, f.size);
+    if (why) {
+      skipped.push(`${f.filename} (${why})`);
+      continue;
+    }
+    try {
+      const data = await fileBytes(f);
+      if (!data) {
+        skipped.push(`${f.filename} (no content)`);
+        continue;
+      }
+      if (!isStore && zipBytes + data.length > THEME_LIMITS.zipBytes * 0.95) {
+        skipped.push(`${f.filename} (the theme is over Shopify's 50 MB upload limit)`);
+        continue;
+      }
+      zipBytes += data.length;
+      prepared.push({ name: f.filename, data });
+    } catch (err) {
+      skipped.push(`${f.filename} (${String(err.message).slice(0, 60)})`);
+    }
+  }
+  if (skipped.length) {
+    onLog(`  ⚠ ${skipped.length} theme file(s) not copied: ${skipped.slice(0, 10).join(", ")}${skipped.length > 10 ? "…" : ""}`);
+  }
+  const texts = prepared.filter((f) => f.name.endsWith(".json")).map((f) => f.data.toString("utf8"));
+  await checkThemeReferences(ctx, texts);
+  if (ctx.dryRun) {
+    counters.created++;
+    onLog(`• Would create an unpublished copy of ${live.name} with ${prepared.length} files`);
+    return;
+  }
+
+  try {
+    let newTheme;
+    if (isStore) {
+      const tgtThemes = (await gql(target, Q_THEMES))?.themes?.nodes || [];
+      const same = tgtThemes.find((t) => t.themeStoreId === live.themeStoreId && t.role !== "MAIN") ||
+        tgtThemes.find((t) => t.themeStoreId === live.themeStoreId);
+      if (!same) {
+        counters.skipped++;
+        onLog(
+          `↪︎ ${live.name} is a Theme Store theme, licensed to one store. Add ${live.name} to this store from the Theme Store first (buy it if it's a paid theme), then run Theme again: your customizations are then copied onto it.`,
+        );
+        return;
+      }
+      const d = await gql(target, M_THEME_DUPLICATE, { id: same.id, name: copyName(live.name) });
+      const errs = d?.themeDuplicate?.userErrors || [];
+      if (errs.length) throw new Error(errText(errs));
+      newTheme = d?.themeDuplicate?.newTheme;
+      if (!newTheme?.id) throw new Error("Shopify didn't return the new theme");
+      consume(newTheme.id);
+      await waitForTheme(ctx, newTheme.id);
+      const written = await upsertThemeFiles(
+        ctx,
+        newTheme.id,
+        prepared.map((f) => ({ filename: f.name, body: { type: "BASE64", value: f.data.toString("base64") } })),
+      );
+      counters.created++;
+      onLog(`✓ Theme: ${newTheme.name} — a copy of this store's ${same.name} with your ${written} customized templates and settings. It's unpublished: preview it in Online Store › Themes.`);
+    } else {
+      if (!ctx.options?.themeLicence) {
+        counters.skipped++;
+        onLog("↪︎ Theme not copied: confirm you own this custom theme or have a licence for this store (Copy your theme page), then run it again.");
+        return;
+      }
+      const zip = buildZip(prepared);
+      const st = await gql(target, M_STAGED_UPLOAD, {
+        input: [{ resource: "FILE", filename: "theme.zip", mimeType: "application/zip", httpMethod: "POST", fileSize: String(zip.length) }],
+      });
+      const tgt = st?.stagedUploadsCreate?.stagedTargets?.[0];
+      if (!tgt?.url) throw new Error(errText(st?.stagedUploadsCreate?.userErrors) || "no upload target");
+      const form = new FormData();
+      for (const p of tgt.parameters || []) form.append(p.name, p.value);
+      form.append("file", new Blob([zip], { type: "application/zip" }), "theme.zip");
+      const up = await fetch(tgt.url, { method: "POST", body: form });
+      if (!up.ok) throw new Error(`theme upload failed (${up.status})`);
+      const d = await gql(target, M_THEME_CREATE, { source: tgt.resourceUrl, name: copyName(live.name) });
+      const errs = d?.themeCreate?.userErrors || [];
+      if (errs.length) throw new Error(errText(errs));
+      newTheme = d?.themeCreate?.theme;
+      if (!newTheme?.id) throw new Error("Shopify didn't return the new theme");
+      consume(newTheme.id);
+      const state = await waitForTheme(ctx, newTheme.id);
+      if (state === "failed") {
+        counters.failed++;
+        onLog(`✕ Shopify couldn't process the copied theme ${newTheme.name}. Undo removes it.`);
+        return;
+      }
+      counters.created++;
+      onLog(`✓ Theme: ${newTheme.name} with ${prepared.length} files${state === "slow" ? " (Shopify is still processing it)" : ""}. It's unpublished: preview it in Online Store › Themes.`);
+    }
+  } catch (err) {
+    if (isThemeApprovalError(err.message)) {
+      counters.skipped++;
+      onLog(THEME_WAITING);
+      return;
+    }
+    counters.failed++;
+    onLog(`✕ Theme copy failed — ${String(err.message).slice(0, 200)}`);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  BACKUP BEFORE SYNC (reader)
 //
 //  Reads what an existing target item looks like just before a sync writes to
@@ -3746,6 +4341,9 @@ const RUNNERS = {
   customers: migrateCustomers,
   inventory: migrateInventory,
   translations: migrateTranslations,
+  giftCards: migrateGiftCards,
+  policies: migratePolicies,
+  theme: migrateTheme,
 };
 
 // Order matters:
@@ -4093,6 +4691,7 @@ async function migrateTranslations(ctx) {
 export const DRY_RUN_TYPES = ["products", "collections", "pages", "discounts", "redirects", "menus"];
 
 const RUN_ORDER = [
+  "policies",
   "metafields",
   "files",
   "metaobjects",
@@ -4109,6 +4708,10 @@ const RUN_ORDER = [
   "translations",
   "orders",
   "customers",
+  // after customers, so each card can be linked to its customer
+  "giftCards",
+  // last: checks that what the theme points at already exists here
+  "theme",
 ];
 
 /**
@@ -4143,6 +4746,8 @@ export async function runMigration({
   // (kind, gid, label, snapshot) => Promise — set when this run keeps backups
   // of what a sync overwrites. Only used in sync mode.
   onBackup = null,
+  // per-run choices, e.g. { themeLicence: true }
+  options = {},
 }) {
   const dryRun = mode === "dryrun";
   // A dry run must never write, whatever a module tries: mutations are refused
@@ -4214,6 +4819,7 @@ export async function runMigration({
       currentType = t;
     },
     dryRun,
+    options: options || {},
     priceRule: ruleIsActive(priceRule) ? priceRule : null,
     priceDecimals: 2,
     backup: null,

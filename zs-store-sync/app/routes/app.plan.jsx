@@ -395,6 +395,8 @@ const TYPE_LABEL = {
   metafields: "Metafields",
   orders: "Orders",
   customers: "Customers",
+  giftCards: "Gift cards",
+  policies: "Store policies",
 };
 
 const DISPLAY_TYPES = [
@@ -412,6 +414,8 @@ const DISPLAY_TYPES = [
   "customers",
   "inventory",
   "translations",
+  "giftCards",
+  "policies",
 ];
 
 const faqs = [
@@ -433,7 +437,7 @@ const faqs = [
   },
   {
     q: "How much order history can be migrated?",
-    a: "Shopify only exposes the last 60 days of orders to apps, so that is the window ZS StoreSync can copy — regardless of your plan's order allowance, which caps how many of those orders are migrated rather than how far back they go. Older orders cannot be read by any app without Shopify granting the separate read_all_orders permission. Orders are recreated with their line items, addresses, note and tags; payment, fulfilment and refund records stay on the original store.",
+    a: "All of it. ZS StoreSync has Shopify's approval to read a store's full order history, so orders are copied oldest first with their original dates; your plan's order allowance caps how many are migrated each month, not how far back they go. The source store has to accept the app's latest permissions once — until it does, Shopify shows only the last 60 days and the run log says so. Orders are recreated with their line items, addresses, note and tags; payment, fulfilment and refund records stay on the original store.",
   },
   {
     q: "Why do Orders and Customers sometimes fail to migrate?",
@@ -479,16 +483,18 @@ function buildFeatures(planId, L, t) {
     { text: t("{n} Stock level updates", { n: fmt(L.inventory) }), ok: true },
     { text: t("{n} Translated items", { n: fmt(L.translations) }), ok: true },
     {
-      text: t("{orders} Orders (last 60 days), {customers} Customers", {
+      text: t("{orders} Orders (full history), {customers} Customers", {
         orders: fmt(L.orders),
         customers: fmt(L.customers),
       }),
       ok: true,
     },
+    { text: t("{n} Gift cards, store policies", { n: fmt(L.giftCards) }), ok: true },
     { text: t(sync.text), ok: sync.ok },
     { text: t("Price rules on sync (markup, markdown, rounding)"), ok: planHas(planId, "priceRules") },
     { text: t("Backup before sync, one-click restore (30 days)"), ok: planHas(planId, "backups") },
     { text: t("Live stock sync from the source store"), ok: planHas(planId, "liveInventory") },
+    { text: t("Theme copy as an unpublished theme (once Shopify approves the theme permission)"), ok: (L.theme || 0) > 0 },
   ];
 }
 

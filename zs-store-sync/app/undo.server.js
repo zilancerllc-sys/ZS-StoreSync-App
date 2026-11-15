@@ -107,6 +107,23 @@ const M_DEL_AUTO_DISCOUNT = `#graphql
     }
   }`;
 
+// Gift cards can't be deleted, only deactivated (their balance can't be used).
+const M_DEACTIVATE_GIFT_CARD = `#graphql
+  mutation UndoGiftCard($id: ID!) {
+    giftCardDeactivate(id: $id) {
+      giftCard { id }
+      userErrors { field message }
+    }
+  }`;
+
+const M_DEL_THEME = `#graphql
+  mutation UndoTheme($id: ID!) {
+    themeDelete(id: $id) {
+      deletedThemeId
+      userErrors { field message }
+    }
+  }`;
+
 const byId = (id) => ({ id });
 const byInputId = (id) => ({ input: { id } });
 const fileDelete = [M_DEL_FILE, "fileDelete", (id) => ({ fileIds: [id] })];
@@ -128,6 +145,8 @@ const DELETERS = {
   Menu: [M_DEL_MENU, "menuDelete", byId],
   DiscountCodeNode: [M_DEL_CODE_DISCOUNT, "discountCodeDelete", byId],
   DiscountAutomaticNode: [M_DEL_AUTO_DISCOUNT, "discountAutomaticDelete", byId],
+  GiftCard: [M_DEACTIVATE_GIFT_CARD, "giftCardDeactivate", byId],
+  OnlineStoreTheme: [M_DEL_THEME, "themeDelete", byId],
 };
 
 export const gidType = (gid) => /^gid:\/\/shopify\/([^/]+)\//.exec(String(gid))?.[1] || "";

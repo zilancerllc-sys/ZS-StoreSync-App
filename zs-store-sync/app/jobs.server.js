@@ -90,6 +90,7 @@ export async function startMigrationJob({
   limits,
   scheduleId = null, // set only when a SyncSchedule started this run
   productFilter = null,
+  options = {},
 }) {
   let job;
   try {
@@ -114,7 +115,7 @@ export async function startMigrationJob({
   }
 
   // fire-and-forget: the runner keeps going after this request responds
-  runJob(job.id, { shop, sourceShop, types, limits, mode, scheduleId, productFilter }).catch((err) => {
+  runJob(job.id, { shop, sourceShop, types, limits, mode, scheduleId, productFilter, options }).catch((err) => {
     console.error(`Migration job ${job.id} crashed:`, err);
   });
 
@@ -146,7 +147,7 @@ async function notifyIfScheduled(scheduleId, jobId) {
   }
 }
 
-async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId, productFilter }) {
+async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId, productFilter, options }) {
   const logs = [];
   let dirty = false;
   const onLog = (msg) => {
@@ -290,6 +291,7 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
       shouldStop: () => stopRequested,
       priceRule,
       onBackup: keepBackups ? backupWriter(jobId, shop) : null,
+      options,
     });
     await flushQuota();
     await flushCreated();

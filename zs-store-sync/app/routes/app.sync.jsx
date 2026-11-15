@@ -351,6 +351,7 @@ const TYPES = [
   { id: "metafields", name: "Metafields" },
   { id: "inventory", name: "Stock levels" },
   { id: "translations", name: "Translations" },
+  { id: "policies", name: "Store policies" },
 ];
 
 export default function Sync() {

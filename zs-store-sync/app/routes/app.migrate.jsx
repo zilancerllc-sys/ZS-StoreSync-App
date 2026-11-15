@@ -21,7 +21,7 @@ import { startMigrationJob, getActiveJob } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
 import { ProductFilterFields, NewTypeNotes } from "../components/ProductFilterFields";
-import { Languages, Warehouse } from "lucide-react";
+import { Languages, Warehouse, Gift, ScrollText } from "lucide-react";
 import { StopRunButton } from "../components/StopRunButton";
 import { productFilterFromForm } from "../lib/product-filter";
 import {
@@ -399,6 +399,8 @@ const ALL_TYPES = [
   { id: "customers", name: "Customers", icon: <Users size={16} /> },
   { id: "inventory", name: "Stock levels", icon: <Warehouse size={16} /> },
   { id: "translations", name: "Translations", icon: <Languages size={16} /> },
+  { id: "giftCards", name: "Gift cards", icon: <Gift size={16} /> },
+  { id: "policies", name: "Store policies", icon: <ScrollText size={16} /> },
 ];
 
 export default function Migrate() {
@@ -810,8 +812,8 @@ export default function Migrate() {
                 <div className="zs-note" style={{ marginTop: 14 }}>
                   <AlertCircle size={16} />
                   <span>
-                    {t("Shopify only lets apps read the {days} of orders, so older orders cannot be copied — your plan's order allowance caps how many are migrated, not how far back they go. Orders are recreated with line items, addresses, note and tags; payment, fulfilment and refund records stay on the original store.", {
-                      days: <b>{t("last 60 days")}</b>,
+                    {t("The {history} is copied, oldest first, with each order's original date — your plan's order allowance caps how many are migrated. The source store must have accepted ZS StoreSync's latest permissions; until then Shopify shows only the last 60 days and the log says so. Orders are recreated with line items, addresses, note and tags; payment, fulfilment and refund records stay on the original store.", {
+                      history: <b>{t("full order history")}</b>,
                     })}
                   </span>
                 </div>

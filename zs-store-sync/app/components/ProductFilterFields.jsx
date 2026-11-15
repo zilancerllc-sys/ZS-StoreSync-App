@@ -15,6 +15,16 @@ export function NewTypeNotes({ picked }) {
           {t("Stock levels replaces the quantity on this store for matching variants. Locations are matched by name.")}
         </p>
       )}
+      {picked.includes("giftCards") && (
+        <p style={note}>
+          {t("Gift cards: each active card with money left becomes a new card here worth its current balance, with the same expiry, note and customer. Shopify doesn't let apps copy the original codes, so the new cards have new codes — send them to your customers, and deactivate the old cards on the source store. No email is sent.")}
+        </p>
+      )}
+      {picked.includes("policies") && (
+        <p style={note}>
+          {t("Store policies copies the refund, privacy, terms, shipping, contact and other policies. A migration only fills policies this store hasn't written; a sync replaces them.")}
+        </p>
+      )}
       {picked.includes("translations") && (
         <p style={note}>
           {t("Translations copies products, collections, pages, blog posts and metaobjects, for languages enabled on both stores.")}
