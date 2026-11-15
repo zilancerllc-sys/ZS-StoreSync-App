@@ -11,7 +11,7 @@ import { unauthenticated } from "./shopify.server";
 import { gql, sleep } from "./migrator.server";
 import { redactPII } from "./redact.server";
 import { safeLogsJson } from "./jobs.server";
-import { zoneUndoVariables } from "./lib/undo-gids.js";
+import { zoneUndoVariables, metafieldUndoVariables } from "./lib/undo-gids.js";
 
 export const UNDO_DAYS = 30;
 const UNDO_MS = UNDO_DAYS * 24 * 60 * 60 * 1000;
@@ -206,6 +206,14 @@ const M_DEL_SELLING_PLAN_GROUP = `#graphql
     }
   }`;
 
+const M_DEL_METAFIELD = `#graphql
+  mutation UndoMetafield($metafields: [MetafieldIdentifierInput!]!) {
+    metafieldsDelete(metafields: $metafields) {
+      deletedMetafields { key }
+      userErrors { field message }
+    }
+  }`;
+
 const byId = (id) => ({ id });
 const byLocationId = (locationId) => ({ locationId });
 const byInputId = (id) => ({ input: { id } });
@@ -241,6 +249,8 @@ const DELETERS = {
   MarketWebPresence: [M_DEL_WEB_PRESENCE, "webPresenceDelete", byId],
   Company: [M_DEL_COMPANY, "companyDelete", byId],
   SellingPlanGroup: [M_DEL_SELLING_PLAN_GROUP, "sellingPlanGroupDelete", byId],
+  // store metafields (recorded with owner, namespace and key)
+  Metafield: [M_DEL_METAFIELD, "metafieldsDelete", metafieldUndoVariables],
 };
 
 export const gidType = (gid) => /^gid:\/\/shopify\/([^/]+)\//.exec(String(gid))?.[1] || "";

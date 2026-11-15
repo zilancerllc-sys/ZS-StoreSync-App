@@ -1268,6 +1268,7 @@ export async function migrateSellingPlans(ctx) {
   const ack = !!ctx.options?.sellingPlansAck;
   onLog(`Total ${list.length} selling plan group(s) found.`);
   let heldBack = 0;
+  let made = 0;
 
   for (const g of list) {
     if (ctx.stopOnQuota()) {
@@ -1323,6 +1324,7 @@ export async function migrateSellingPlans(ctx) {
       }
       const id = data?.sellingPlanGroup?.id;
       counters.created++;
+      made++;
       ctx.consume(id);
       have.add(groupKey(g));
       for (let i = 250; i < productIds.length; i += 250) {
@@ -1339,7 +1341,7 @@ export async function migrateSellingPlans(ctx) {
     }
     await sleep(250);
   }
-  if (list.length) {
+  if (made) {
     onLog("⚠ Copied plans belong to ZS StoreSync on this store. ZS StoreSync doesn't charge renewals: install your subscription / pre-order app here and set its plans up with that app before selling them. Existing subscription contracts are never copied.");
   }
   if (heldBack) onLog(`  ${heldBack} group(s) held back for that reason.`);

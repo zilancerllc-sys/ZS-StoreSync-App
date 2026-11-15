@@ -374,3 +374,12 @@ test("a zone created in an existing profile undoes through that profile", () => 
     profile: { zonesToDelete: ["gid://shopify/DeliveryZone/77"] },
   });
 });
+
+test("a created store metafield undoes by owner, namespace and key", async () => {
+  const { metafieldUndoGid, metafieldUndoVariables } = await import("../app/lib/undo-gids.js");
+  const gid = metafieldUndoGid("gid://shopify/Metafield/9", "gid://shopify/Shop/1", "judgeme", "settings");
+  assert.match(gid, /^gid:\/\/shopify\/Metafield\/9\?/);
+  assert.deepEqual(metafieldUndoVariables(gid), {
+    metafields: [{ ownerId: "gid://shopify/Shop/1", namespace: "judgeme", key: "settings" }],
+  });
+});

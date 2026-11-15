@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { randomUUID } from "node:crypto";
+import { metafieldUndoGid } from "./lib/undo-gids.js";
 import { Buffer } from "node:buffer";
 import { customerRef } from "./redact.server";
 import { sourcesFromRuleSet } from "./lib/collection-sources";
@@ -2011,7 +2012,7 @@ const Q_SHOP_METAFIELDS = `#graphql
 const M_SHOP_METAFIELDS_SET = `#graphql
   mutation ShopMetafieldsSet($metafields: [MetafieldsSetInput!]!) {
     metafieldsSet(metafields: $metafields) {
-      metafields { id }
+      metafields { id namespace key }
       userErrors { field message }
     }
   }`;
@@ -2075,11 +2076,14 @@ async function migrateShopMetafields(ctx) {
         onLog(`✕ Store metafields — ${errText(errs)}`);
         continue;
       }
+      const ids = new Map((d?.metafieldsSet?.metafields || []).map((x) => [`${x.namespace}.${x.key}`, x.id]));
       for (const m of batch) {
         if (m.existed) counters.updated++;
         else {
           counters.created++;
-          ctx.consume();
+          const id = ids.get(`${m.namespace}.${m.key}`);
+          // recorded with its owner + key so Undo can delete it
+          ctx.consume(id ? metafieldUndoGid(id, tgt.id, m.namespace, m.key) : null);
         }
       }
       onLog(`✓ Store metafields: ${batch.map((m) => `${m.namespace}.${m.key}`).join(", ")}`);
@@ -4997,7 +5001,8 @@ async function migrateTranslations(ctx) {
           if (!targetId) {
             counters.skipped++;
             unmatched++;
-            if (kind !== "digest") onLog(`↪︎ Skipped (not on this store): ${label}`);
+            // name the first few; a store missing hundreds of pages gets one summary line
+            if (kind !== "digest" && unmatched <= 5) onLog(`↪︎ Skipped (not on this store): ${label}`);
             continue;
           }
           const translations = translationsToRegister(res.translations, content, existing, locale, ctx.mode === "sync");
@@ -5027,6 +5032,9 @@ async function migrateTranslations(ctx) {
           onLog(`✕ Translation error: ${label} — ${String(err.message).slice(0, 120)}`);
         }
         await sleep(120);
+      }
+      if (kind !== "digest" && unmatched > 5) {
+        onLog(`↪︎ …${unmatched} ${type.toLowerCase().replace(/_/g, " ")} translation(s) (${locale}) skipped in all — those items aren't on this store yet`);
       }
       if (kind === "digest" && unmatched) {
         onLog(
