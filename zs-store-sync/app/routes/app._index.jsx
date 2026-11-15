@@ -663,7 +663,7 @@ const TYPE_LABEL = {
   products: "Products", collections: "Collections", pages: "Pages",
   discounts: "Discounts", files: "Files", menus: "Menus", redirects: "Redirects",
   metaobjects: "Metaobjects", blogPosts: "Blog Posts", metafields: "Metafields",
-  orders: "Orders", customers: "Customers", inventory: "Stock levels", translations: "Translations",
+  orders: "Orders", customers: "Customers", inventory: "Stock levels", translations: "Translations", giftCards: "Gift cards", policies: "Store policies", theme: "Theme",
 };
 
 export default function Index() {
