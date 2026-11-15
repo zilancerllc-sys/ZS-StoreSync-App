@@ -535,3 +535,34 @@ export async function sendReviewRequestEmail({ to, token }) {
     unsubscribeToken: token,
   });
 }
+
+// ─── Live stock sync stopped itself ──────────────────────────────────────────
+// Sent when the safety guard refused a batch (it would have zeroed many
+// variants, or made one huge change). Nothing in that batch was written.
+export async function notifyLiveStockPaused({ to, shop, sourceShop, reason }) {
+  return sendEmail({
+    to,
+    replyTo: REPLY_TO,
+    subject: `Live stock sync paused — ${shop}`,
+    html: `
+    <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3a3128;max-width:520px;">
+      <h2 style="margin:0 0 14px;font-size:19px;">Live stock sync has been paused</h2>
+      <p style="font-size:14px;line-height:1.6;margin:0 0 14px;">
+        Stock changes from <b>${esc(sourceShop)}</b> stopped being copied into
+        <b>${esc(shop)}</b> because the last batch looked unsafe. Nothing in
+        that batch was written, so your stock is as it was.
+      </p>
+      <div style="border-left:3px solid #a98b76;padding:8px 0 8px 14px;font-size:14px;">
+        ${esc(reason)}
+      </div>
+      <p style="font-size:14px;line-height:1.6;margin:16px 0 0;">
+        Check the stock on ${esc(sourceShop)}. If it is right, open
+        ${esc(APP_NAME)} → Price &amp; stock rules and press Resume.
+      </p>
+      <p style="margin:22px 0 0;font-size:12px;color:#8a7d70;">
+        You're getting this because live stock sync is on for this store.
+        Turn it off in ${esc(APP_NAME)} → Price &amp; stock rules.
+      </p>
+    </div>`,
+  });
+}

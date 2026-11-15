@@ -24,6 +24,8 @@ import { notifySchedulePaused } from "./notify.server";
 // one timer is easier to reason about than two.
 import { runDueLifecycleEmails } from "./lifecycle.server";
 import { runDueInstantSyncs } from "./instant-sync.server";
+import { runDueLiveInventory } from "./live-inventory.server";
+import { purgeAllOldBackups } from "./backup.server";
 
 const BUSY_RETRY_MS = 15 * 60 * 1000;
 
@@ -231,6 +233,13 @@ export function startScheduleTicker() {
       },
       (err) => console.error("[instant-sync] tick failed:", err),
     );
+    runDueLiveInventory().then(
+      (r) => {
+        if (r.length) console.log("[live-stock]", JSON.stringify(r));
+      },
+      (err) => console.error("[live-stock] tick failed:", err),
+    );
+    purgeAllOldBackups().catch((err) => console.error("[backups] purge failed:", err));
     runDueLifecycleEmails().then(
       (r) => {
         if (r.length) console.log("[lifecycle]", JSON.stringify(r));

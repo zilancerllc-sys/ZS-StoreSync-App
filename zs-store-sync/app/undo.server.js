@@ -179,7 +179,7 @@ export async function undoableCounts(shop, jobIds) {
 export async function startUndoJob(shop, jobId) {
   const target = await db.migrationJob.findFirst({ where: { id: jobId, shop } });
   if (!target) return { error: "This run can't be undone." };
-  if (target.mode === "undo" || target.status === "running") {
+  if (target.mode === "undo" || target.mode === "restore" || target.status === "running") {
     return { error: "This run can't be undone." };
   }
   if (Date.now() - target.createdAt.getTime() > UNDO_MS) {

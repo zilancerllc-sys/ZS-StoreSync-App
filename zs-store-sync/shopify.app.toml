@@ -38,6 +38,11 @@ api_version = "2026-10"
   uri = "/webhooks/products/update"
   topics = [ "products/create", "products/update" ]
 
+  # Live stock sync: queues changed stock for stores copying stock from this one.
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/inventory-levels/update"
+  topics = [ "inventory_levels/update" ]
+
   [[webhooks.subscriptions]]
   uri = "/webhooks/app-subscriptions-update"
   topics = [ "app_subscriptions/update" ]

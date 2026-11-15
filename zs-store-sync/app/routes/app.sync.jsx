@@ -512,6 +512,17 @@ export default function Sync() {
             </div>
 
             {connections.length > 0 && (
+              <div className="zs-banner ok" style={{ background: "var(--zs-cream-tint)", color: "var(--zs-clay-deep)", borderColor: "var(--zs-border)", marginTop: 22 }}>
+                <AlertCircle size={16} />
+                <span>
+                  {t("Prices can be marked up or down as they are copied, and stock can follow the source live: set it up in {link}.", {
+                    link: <RouterLink to={`/app/rules?source=${encodeURIComponent(src)}`} style={{ color: "inherit", fontWeight: 700 }}>{t("Price & stock rules")}</RouterLink>,
+                  })}
+                  {plan !== "free" ? ` ${t("Before a sync changes existing products, collections or pages, they are backed up for 30 days; restore them from History.")}` : ""}
+                </span>
+              </div>
+            )}
+            {connections.length > 0 && (
               <InstantSyncCard src={src} canUse={canSchedule} on={instantSources.includes(src)} />
             )}
             <AutoSyncCard

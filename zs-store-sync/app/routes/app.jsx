@@ -170,6 +170,8 @@ function AppShell({ apiKey, shop, supportEmail, plan, isOwner, setup }) {
         <s-link href="/app/start">{t("Get Started")}</s-link>
         <s-link href="/app/migrate">{t("New Migration")}</s-link>
         <s-link href="/app/sync">{t("Sync Changes")}</s-link>
+        <s-link href="/app/rules">{t("Price & stock rules")}</s-link>
+        <s-link href="/app/theme-guide">{t("Copy your theme")}</s-link>
         <s-link href="/app/preview">{t("Preview")}</s-link>
         <s-link href="/app/history">{t("History")}</s-link>
         <s-link href="/app/plan">{t("Plans")}</s-link>

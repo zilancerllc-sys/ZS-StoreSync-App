@@ -16,6 +16,16 @@
 import { randomUUID } from "node:crypto";
 import { customerRef } from "./redact.server";
 import { sourcesFromRuleSet } from "./lib/collection-sources";
+import { completeProduct, mediaInputs, chunk, MAX_VARIANTS } from "./lib/product-paging.js";
+import { priceFieldsFor, ruleIsActive, describePriceRule, currencyDecimals } from "./lib/price-rules.js";
+import {
+  productSnapshot,
+  productWouldChange,
+  collectionSnapshot,
+  collectionWouldChange,
+  pageSnapshot,
+  pageWouldChange,
+} from "./lib/backup-core.js";
 
 // Namespaces (metafields) and types (metaobjects) that Shopify or another app
 // owns. They already exist on every store and creating them is always refused
@@ -178,6 +188,21 @@ async function publishToOnlineStore(ctx, id, label) {
 // ═════════════════════════════════════════════════════════════════════════════
 //  PRODUCTS
 // ═════════════════════════════════════════════════════════════════════════════
+// Each variant / media item / metafield is read through the same selection in
+// the list query and in the follow-up page queries below, so a product with
+// more than one page of any of them is read completely (completeProduct).
+const VARIANT_FIELDS = `
+  sku title price compareAtPrice barcode
+  inventoryQuantity
+  inventoryItem { measurement { weight { value unit } } }
+  selectedOptions { name value }
+  metafields(first: 50) { pageInfo { hasNextPage } edges { node { namespace key value type } } }`;
+const MEDIA_FIELDS = `
+  mediaContentType alt
+  ... on MediaImage { image { url } }
+  ... on ExternalVideo { originUrl }`;
+const METAFIELD_FIELDS = `namespace key value type`;
+
 const Q_PRODUCTS = `#graphql
   query Products($cursor: String, $query: String) {
     products(first: 25, after: $cursor, query: $query) {
@@ -188,19 +213,71 @@ const Q_PRODUCTS = `#graphql
         seo { title description }
         options { name values }
         variants(first: 100) {
-          edges { node {
-            sku title price compareAtPrice barcode
-            inventoryQuantity
-            inventoryItem { measurement { weight { value unit } } }
-            selectedOptions { name value }
-            metafields(first: 50) { edges { node { namespace key value type } } }
-          } }
+          pageInfo { hasNextPage endCursor }
+          edges { node { ${VARIANT_FIELDS} } }
         }
-        images(first: 50) { edges { node { src altText } } }
-        metafields(first: 50) { edges { node { namespace key value type } } }
+        media(first: 50) {
+          pageInfo { hasNextPage endCursor }
+          edges { node { ${MEDIA_FIELDS} } }
+        }
+        metafields(first: 50) {
+          pageInfo { hasNextPage endCursor }
+          edges { node { ${METAFIELD_FIELDS} } }
+        }
       } }
     }
   }`;
+
+const Q_PRODUCT_MORE_VARIANTS = `#graphql
+  query MoreVariants($id: ID!, $cursor: String) {
+    product(id: $id) {
+      variants(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges { node { ${VARIANT_FIELDS} } }
+      }
+    }
+  }`;
+const Q_PRODUCT_MORE_MEDIA = `#graphql
+  query MoreMedia($id: ID!, $cursor: String) {
+    product(id: $id) {
+      media(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges { node { ${MEDIA_FIELDS} } }
+      }
+    }
+  }`;
+const Q_PRODUCT_MORE_METAFIELDS = `#graphql
+  query MoreMetafields($id: ID!, $cursor: String) {
+    product(id: $id) {
+      metafields(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges { node { ${METAFIELD_FIELDS} } }
+      }
+    }
+  }`;
+const MORE_QUERIES = {
+  variants: Q_PRODUCT_MORE_VARIANTS,
+  media: Q_PRODUCT_MORE_MEDIA,
+  metafields: Q_PRODUCT_MORE_METAFIELDS,
+};
+
+// Read the rest of a product's variants, media and metafields.
+async function readWholeProduct(ctx, p) {
+  const extra = await completeProduct(p, async (field, id, cursor) => {
+    const d = await gql(ctx.source, MORE_QUERIES[field], { id, cursor });
+    await sleep(150);
+    return d?.product?.[field];
+  });
+  const n = p.variants?.edges?.length || 0;
+  if (extra.variants) ctx.onLog(`  … read all ${n} variants of ${p.title}`);
+  if (n > MAX_VARIANTS) {
+    ctx.onLog(`  ⚠ ${p.title} has ${n} variants; Shopify allows ${MAX_VARIANTS} — the rest can't be created.`);
+  }
+  const deep = (p.variants?.edges || []).filter((e) => e.node?.metafields?.pageInfo?.hasNextPage).length;
+  if (deep) {
+    ctx.onLog(`  ⚠ ${p.title}: ${deep} variant(s) have more than 50 metafields — only the first 50 of each were copied.`);
+  }
+}
 
 const Q_TARGET_PRODUCT_BY_HANDLE = `#graphql
   query ByHandle($handle: String!) {
@@ -234,17 +311,36 @@ const M_PRODUCT_UPDATE = `#graphql
 
 // existing target variants, so a sync can match them to source variants by SKU
 const Q_TARGET_PRODUCT_VARIANTS = `#graphql
-  query TargetVariants($id: ID!) {
+  query TargetVariants($id: ID!, $cursor: String) {
     product(id: $id) {
       id
       hasOnlyDefaultVariant
       options { id name position values }
-      variants(first: 100) { edges { node {
-        id sku title
-        selectedOptions { name value }
-      } } }
+      variants(first: 250, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges { node {
+          id sku title
+          selectedOptions { name value }
+        } }
+      }
     }
   }`;
+
+// every variant of a target product, not just the first page
+async function readTargetVariants(ctx, productId) {
+  let cursor = null;
+  let product = null;
+  const edges = [];
+  for (let page = 0; page < 20; page++) {
+    const d = await gql(ctx.target, Q_TARGET_PRODUCT_VARIANTS, { id: productId, cursor });
+    if (!d?.product) return product;
+    if (!product) product = d.product;
+    edges.push(...(d.product.variants?.edges || []));
+    cursor = d.product.variants?.pageInfo?.hasNextPage ? d.product.variants.pageInfo.endCursor : null;
+    if (!cursor) break;
+  }
+  return { ...product, variants: { edges } };
+}
 
 const M_PRODUCT_OPTIONS_CREATE = `#graphql
   mutation ProductOptionsCreate($productId: ID!, $options: [OptionCreateInput!]!, $variantStrategy: ProductOptionCreateVariantStrategy) {
@@ -305,10 +401,17 @@ function hasRealOptions(p) {
 
 // map a source variant to a ProductVariantsBulkInput. `metafields` is passed in
 // already remapped, because resolving references is async.
-function variantBulkInput(v, withOptionValues, metafields) {
+// `existing`: the variant is already on the target (a sync update), which is
+// where "keep this store's prices" applies. Price rules are applied here, the
+// one place every variant write goes through.
+function variantBulkInput(v, withOptionValues, metafields, ctx = null, existing = false) {
+  const { fields, warnings } = priceFieldsFor(v, ctx?.priceRule, {
+    existing,
+    decimals: ctx?.priceDecimals ?? 2,
+  });
+  for (const w of warnings) ctx?.onLog?.(`  ⚠ ${v.sku || v.title || "variant"}: ${w}`);
   const input = {
-    price: v.price ?? undefined,
-    compareAtPrice: v.compareAtPrice ?? undefined,
+    ...fields,
     barcode: v.barcode ?? undefined,
   };
   const invItem = {};
@@ -342,9 +445,36 @@ async function variantInputsFor(ctx, sourceVariants, withOptionValues) {
   const out = [];
   for (const v of sourceVariants) {
     const mf = await metafieldsInput(ctx, v, { excludeSeo: true });
-    out.push(variantBulkInput(v, withOptionValues, mf));
+    out.push(variantBulkInput(v, withOptionValues, mf, ctx));
   }
   return out;
+}
+
+// productVariantsBulkCreate in batches: the first replaces the placeholder
+// variant (REMOVE_STANDALONE_VARIANT), the rest add to it. → userErrors[]
+const VARIANT_BATCH = 250;
+async function bulkCreateVariants(ctx, productId, inputs, firstStrategy) {
+  const errs = [];
+  const batches = chunk(inputs.slice(0, MAX_VARIANTS), VARIANT_BATCH);
+  for (let i = 0; i < batches.length; i++) {
+    const d = await gql(ctx.target, M_VARIANTS_BULK_CREATE, {
+      productId,
+      variants: batches[i],
+      strategy: i === 0 ? firstStrategy : "DEFAULT",
+    });
+    errs.push(...(d?.productVariantsBulkCreate?.userErrors || []));
+    if (batches.length > 1) await sleep(300);
+  }
+  return errs;
+}
+
+async function bulkUpdateVariants(ctx, productId, inputs) {
+  const errs = [];
+  for (const batch of chunk(inputs, VARIANT_BATCH)) {
+    const d = await gql(ctx.target, M_VARIANTS_BULK_UPDATE, { productId, variants: batch });
+    errs.push(...(d?.productVariantsBulkUpdate?.userErrors || []));
+  }
+  return errs;
 }
 
 // Sync mode variant reconciliation. `productUpdate` cannot touch options or
@@ -376,10 +506,7 @@ async function syncVariants(ctx, targetProductId, sourceProduct) {
   }
 
   try {
-    let td = await gql(target, Q_TARGET_PRODUCT_VARIANTS, {
-      id: targetProductId,
-    });
-    let tp = td?.product;
+    let tp = await readTargetVariants(ctx, targetProductId);
     if (!tp) return;
 
     // ── 1. create options the target is missing ──────────────────────────────
@@ -409,10 +536,7 @@ async function syncVariants(ctx, targetProductId, sourceProduct) {
           onLog(
             `  + ${missing.length} option(s) added to ${label}: ${missing.map((o) => o.name).join(", ")}`,
           );
-          td = await gql(target, Q_TARGET_PRODUCT_VARIANTS, {
-            id: targetProductId,
-          });
-          tp = td?.product || tp;
+          tp = (await readTargetVariants(ctx, targetProductId)) || tp;
         }
       }
     }
@@ -421,14 +545,12 @@ async function syncVariants(ctx, targetProductId, sourceProduct) {
 
     // ── 2. target has only the implicit default variant → rebuild from source ─
     if (sourceRealOptions && tp.hasOnlyDefaultVariant) {
-      const vdata = await gql(target, M_VARIANTS_BULK_CREATE, {
-        productId: targetProductId,
-        variants: sourceVariants.map((sv) =>
-          variantBulkInput(sv, true, mfFor.get(sv)),
-        ),
-        strategy: "REMOVE_STANDALONE_VARIANT",
-      });
-      const verrs = vdata?.productVariantsBulkCreate?.userErrors;
+      const verrs = await bulkCreateVariants(
+        ctx,
+        targetProductId,
+        sourceVariants.map((sv) => variantBulkInput(sv, true, mfFor.get(sv), ctx)),
+        "REMOVE_STANDALONE_VARIANT",
+      );
       if (verrs?.length) {
         onLog(`  ⚠ Variant rebuild partial for ${label} — ${errText(verrs)}`);
       } else {
@@ -465,20 +587,16 @@ async function syncVariants(ctx, targetProductId, sourceProduct) {
       if (!tv && singleton) tv = targetVariants[0];
 
       if (tv) {
-        updates.push({ id: tv.id, ...variantBulkInput(sv, false, mfFor.get(sv)) });
+        updates.push({ id: tv.id, ...variantBulkInput(sv, false, mfFor.get(sv), ctx, true) });
       } else if (sourceRealOptions) {
         // only meaningful with real options — otherwise there's nothing to
         // distinguish a second variant by
-        creates.push(variantBulkInput(sv, true, mfFor.get(sv)));
+        creates.push(variantBulkInput(sv, true, mfFor.get(sv), ctx));
       }
     }
 
     if (updates.length) {
-      const vdata = await gql(target, M_VARIANTS_BULK_UPDATE, {
-        productId: targetProductId,
-        variants: updates,
-      });
-      const verrs = vdata?.productVariantsBulkUpdate?.userErrors;
+      const verrs = await bulkUpdateVariants(ctx, targetProductId, updates);
       if (verrs?.length) {
         onLog(`  ⚠ Variant sync partial for ${label} — ${errText(verrs)}`);
       } else {
@@ -487,12 +605,7 @@ async function syncVariants(ctx, targetProductId, sourceProduct) {
     }
 
     if (creates.length) {
-      const cdata = await gql(target, M_VARIANTS_BULK_CREATE, {
-        productId: targetProductId,
-        variants: creates,
-        strategy: "DEFAULT",
-      });
-      const cerrs = cdata?.productVariantsBulkCreate?.userErrors;
+      const cerrs = await bulkCreateVariants(ctx, targetProductId, creates, "DEFAULT");
       if (cerrs?.length) {
         onLog(`  ⚠ New variants partial for ${label} — ${errText(cerrs)}`);
       } else {
@@ -507,6 +620,38 @@ async function syncVariants(ctx, targetProductId, sourceProduct) {
   await sleep(200);
 }
 
+// Media past the first batch go through productUpdate(media:) in batches.
+const M_PRODUCT_ADD_MEDIA = `#graphql
+  mutation AddMedia($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
+    productUpdate(product: $product, media: $media) {
+      product { id }
+      userErrors { field message }
+    }
+  }`;
+const MEDIA_BATCH = 50;
+
+function logManualMedia(ctx, title, manual) {
+  const parts = [];
+  if (manual.videos) parts.push(`${manual.videos} video${manual.videos === 1 ? "" : "s"}`);
+  if (manual.models) parts.push(`${manual.models} 3D model${manual.models === 1 ? "" : "s"}`);
+  if (parts.length) {
+    ctx.onLog(
+      `  ⚠ ${title}: ${parts.join(" and ")} not copied — Shopify doesn't let apps copy uploaded videos or 3D models between stores. Upload them again on this store's product page.`,
+    );
+  }
+}
+
+// Short "price 10.00 → 11.99" for dry-run lines, when a price rule is on.
+function pricePreview(ctx, p, existing) {
+  if (!ruleIsActive(ctx.priceRule)) return "";
+  const v = p.variants?.edges?.[0]?.node;
+  if (!v) return "";
+  const { fields } = priceFieldsFor(v, ctx.priceRule, { existing, decimals: ctx.priceDecimals });
+  if (fields.price === undefined) return " — this store's prices kept";
+  const more = (p.variants?.edges?.length || 1) - 1;
+  return ` — price ${v.price} → ${fields.price}${more > 0 ? ` (+${more} more variant${more === 1 ? "" : "s"})` : ""}`;
+}
+
 async function migrateProducts(ctx) {
   const { source, target, onLog, counters, consume } = ctx;
 
@@ -518,11 +663,21 @@ async function migrateProducts(ctx) {
     async (n) => onLog(`Fetched ${n} products from source…`),
   );
   onLog(`Total ${products.length} products found. Importing…`);
+  if (ruleIsActive(ctx.priceRule)) onLog(`Price rule: ${describePriceRule(ctx.priceRule)}`);
 
   for (const p of products) {
     if (ctx.stopOnQuota()) {
       onLog("Quota reached — stopping product import.");
       break;
+    }
+
+    try {
+      await readWholeProduct(ctx, p);
+    } catch (err) {
+      // Never copy half a product silently: say so and move on.
+      counters.failed++;
+      onLog(`✕ Couldn't read all of ${p.title} from the source — ${String(err.message).slice(0, 120)}`);
+      continue;
     }
 
     const firstSku = p.variants?.edges?.[0]?.node?.sku?.trim();
@@ -571,22 +726,30 @@ async function migrateProducts(ctx) {
       }));
     }
 
-    const media = (p.images?.edges || []).map((e) => ({
-      originalSource: e.node.src,
-      alt: e.node.altText || "",
-      mediaContentType: "IMAGE",
-    }));
+    const { copy: media, manual } = mediaInputs(p);
 
     // EXISTING item: sync mode updates it (overwrite), migrate mode skips it.
     if (existing) {
       if (ctx.mode !== "sync") {
         counters.skipped++;
-        onLog(`↪︎ Skipped (exists): ${p.title}`);
+        onLog(`↪︎ Skipped (exists): ${p.title}${ctx.dryRun ? pricePreview(ctx, p, true) : ""}`);
         continue;
       }
-      let updated = false;
+      const input = productUpdateInput(product, existing.id);
+      // Keep what this store has before overwriting it (paid plans).
+      if (ctx.backup) {
+        await ctx.backup.product(
+          existing.id,
+          p.title,
+          input,
+          (p.variants?.edges || []).map((e) => ({
+            ...priceFieldsFor(e.node, ctx.priceRule, { existing: true, decimals: ctx.priceDecimals }).fields,
+            sku: e.node.sku,
+            barcode: e.node.barcode,
+          })),
+        );
+      }
       try {
-        const input = productUpdateInput(product, existing.id);
         let upd = await gql(target, M_PRODUCT_UPDATE, { product: input });
         let uerrs = upd?.productUpdate?.userErrors;
 
@@ -605,7 +768,6 @@ async function migrateProducts(ctx) {
           counters.failed++;
           onLog(`✕ Update failed: ${p.title} — ${errText(uerrs)}`);
         } else {
-          updated = true;
           counters.updated++;
           onLog(`↻ Updated: ${p.title}`);
         }
@@ -618,19 +780,19 @@ async function migrateProducts(ctx) {
 
       // Variants are synced independently of the product update: a metafield or
       // core-field problem above must not silently skip them.
-      void updated;
       await syncVariants(ctx, existing.id, p);
       await sleep(200);
       continue;
     }
 
     if (!ctx.canCreate()) {
-      ctx.notCreated(p.title);
+      ctx.notCreated(`${p.title}${ctx.dryRun ? pricePreview(ctx, p, false) : ""}`);
       continue;
     }
 
     try {
-      let data = await gql(target, M_PRODUCT_CREATE, { product, media });
+      const firstMedia = media.slice(0, MEDIA_BATCH);
+      let data = await gql(target, M_PRODUCT_CREATE, { product, media: firstMedia });
       let errs = data?.productCreate?.userErrors;
 
       // same degradation as the update path: keep the product, drop the
@@ -639,7 +801,7 @@ async function migrateProducts(ctx) {
         onLog(`  ⚠ ${p.title}: metafields rejected — ${errText(errs)}`);
         const { metafields, ...noMf } = product;
         void metafields;
-        data = await gql(target, M_PRODUCT_CREATE, { product: noMf, media });
+        data = await gql(target, M_PRODUCT_CREATE, { product: noMf, media: firstMedia });
         errs = data?.productCreate?.userErrors;
       }
 
@@ -653,17 +815,35 @@ async function migrateProducts(ctx) {
       const newProduct = data?.productCreate?.product;
       const sourceVariants = (p.variants?.edges || []).map((e) => e.node);
 
-      // recreate variants with price / SKU / barcode (inventory levels are
-      // per-location and can't be mapped across stores — logged as skipped)
+      // the rest of the media, 50 at a time
+      if (newProduct?.id && media.length > MEDIA_BATCH) {
+        for (const batch of chunk(media.slice(MEDIA_BATCH), MEDIA_BATCH)) {
+          try {
+            const md = await gql(target, M_PRODUCT_ADD_MEDIA, {
+              product: { id: newProduct.id },
+              media: batch,
+            });
+            const merrs = md?.productUpdate?.userErrors;
+            if (merrs?.length) onLog(`  ⚠ Some images not added to ${p.title} — ${errText(merrs)}`);
+          } catch (merr) {
+            onLog(`  ⚠ Some images not added to ${p.title} — ${String(merr.message).slice(0, 100)}`);
+          }
+          await sleep(250);
+        }
+        onLog(`  + all ${media.length} images and video links added to ${p.title}`);
+      }
+      logManualMedia(ctx, p.title, manual);
+
+      // recreate variants with price / SKU / barcode
       if (newProduct?.id && sourceVariants.length) {
         try {
           if (realOptions) {
-            const vdata = await gql(target, M_VARIANTS_BULK_CREATE, {
-              productId: newProduct.id,
-              variants: await variantInputsFor(ctx, sourceVariants, true),
-              strategy: "REMOVE_STANDALONE_VARIANT",
-            });
-            const verrs = vdata?.productVariantsBulkCreate?.userErrors;
+            const verrs = await bulkCreateVariants(
+              ctx,
+              newProduct.id,
+              await variantInputsFor(ctx, sourceVariants, true),
+              "REMOVE_STANDALONE_VARIANT",
+            );
             if (verrs?.length) {
               onLog(
                 `  ⚠ Variants partial for ${p.title} — ${errText(verrs)}`,
@@ -918,6 +1098,7 @@ async function migrateCollections(ctx) {
         onLog(`↪︎ Skipped (exists): ${c.title}`);
         continue;
       }
+      if (ctx.backup) await ctx.backup.collection(existingCol.id, c.title, input, c.ruleSet || null);
       try {
         const collection = { ...input, id: existingCol.id };
         if (sources) {
@@ -1284,6 +1465,7 @@ async function migratePages(ctx) {
         await sleep(160);
         continue;
       }
+      if (ctx.backup) await ctx.backup.page(existingPageId, pg.title, pageBody);
       try {
         const upd = await gql(target, M_PAGE_UPDATE, {
           id: existingPageId,
@@ -2868,19 +3050,22 @@ async function migrateMenus(ctx) {
 // ═════════════════════════════════════════════════════════════════════════════
 //  DISCOUNTS
 //
-//  Best-effort: recreates basic code discounts and basic automatic discounts
-//  (percentage or fixed-amount off, applied to all items). Other discount
-//  classes (BxGy, free shipping, app discounts) are logged and skipped.
+//  Recreates code and automatic discounts of the basic (percentage or fixed
+//  amount), free-shipping and Buy X Get Y kinds, with their product, collection
+//  and variant targets mapped by handle / SKU, minimums, usage limits and
+//  combinations. Discounts for specific customers or segments are copied for
+//  the customers / segments found on this store (never opened up to everyone).
+//  App (Function) discounts belong to another app and are logged and skipped.
 // ═════════════════════════════════════════════════════════════════════════════
 // Which items a discount applies to. Ids don't cross stores, so products and
 // collections are carried by handle and variants by SKU.
 const DISCOUNT_ITEMS = `
   __typename
   ... on DiscountProducts {
-    products(first: 250) { nodes { handle } }
-    productVariants(first: 250) { nodes { sku } }
+    products(first: 250) { pageInfo { hasNextPage } nodes { handle } }
+    productVariants(first: 250) { pageInfo { hasNextPage } nodes { sku } }
   }
-  ... on DiscountCollections { collections(first: 250) { nodes { handle } } }`;
+  ... on DiscountCollections { collections(first: 250) { pageInfo { hasNextPage } nodes { handle } } }`;
 
 const DISCOUNT_MINIMUM = `
   minimumRequirement {
@@ -3011,6 +3196,15 @@ const Q_DISCOUNTS = `#graphql
 // → DiscountItemsInput, or { error } when something can't be found on target
 async function discountItemsInput(ctx, items) {
   const kind = items?.__typename;
+  // More than 250 targets: copying only the first 250 would quietly make the
+  // discount narrower than the original, so it is reported instead.
+  if (
+    items?.products?.pageInfo?.hasNextPage ||
+    items?.productVariants?.pageInfo?.hasNextPage ||
+    items?.collections?.pageInfo?.hasNextPage
+  ) {
+    return { error: "it applies to more than 250 products, variants or collections — recreate it by hand" };
+  }
   if (!kind || kind === "AllDiscountItems") return { input: { all: true } };
 
   if (kind === "DiscountCollections") {
@@ -3082,12 +3276,105 @@ function commonDiscountFields(d) {
   };
 }
 
-// Code discounts limited to particular customers or segments can't be
-// reproduced (customers/segments differ per store) — opening them up to
-// everyone would hand out a private code publicly.
+// Code discounts limited to particular customers or segments. Customers and
+// segments are separate records on each store, so the discount is limited to
+// the SAME customers (matched by email) or segments (matched by name) on this
+// store. It is never opened up to everyone (that would hand a private code to
+// the public): anyone who can't be matched isn't included, and the log says so.
 function restrictedToCustomers(d) {
   const k = d.customerSelection?.__typename;
   return !!k && k !== "DiscountCustomerAll";
+}
+
+const ELIGIBILITY = `context {
+  __typename
+  ... on DiscountCustomers { customers { defaultEmailAddress { emailAddress } } }
+  ... on DiscountCustomerSegments { segments { name } }
+}`;
+const Q_DISCOUNT_ELIGIBILITY = `#graphql
+  query DiscountEligibility($id: ID!) {
+    discountNode(id: $id) {
+      discount {
+        __typename
+        ... on DiscountCodeBasic { ${ELIGIBILITY} }
+        ... on DiscountCodeFreeShipping { ${ELIGIBILITY} }
+        ... on DiscountCodeBxgy { ${ELIGIBILITY} }
+      }
+    }
+  }`;
+const Q_TARGET_SEGMENTS = `#graphql
+  query TargetSegments($cursor: String) {
+    segments(first: 250, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id name } }
+    }
+  }`;
+
+// → { selection, warning } | { skip }
+async function customerSelectionFor(ctx, nodeId) {
+  let context;
+  try {
+    const d = await gql(ctx.source, Q_DISCOUNT_ELIGIBILITY, { id: nodeId });
+    context = d?.discountNode?.discount?.context;
+  } catch (err) {
+    return {
+      skip: `limited to specific customers, and the source store's customer list can't be read (${String(err.message).slice(0, 80)}) — recreate it by hand`,
+    };
+  }
+  if (context?.__typename === "DiscountCustomers") {
+    const all = context.customers || [];
+    const emails = all.map((c) => c.defaultEmailAddress?.emailAddress).filter(Boolean);
+    const ids = [];
+    let missing = all.length - emails.length;
+    for (const email of emails) {
+      const r = await gql(ctx.target, Q_TARGET_CUSTOMER_BY_EMAIL, { q: `email:${qv(email)}` });
+      const id = r?.customers?.edges?.[0]?.node?.id;
+      if (id) ids.push(id);
+      else missing++;
+    }
+    if (!ids.length) {
+      return {
+        skip: `limited to ${all.length} specific customer(s), none of whom are on this store yet — copy Customers first, then run Discounts again`,
+      };
+    }
+    return {
+      selection: { customers: { add: ids } },
+      warning: missing
+        ? `limited to specific customers: ${ids.length} found on this store and included, ${missing} not on this store and left out`
+        : `limited to the same ${ids.length} customer(s) on this store`,
+    };
+  }
+  if (context?.__typename === "DiscountCustomerSegments") {
+    if (!ctx._targetSegments) {
+      ctx._targetSegments = new Map();
+      try {
+        const segs = await fetchAll(ctx.target, Q_TARGET_SEGMENTS, "segments");
+        for (const sg of segs) ctx._targetSegments.set(String(sg.name).trim().toLowerCase(), sg.id);
+      } catch {
+        /* segments not readable: every segment discount is skipped below */
+      }
+    }
+    const names = (context.segments || []).map((sg) => sg.name);
+    const ids = [];
+    const missingNames = [];
+    for (const n of names) {
+      const id = ctx._targetSegments.get(String(n).trim().toLowerCase());
+      if (id) ids.push(id);
+      else missingNames.push(n);
+    }
+    if (!ids.length) {
+      return {
+        skip: `limited to customer segment(s) ${names.map((n) => `"${n}"`).join(", ")}, which aren't on this store — create segments with the same names here, then run Discounts again`,
+      };
+    }
+    return {
+      selection: { customerSegments: { add: ids } },
+      warning: missingNames.length
+        ? `limited to segments: ${ids.length} found by name and included; not on this store: ${missingNames.map((n) => `"${n}"`).join(", ")}`
+        : "limited to the segment(s) with the same name on this store",
+    };
+  }
+  return { skip: "limited to specific customers in a way that can't be read — recreate it by hand" };
 }
 
 const M_DISCOUNT_CODE_BASIC_CREATE = `#graphql
@@ -3218,18 +3505,23 @@ const DISCOUNT_CREATE = {
 };
 
 // → { input } ready for the create mutation, or { skip: reason }
-async function buildDiscountInput(ctx, d) {
+async function buildDiscountInput(ctx, d, nodeId) {
+  let warning = null;
   const kind = d.__typename;
   const isCode = kind.startsWith("DiscountCode");
   const input = commonDiscountFields(d);
 
   if (isCode) {
+    let selection = { all: true };
     if (restrictedToCustomers(d)) {
-      return { skip: "limited to specific customers or segments, which differ per store" };
+      const sel = await customerSelectionFor(ctx, nodeId);
+      if (sel.skip) return { skip: sel.skip };
+      selection = sel.selection;
+      warning = sel.warning;
     }
     input.code = d.codes?.edges?.[0]?.node?.code || d.title;
     input.appliesOncePerCustomer = !!d.appliesOncePerCustomer;
-    input.customerSelection = { all: true };
+    input.customerSelection = selection;
     if (d.usageLimit != null) input.usageLimit = d.usageLimit;
   }
 
@@ -3241,7 +3533,7 @@ async function buildDiscountInput(ctx, d) {
     input.customerGets = { value, items: items.input };
     const min = minimumRequirementInput(d.minimumRequirement);
     if (min) input.minimumRequirement = min;
-    return { input };
+    return { input, warning };
   }
 
   if (kind === "DiscountCodeFreeShipping" || kind === "DiscountAutomaticFreeShipping") {
@@ -3254,7 +3546,7 @@ async function buildDiscountInput(ctx, d) {
     if (d.maximumShippingPrice?.amount != null) {
       input.maximumShippingPrice = String(d.maximumShippingPrice.amount);
     }
-    return { input };
+    return { input, warning };
   }
 
   if (kind === "DiscountCodeBxgy" || kind === "DiscountAutomaticBxgy") {
@@ -3268,7 +3560,7 @@ async function buildDiscountInput(ctx, d) {
     input.customerBuys = customerBuys;
     input.customerGets = customerGets;
     if (d.usesPerOrderLimit != null) input.usesPerOrderLimit = d.usesPerOrderLimit;
-    return { input };
+    return { input, warning };
   }
 
   return { skip: `unsupported type ${kind}` };
@@ -3314,7 +3606,7 @@ async function migrateDiscounts(ctx) {
 
     const [mutation, argName, root, label] = spec;
     try {
-      const built = await buildDiscountInput(ctx, d);
+      const built = await buildDiscountInput(ctx, d, n.id);
       if (built.skip) {
         counters.skipped++;
         onLog(`↪︎ Skipped: ${d.title} — ${built.skip}`);
@@ -3333,6 +3625,7 @@ async function migrateDiscounts(ctx) {
         consume(data?.[root]?.codeDiscountNode?.id || data?.[root]?.automaticDiscountNode?.id);
         if (kind.startsWith("DiscountAutomatic")) autoTitles.add(d.title);
         onLog(`✓ ${label}: ${d.title}`);
+        if (built.warning) onLog(`  ⚠ ${d.title}: ${built.warning}`);
       }
     } catch (err) {
       counters.failed++;
@@ -3342,6 +3635,97 @@ async function migrateDiscounts(ctx) {
     }
     await sleep(220);
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  BACKUP BEFORE SYNC (reader)
+//
+//  Reads what an existing target item looks like just before a sync writes to
+//  it, and hands a snapshot to onBackup when the write would change something.
+//  A failed read never blocks the sync, but it is logged, so the merchant knows
+//  that item has no backup.
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_BACKUP_PRODUCT = `#graphql
+  query BackupProduct($id: ID!, $keys: [String!], $cursor: String) {
+    product(id: $id) {
+      title handle descriptionHtml vendor productType tags status templateSuffix
+      seo { title description }
+      metafields(first: 250, keys: $keys) { edges { node { namespace key value type } } }
+      variants(first: 250, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges { node {
+          id price compareAtPrice sku barcode
+          inventoryItem { measurement { weight { value unit } } }
+        } }
+      }
+    }
+  }`;
+
+const Q_BACKUP_COLLECTION = `#graphql
+  query BackupCollection($id: ID!, $keys: [String!]) {
+    collection(id: $id) {
+      title handle descriptionHtml templateSuffix
+      seo { title description }
+      image { url altText }
+      ruleSet { appliedDisjunctively rules { column relation condition } }
+      metafields(first: 250, keys: $keys) { edges { node { namespace key value type } } }
+    }
+  }`;
+
+const Q_BACKUP_PAGE = `#graphql
+  query BackupPage($id: ID!, $keys: [String!]) {
+    page(id: $id) {
+      title handle body isPublished templateSuffix
+      metafields(first: 250, keys: $keys) { edges { node { namespace key value type } } }
+    }
+  }`;
+
+const mfKeys = (mfs) => (mfs || []).map((m) => `${m.namespace}.${m.key}`).slice(0, 250);
+
+function makeBackupRecorder(ctx, onBackup) {
+  const failed = (label, err) =>
+    ctx.onLog(`  ⚠ No backup for ${label} — ${String(err?.message || err).slice(0, 100)}`);
+  return {
+    async product(gid, label, input, variantFields) {
+      try {
+        let cursor = null;
+        let tp = null;
+        const edges = [];
+        for (let page = 0; page < 10; page++) {
+          const d = await gql(ctx.target, Q_BACKUP_PRODUCT, { id: gid, keys: mfKeys(input.metafields), cursor });
+          if (!d?.product) return;
+          if (!tp) tp = d.product;
+          edges.push(...(d.product.variants?.edges || []));
+          cursor = d.product.variants?.pageInfo?.hasNextPage ? d.product.variants.pageInfo.endCursor : null;
+          if (!cursor) break;
+        }
+        const snap = productSnapshot({ ...tp, variants: { edges } }, input.metafields);
+        if (productWouldChange(snap, input, variantFields)) await onBackup("product", gid, label, snap);
+      } catch (err) {
+        failed(label, err);
+      }
+    },
+    async collection(gid, label, input, newRuleSet) {
+      try {
+        const d = await gql(ctx.target, Q_BACKUP_COLLECTION, { id: gid, keys: mfKeys(input.metafields) });
+        if (!d?.collection) return;
+        const snap = collectionSnapshot(d.collection, input.metafields);
+        if (collectionWouldChange(snap, input, newRuleSet)) await onBackup("collection", gid, label, snap);
+      } catch (err) {
+        failed(label, err);
+      }
+    },
+    async page(gid, label, input) {
+      try {
+        const d = await gql(ctx.target, Q_BACKUP_PAGE, { id: gid, keys: mfKeys(input.metafields) });
+        if (!d?.page) return;
+        const snap = pageSnapshot(d.page, input.metafields);
+        if (pageWouldChange(snap, input)) await onBackup("page", gid, label, snap);
+      } catch (err) {
+        failed(label, err);
+      }
+    },
+  };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -3754,6 +4138,11 @@ export async function runMigration({
   // true once the merchant pressed Stop. Every module already checks quota
   // before each item, so stopping goes through those same checks.
   shouldStop = () => false,
+  // Price rule for this pairing (app/lib/price-rules.js), or null.
+  priceRule = null,
+  // (kind, gid, label, snapshot) => Promise — set when this run keeps backups
+  // of what a sync overwrites. Only used in sync mode.
+  onBackup = null,
 }) {
   const dryRun = mode === "dryrun";
   // A dry run must never write, whatever a module tries: mutations are refused
@@ -3824,7 +4213,21 @@ export async function runMigration({
     setType: (t) => {
       currentType = t;
     },
+    dryRun,
+    priceRule: ruleIsActive(priceRule) ? priceRule : null,
+    priceDecimals: 2,
+    backup: null,
   };
+  if (onBackup && mode === "sync") ctx.backup = makeBackupRecorder(ctx, onBackup);
+  if (ctx.priceRule && types.includes("products")) {
+    // Rounded in the TARGET store's currency (JPY has no cents).
+    try {
+      const d = await gql(target, Q_SHOP_UNITS);
+      ctx.priceDecimals = currencyDecimals(d?.shop?.currencyCode);
+    } catch {
+      /* keep 2 decimals */
+    }
+  }
 
   // NOTE: theme migration was removed deliberately. It needs the `read_themes`
   // scope, which this app does not request, so every run logged an access-denied

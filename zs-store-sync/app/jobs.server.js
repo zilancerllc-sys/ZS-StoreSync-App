@@ -9,7 +9,10 @@
 import db from "./db.server";
 import { unauthenticated } from "./shopify.server";
 import { runMigration } from "./migrator.server";
-import { consumeQuota } from "./credits.server";
+import { consumeQuota, getUsage } from "./credits.server";
+import { backupWriter, purgeOldBackups } from "./backup.server";
+import { parsePriceRule, ruleIsActive, describePriceRule } from "./lib/price-rules.js";
+import { planHas } from "./lib/plan-features.js";
 import { redactPII } from "./redact.server";
 import { notifyScheduledRun, shouldNotifyForJob } from "./notify.server";
 import { productSearchQuery } from "./lib/product-filter";
@@ -252,6 +255,28 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
     const { admin: source } = await unauthenticated.admin(sourceShop);
     const { admin: target } = await unauthenticated.admin(shop);
 
+    // Pairing settings that apply to every run between these two stores,
+    // re-checked against the plan at run time (a downgrade switches them off).
+    const usage = await getUsage(shop);
+    const conn = await db.storeConnection.findFirst({
+      where: { ownerShop: shop, sourceShop },
+      select: { priceRuleJson: true },
+    });
+    let priceRule = parsePriceRule(conn?.priceRuleJson);
+    if (ruleIsActive(priceRule) && types.includes("products")) {
+      if (planHas(usage.plan, "priceRules")) {
+        onLog(`Price rule for this store pair: ${describePriceRule(priceRule)}.`);
+      } else {
+        onLog("⚠ Your price rule is off: price rules are on the Starter plan and up. Prices are copied as they are.");
+        priceRule = null;
+      }
+    }
+    const keepBackups = mode === "sync" && planHas(usage.plan, "backups");
+    if (keepBackups) {
+      await purgeOldBackups(shop).catch(() => {});
+      onLog("Backup on: anything this sync changes on existing products, collections and pages can be restored from History for 30 days.");
+    }
+
     const result = await runMigration({
       source,
       target,
@@ -263,6 +288,8 @@ async function runJob(jobId, { shop, sourceShop, types, limits, mode, scheduleId
       onCreated: (gid) => createdGids.push(gid),
       productQuery: productSearchQuery(productFilter),
       shouldStop: () => stopRequested,
+      priceRule,
+      onBackup: keepBackups ? backupWriter(jobId, shop) : null,
     });
     await flushQuota();
     await flushCreated();

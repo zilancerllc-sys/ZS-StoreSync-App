@@ -64,6 +64,8 @@ model StoreConnection {
   codeVerified  Boolean  @default(false)
   // copy product changes within minutes of them happening on sourceShop
   instantSync   Boolean  @default(false)
+  // Price rule for every run between this pair (app/lib/price-rules.js).
+  priceRuleJson String?  @db.Text
 
   @@unique([ownerShop, sourceShop])
   @@index([ownerShop])
@@ -100,6 +102,8 @@ model MigrationJob {
   cancelRequested Boolean @default(false)
   // Undo: set on an "undo" job, pointing at the run it reverses.
   undoOfJobId   String?
+  // Restore: set on a "restore" job, pointing at the run whose backups it puts back.
+  restoreOfJobId String?
 
   itemCount     Int      @default(0)   // total processed
   createdCount  Int      @default(0)
@@ -320,4 +324,58 @@ model AppStoreRankTarget {
   createdAt DateTime @default(now())
 
   @@id([kind, key])
+}
+
+// ── Backup before sync ───────────────────────────────────────────────────────
+// What a sync was about to overwrite on an existing item, read from the target
+// store just before the write (app/lib/backup-core.js). Product, collection and
+// page fields only, no customer data. Compressed JSON. Kept 30 days.
+model SyncBackup {
+  id        String   @id @default(cuid())
+  jobId     String
+  shop      String
+  kind      String   // product | collection | page
+  gid       String
+  label     String?
+  data      Bytes
+  restoredAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([jobId])
+  @@index([shop, createdAt])
+}
+
+// ── Live stock sync (source → this store) ────────────────────────────────────
+model LiveInventorySync {
+  id              String    @id @default(cuid())
+  ownerShop       String    // the store stock is written INTO
+  sourceShop      String    // the store stock is read FROM
+  enabled         Boolean   @default(false)
+  // { [source location gid]: target location gid | "" }
+  locationMapJson String    @db.Text @default("{}")
+  maxZeroPerBatch Int       @default(20)
+  maxUnitChange   Int       @default(1000)
+  pausedAt        DateTime?
+  pauseReason     String?
+  lastRunAt       DateTime?
+  lastSummary     String?
+  // last 50 changes, newest first: [{at, label, from, to, location}]
+  activityJson    String    @db.Text @default("[]")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([ownerShop, sourceShop])
+  @@index([sourceShop, enabled])
+}
+
+// A source inventory item whose stock changed, waiting to be copied.
+model PendingInventorySync {
+  id              String   @id @default(cuid())
+  ownerShop       String
+  sourceShop      String
+  inventoryItemId String
+  createdAt       DateTime @default(now())
+
+  @@unique([ownerShop, sourceShop, inventoryItemId])
+  @@index([createdAt])
 }

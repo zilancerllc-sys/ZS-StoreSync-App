@@ -14,6 +14,7 @@ import {
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
 import { Lock, Undo, Zap, MessageCircle, Check } from "lucide-react";
+import { planHas } from "../lib/plan-features.js";
 import AffiliateReferralCard from "../components/AffiliateReferralCard";
 
 const APP_HANDLE = "zs-storesync";
@@ -485,6 +486,9 @@ function buildFeatures(planId, L, t) {
       ok: true,
     },
     { text: t(sync.text), ok: sync.ok },
+    { text: t("Price rules on sync (markup, markdown, rounding)"), ok: planHas(planId, "priceRules") },
+    { text: t("Backup before sync, one-click restore (30 days)"), ok: planHas(planId, "backups") },
+    { text: t("Live stock sync from the source store"), ok: planHas(planId, "liveInventory") },
   ];
 }
 

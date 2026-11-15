@@ -8,6 +8,8 @@ import { brandStyles } from "./zs-styles.js";
 import { useLocale, useT } from "../i18n";
 import { purgeExpiredItems, startUndoJob, undoableCounts } from "../undo.server";
 import { UndoRunButton } from "../components/UndoRunButton";
+import { RestoreRunButton } from "../components/RestoreRunButton";
+import { restorableCounts, startRestoreJob } from "../backup.server";
 import { Download } from "lucide-react";
 import { StopRunButton } from "../components/StopRunButton";
 import { downloadFile } from "../lib/download";
@@ -68,11 +70,13 @@ export const loader = async ({ request }) => {
   });
 
   const undoable = await undoableCounts(shop, jobs.map((j) => j.id));
+  const restorable = await restorableCounts(shop, jobs.map((j) => j.id));
 
   return {
     jobs: jobs.map((j) => ({
       id: j.id,
       undoable: j.status === "running" ? 0 : undoable[j.id] || 0,
+      restorable: j.status === "running" ? 0 : restorable[j.id] || 0,
       sourceShop: j.sourceShop,
       targetShop: j.targetShop,
       mode: j.mode,
@@ -193,7 +197,7 @@ const STATUS_LABEL = {
   stopped: "Stopped",
 };
 
-const MODE_LABEL = { migrate: "Migration", sync: "Sync", undo: "Undo", dryrun: "Dry run" };
+const MODE_LABEL = { migrate: "Migration", sync: "Sync", undo: "Undo", dryrun: "Dry run", restore: "Restore" };
 
 export default function History() {
   const t = useT();
@@ -381,6 +385,7 @@ export default function History() {
                         </button>
                       )}
                       {j.undoable > 0 && <UndoRunButton jobId={j.id} count={j.undoable} />}
+                      {j.restorable > 0 && <RestoreRunButton jobId={j.id} count={j.restorable} />}
                       {logsById[j.id] === undefined ? (
                         <div className="zs-log">{t("Loading log…")}</div>
                       ) : (
@@ -405,8 +410,11 @@ export default function History() {
 export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
-  if (form.get("intent") !== "undo") return { ok: false, error: "Unknown action." };
-  const started = await startUndoJob(session.shop, String(form.get("jobId") || ""));
+  const intent = form.get("intent");
+  if (intent !== "undo" && intent !== "restore") return { ok: false, error: "Unknown action." };
+  const jobId = String(form.get("jobId") || "");
+  const started =
+    intent === "restore" ? await startRestoreJob(session.shop, jobId) : await startUndoJob(session.shop, jobId);
   return started.jobId ? { ok: true, jobId: started.jobId } : { ok: false, error: started.error };
 };
 
