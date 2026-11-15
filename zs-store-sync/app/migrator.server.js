@@ -4829,8 +4829,13 @@ async function menuTranslationMap(ctx) {
       if (!t) continue;
       map.set(m.id, t.id);
       const tPaths = menuLinkPaths(t);
+      // Menus list items as MenuItem gids; translations call the same item a
+      // Link (same number), so both spellings are mapped.
+      const asLink = (gid) => String(gid).replace("/MenuItem/", "/Link/");
       for (const [path, id] of menuLinkPaths(m)) {
-        if (tPaths.has(path)) map.set(id, tPaths.get(path));
+        if (!tPaths.has(path)) continue;
+        map.set(id, tPaths.get(path));
+        map.set(asLink(id), asLink(tPaths.get(path)));
       }
     }
   } catch {
