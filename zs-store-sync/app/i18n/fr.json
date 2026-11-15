@@ -769,5 +769,7 @@
   "{locations} Locations, {shipping} Shipping profiles / zones with rates": "{locations} Emplacements, {shipping} Profils / zones d'expédition avec tarifs",
   "{n} B2B companies with catalogs (Shopify Plus stores)": "{n} Entreprises B2B avec catalogues (boutiques Shopify Plus)",
   "{n} Markets with currencies, languages and price lists": "{n} Marchés avec devises, langues et listes de prix",
-  "{n} Selling plan groups (subscriptions, pre-orders)": "{n} Groupes de plans de vente (abonnements, précommandes)"
+  "{n} Selling plan groups (subscriptions, pre-orders)": "{n} Groupes de plans de vente (abonnements, précommandes)",
+  "Delete 1 item": "Supprimer 1 élément",
+  "This permanently deletes the item this run created on this store, including any changes you made to it since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.": "Cette action supprime définitivement l'élément créé par cette exécution sur cette boutique, y compris les modifications apportées depuis. Les éléments mis à jour ou ignorés restent inchangés et l'utilisation mensuelle n'est pas remboursée."
 }

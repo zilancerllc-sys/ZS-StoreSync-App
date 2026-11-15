@@ -143,8 +143,8 @@ const M_DEL_ZONE = `#graphql
   }`;
 
 const M_DEACTIVATE_LOCATION = `#graphql
-  mutation UndoLocationOff($locationId: ID!) {
-    locationDeactivate(locationId: $locationId) {
+  mutation UndoLocationOff($locationId: ID!, $key: String!) {
+    locationDeactivate(locationId: $locationId) @idempotent(key: $key) {
       location { id }
       userErrors: locationDeactivateUserErrors { field message }
     }
@@ -216,6 +216,11 @@ const M_DEL_METAFIELD = `#graphql
 
 const byId = (id) => ({ id });
 const byLocationId = (locationId) => ({ locationId });
+// Shopify refuses locationDeactivate without @idempotent (Admin API 2026-04+).
+const deactivateVariables = (locationId) => ({
+  locationId,
+  key: `zs-undo-deactivate-${locationId.split("/").pop()}-${Date.now()}`,
+});
 const byInputId = (id) => ({ input: { id } });
 const fileDelete = [M_DEL_FILE, "fileDelete", (id) => ({ fileIds: [id] })];
 
@@ -241,7 +246,7 @@ const DELETERS = {
   DeliveryProfile: [M_DEL_PROFILE, "deliveryProfileRemove", byId],
   DeliveryZone: [M_DEL_ZONE, "deliveryProfileUpdate", zoneUndoVariables],
   // a location must be deactivated before it can be deleted
-  Location: [M_DEL_LOCATION, "locationDelete", byLocationId, [M_DEACTIVATE_LOCATION, "locationDeactivate", byLocationId]],
+  Location: [M_DEL_LOCATION, "locationDelete", byLocationId, [M_DEACTIVATE_LOCATION, "locationDeactivate", deactivateVariables]],
   Market: [M_DEL_MARKET, "marketDelete", byId],
   MarketCatalog: [M_DEL_CATALOG, "catalogDelete", byId],
   CompanyLocationCatalog: [M_DEL_CATALOG, "catalogDelete", byId],

@@ -272,6 +272,17 @@ const Q_PROFILE_LIST = `#graphql
     }
   }`;
 
+// This store's side lists every profile, not only merchant-owned ones: a
+// profile this app created on an earlier run is owned by the app, so a
+// merchantOwnedOnly list here missed it and every re-run created it again.
+const Q_TARGET_PROFILE_LIST = `#graphql
+  query MoreTargetProfiles($cursor: String) {
+    deliveryProfiles(first: 25, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id name default } }
+    }
+  }`;
+
 const Q_PROFILE_DETAIL = `#graphql
   query MoreProfile($id: ID!) {
     deliveryProfile(id: $id) {
@@ -390,7 +401,7 @@ export async function migrateShipping(ctx) {
   let targetCurrency;
   try {
     list = await fetchAll(source, Q_PROFILE_LIST, "deliveryProfiles");
-    targetList = await fetchAll(target, Q_PROFILE_LIST, "deliveryProfiles");
+    targetList = await fetchAll(target, Q_TARGET_PROFILE_LIST, "deliveryProfiles");
     sourceCurrency = (await gql(source, Q_SHOP_CURRENCY))?.shop?.currencyCode;
     targetCurrency = (await gql(target, Q_SHOP_CURRENCY))?.shop?.currencyCode;
   } catch (err) {

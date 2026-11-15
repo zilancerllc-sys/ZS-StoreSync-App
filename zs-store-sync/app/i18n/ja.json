@@ -769,5 +769,7 @@
   "{locations} Locations, {shipping} Shipping profiles / zones with rates": "{locations} ロケーション、{shipping} 配送プロファイル／ゾーン（料金付き）",
   "{n} B2B companies with catalogs (Shopify Plus stores)": "{n} B2B企業（カタログ付き、Shopify Plusストア）",
   "{n} Markets with currencies, languages and price lists": "{n} マーケット（通貨・言語・価格リスト付き）",
-  "{n} Selling plan groups (subscriptions, pre-orders)": "{n} 販売プラングループ（定期購入・予約注文）"
+  "{n} Selling plan groups (subscriptions, pre-orders)": "{n} 販売プラングループ（定期購入・予約注文）",
+  "Delete 1 item": "1件を削除",
+  "This permanently deletes the item this run created on this store, including any changes you made to it since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.": "この実行でストアに作成した1件を、その後の変更も含めて完全に削除します。更新またはスキップされた項目はそのままで、月間使用量は返還されません。"
 }

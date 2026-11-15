@@ -27,14 +27,16 @@ export function UndoRunButton({ jobId, count }) {
   return (
     <div className="zs-banner err" style={{ display: "block", marginBottom: 12 }}>
       <p style={{ margin: "0 0 10px" }}>
-        {t("This permanently deletes the {count} items this run created on this store, including any changes you made to them since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.", { count })}
+        {count === 1
+          ? t("This permanently deletes the item this run created on this store, including any changes you made to it since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.")
+          : t("This permanently deletes the {count} items this run created on this store, including any changes you made to them since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.", { count })}
       </p>
       {error && <p style={{ margin: "0 0 10px", fontWeight: 600 }}>{t(error)}</p>}
       <fetcher.Form method="post" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <input type="hidden" name="intent" value="undo" />
         <input type="hidden" name="jobId" value={jobId} />
         <button type="submit" className="zs-btn" disabled={busy}>
-          {t("Delete {count} items", { count })}
+          {count === 1 ? t("Delete 1 item") : t("Delete {count} items", { count })}
         </button>
         <button
           type="button"
