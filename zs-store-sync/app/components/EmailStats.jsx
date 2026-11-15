@@ -23,6 +23,16 @@ const css = `
   .em-row{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:2px 0}
   .em-subj{max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px}
   .em-search{border:1px solid rgba(192,39,26,.26);border-radius:8px;padding:7px 10px;font-size:13px;min-width:220px;font-family:inherit}
+  /* Apps whose owner page has no od-* styles wrap the card in .em-plain. */
+  .em-plain .od-card{background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:16px 18px;margin:16px 0}
+  .em-plain .od-card-t{font-weight:700;font-size:15px;margin:0 0 4px}
+  .em-plain .od-small,.em-plain .od-note{color:#6b6b6b;font-size:12px}
+  .em-plain .od-grid{display:grid;gap:10px}
+  .em-plain .od-stat{border:1px solid rgba(0,0,0,.08);border-radius:10px;padding:10px 12px}
+  .em-plain .od-stat-l{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b6b6b}
+  .em-plain .od-stat-v{font-size:22px;font-weight:700}
+  .em-plain .od-stat-h{font-size:12px;color:#6b6b6b}
+  .em-plain .od-btn{border:1px solid rgba(0,0,0,.15);background:#fff;border-radius:8px;padding:6px 12px;cursor:pointer}
 `;
 
 const pct = (n, d) => (d ? `${Math.round((n / d) * 100)}%` : "—");
