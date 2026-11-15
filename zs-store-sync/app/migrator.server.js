@@ -3834,7 +3834,7 @@ async function migrateGiftCards(ctx) {
         counters.created++;
         made++;
         consume(card?.id);
-        onLog(`✓ Gift card …${g.lastCharacters} → new card …${card?.lastCharacters} worth ${g.balance.amount} ${g.balance.currencyCode}${customerNote}`);
+        onLog(`✓ Gift card …${g.lastCharacters} → new card …${card?.lastCharacters} worth ${amount.toFixed(2)} ${g.balance.currencyCode}${customerNote}`);
       }
     } catch (err) {
       counters.failed++;
@@ -4043,7 +4043,11 @@ async function checkThemeReferences(ctx, texts) {
   const refs = new Map();
   const apps = new Set();
   for (const t of texts) {
-    for (const r of themeReferences(t)) refs.set(`${r.kind}/${r.handle}`, r);
+    for (const r of themeReferences(t)) {
+      // every store has the built-in "all" collection
+      if (r.kind === "collections" && r.handle === "all") continue;
+      refs.set(`${r.kind}/${r.handle}`, r);
+    }
     for (const a of appBlockHandles(t)) apps.add(a);
   }
   const missing = [];
@@ -4224,7 +4228,7 @@ async function migrateTheme(ctx) {
   } catch (err) {
     if (isThemeApprovalError(err.message)) {
       counters.skipped++;
-      onLog(THEME_WAITING);
+      onLog(`${THEME_WAITING} (Shopify said: ${String(err.message).replace(/^GraphQL error: /, "").slice(0, 160)})`);
       return;
     }
     counters.failed++;
