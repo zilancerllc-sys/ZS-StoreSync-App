@@ -21,7 +21,7 @@ import { startMigrationJob, getActiveJob } from "../jobs.server";
 import { brandStyles } from "./zs-styles.js";
 import { useT } from "../i18n";
 import { ProductFilterFields, NewTypeNotes } from "../components/ProductFilterFields";
-import { Languages, Warehouse, Gift, ScrollText } from "lucide-react";
+import { Languages, Warehouse, Gift, ScrollText, MapPin, Truck, Globe, Building2, Repeat, ListChecks } from "lucide-react";
 import { StopRunButton } from "../components/StopRunButton";
 import { productFilterFromForm } from "../lib/product-filter";
 import {
@@ -282,6 +282,7 @@ export const action = async ({ request }) => {
       types: runnable,
       limits: migrateLimits,
       productFilter: productFilterFromForm(form),
+      options: { sellingPlansAck: form.get("sellingPlansAck") === "on" },
     });
     // null = the database rejected a second concurrent run. The getActiveJob
     // check above can be passed by two requests at once (two tabs, a double
@@ -401,6 +402,11 @@ const ALL_TYPES = [
   { id: "translations", name: "Translations", icon: <Languages size={16} /> },
   { id: "giftCards", name: "Gift cards", icon: <Gift size={16} /> },
   { id: "policies", name: "Store policies", icon: <ScrollText size={16} /> },
+  { id: "locations", name: "Locations", icon: <MapPin size={16} /> },
+  { id: "shipping", name: "Shipping", icon: <Truck size={16} /> },
+  { id: "markets", name: "Markets", icon: <Globe size={16} /> },
+  { id: "b2b", name: "B2B companies", icon: <Building2 size={16} /> },
+  { id: "sellingPlans", name: "Selling plans", icon: <Repeat size={16} /> },
 ];
 
 export default function Migrate() {
@@ -840,6 +846,12 @@ export default function Migrate() {
                 <input type="hidden" name="types" value={picked.join(",")} />
                 {picked.includes("products") && <ProductFilterFields sourceShop={selectedSource} />}
                 <NewTypeNotes picked={picked} />
+                <p style={{ margin: "8px 0", fontSize: 12.5, color: "#8a7d70" }}>
+                  <ListChecks size={13} style={{ verticalAlign: "-2px" }} />{" "}
+                  {t("Some settings can't be copied by any app (payments, checkout, taxes, notifications, domains, staff). {link} lists them with links to this store's settings.", {
+                    link: <RouterLink to="/app/manual-steps">{t("Manual steps")}</RouterLink>,
+                  })}
+                </p>
                 <button
                   className="zs-btn"
                   disabled={!selectedSource || picked.length === 0 || running}

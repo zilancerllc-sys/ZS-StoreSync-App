@@ -11,6 +11,7 @@ import { unauthenticated } from "./shopify.server";
 import { gql, sleep } from "./migrator.server";
 import { redactPII } from "./redact.server";
 import { safeLogsJson } from "./jobs.server";
+import { zoneUndoVariables } from "./lib/undo-gids.js";
 
 export const UNDO_DAYS = 30;
 const UNDO_MS = UNDO_DAYS * 24 * 60 * 60 * 1000;
@@ -124,7 +125,89 @@ const M_DEL_THEME = `#graphql
     }
   }`;
 
+const M_DEL_PROFILE = `#graphql
+  mutation UndoProfile($id: ID!) {
+    deliveryProfileRemove(id: $id) {
+      job { id }
+      userErrors { field message }
+    }
+  }`;
+
+// A zone added to an existing profile (General) is removed from that profile.
+const M_DEL_ZONE = `#graphql
+  mutation UndoZone($id: ID!, $profile: DeliveryProfileInput!) {
+    deliveryProfileUpdate(id: $id, profile: $profile) {
+      profile { id }
+      userErrors { field message }
+    }
+  }`;
+
+const M_DEACTIVATE_LOCATION = `#graphql
+  mutation UndoLocationOff($locationId: ID!) {
+    locationDeactivate(locationId: $locationId) {
+      location { id }
+      userErrors: locationDeactivateUserErrors { field message }
+    }
+  }`;
+
+const M_DEL_LOCATION = `#graphql
+  mutation UndoLocation($locationId: ID!) {
+    locationDelete(locationId: $locationId) {
+      deletedLocationId
+      userErrors: locationDeleteUserErrors { field message }
+    }
+  }`;
+
+const M_DEL_MARKET = `#graphql
+  mutation UndoMarket($id: ID!) {
+    marketDelete(id: $id) {
+      deletedId
+      userErrors { field message }
+    }
+  }`;
+
+const M_DEL_CATALOG = `#graphql
+  mutation UndoCatalog($id: ID!) {
+    catalogDelete(id: $id, deleteDependentResources: true) {
+      deletedId
+      userErrors { field message }
+    }
+  }`;
+
+const M_DEL_PRICE_LIST = `#graphql
+  mutation UndoPriceList($id: ID!) {
+    priceListDelete(id: $id) {
+      deletedId
+      userErrors { field message }
+    }
+  }`;
+
+const M_DEL_WEB_PRESENCE = `#graphql
+  mutation UndoWebPresence($id: ID!) {
+    webPresenceDelete(id: $id) {
+      deletedId
+      userErrors { field message }
+    }
+  }`;
+
+const M_DEL_COMPANY = `#graphql
+  mutation UndoCompany($id: ID!) {
+    companyDelete(id: $id) {
+      deletedCompanyId
+      userErrors { field message }
+    }
+  }`;
+
+const M_DEL_SELLING_PLAN_GROUP = `#graphql
+  mutation UndoSellingPlanGroup($id: ID!) {
+    sellingPlanGroupDelete(id: $id) {
+      deletedSellingPlanGroupId
+      userErrors { field message }
+    }
+  }`;
+
 const byId = (id) => ({ id });
+const byLocationId = (locationId) => ({ locationId });
 const byInputId = (id) => ({ input: { id } });
 const fileDelete = [M_DEL_FILE, "fileDelete", (id) => ({ fileIds: [id] })];
 
@@ -147,6 +230,17 @@ const DELETERS = {
   DiscountAutomaticNode: [M_DEL_AUTO_DISCOUNT, "discountAutomaticDelete", byId],
   GiftCard: [M_DEACTIVATE_GIFT_CARD, "giftCardDeactivate", byId],
   OnlineStoreTheme: [M_DEL_THEME, "themeDelete", byId],
+  DeliveryProfile: [M_DEL_PROFILE, "deliveryProfileRemove", byId],
+  DeliveryZone: [M_DEL_ZONE, "deliveryProfileUpdate", zoneUndoVariables],
+  // a location must be deactivated before it can be deleted
+  Location: [M_DEL_LOCATION, "locationDelete", byLocationId, [M_DEACTIVATE_LOCATION, "locationDeactivate", byLocationId]],
+  Market: [M_DEL_MARKET, "marketDelete", byId],
+  MarketCatalog: [M_DEL_CATALOG, "catalogDelete", byId],
+  CompanyLocationCatalog: [M_DEL_CATALOG, "catalogDelete", byId],
+  PriceList: [M_DEL_PRICE_LIST, "priceListDelete", byId],
+  MarketWebPresence: [M_DEL_WEB_PRESENCE, "webPresenceDelete", byId],
+  Company: [M_DEL_COMPANY, "companyDelete", byId],
+  SellingPlanGroup: [M_DEL_SELLING_PLAN_GROUP, "sellingPlanGroupDelete", byId],
 };
 
 export const gidType = (gid) => /^gid:\/\/shopify\/([^/]+)\//.exec(String(gid))?.[1] || "";
@@ -159,8 +253,19 @@ const GONE = /not found|does not exist|doesn't exist|can't be found|no longer ex
 export async function deleteCreatedItem(admin, gid) {
   const spec = DELETERS[gidType(gid)];
   if (!spec) return { ok: false, error: "this kind of item can't be undone" };
-  const [mutation, root, variables] = spec;
+  const [mutation, root, variables, before] = spec;
   try {
+    if (before) {
+      const [bMutation, bRoot, bVariables] = before;
+      const b = await gql(admin, bMutation, bVariables(gid));
+      const bErrs = b?.[bRoot]?.userErrors || [];
+      const bText = bErrs.map((e) => e.message).join("; ");
+      // already deactivated is fine; anything else (stock or open orders at
+      // the location) stops the delete with Shopify's reason
+      if (bErrs.length && !/already|inactive|deactivated/i.test(bText) && !GONE.test(bText)) {
+        return { ok: false, error: bText };
+      }
+    }
     const data = await gql(admin, mutation, variables(gid));
     const errs = data?.[root]?.userErrors || [];
     const text = errs.map((e) => e.message).join("; ");
@@ -266,7 +371,7 @@ async function runUndo(undoJobId, targetJobId, shop) {
           data: { logJson: safeLogsJson(logs) },
         });
       }
-      const label = `${gidType(item.gid)} ${item.gid.split("/").pop()}`;
+      const label = `${gidType(item.gid)} ${item.gid.split("?")[0].split("/").pop()}`;
       const result = await deleteCreatedItem(admin, item.gid);
       if (result.ok) {
         removed++;

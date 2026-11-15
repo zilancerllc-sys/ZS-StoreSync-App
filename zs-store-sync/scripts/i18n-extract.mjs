@@ -20,6 +20,7 @@ const SOURCES = [
   "app/undo.server.js",
   "app/instant-sync.server.js",
   "app/lib/affiliate.server.js",
+  "app/lib/manual-steps.js",
   "app/routes/webhooks.app.uninstalled.jsx",
 ];
 
@@ -46,6 +47,11 @@ for (const file of [...new Set(SOURCES.flatMap(files))]) {
   )) {
     const s = unescape(m[1]);
     if (/^[A-Z★].*[a-z]/.test(s) && !/^https?:|^[A-Z_]+$/.test(s)) keys.add(s);
+  }
+
+  // The Manual steps checklist renders its title / why fields through t().
+  if (file.endsWith("manual-steps.js")) {
+    for (const m of src.matchAll(/\b(?:title|why)\s*:\s*"((?:[^"\\]|\\.)*)"/g)) keys.add(unescape(m[1]));
   }
 
   // Label tables: { key: "Label" } and ["Sunday", …]

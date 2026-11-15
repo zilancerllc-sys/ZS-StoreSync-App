@@ -37,6 +37,20 @@ import {
   pageSnapshot,
   pageWouldChange,
 } from "./lib/backup-core.js";
+import {
+  migrateLocations,
+  migrateShipping,
+  migrateMarkets,
+  migrateB2B,
+  migrateSellingPlans,
+} from "./migrator-more.server.js";
+import {
+  TRANSLATION_TYPES,
+  TRANSLATION_ORDER,
+  bestDigestMatch,
+  menuLinkPaths,
+  translationsToRegister,
+} from "./lib/translation-match.js";
 
 // Namespaces (metafields) and types (metaobjects) that Shopify or another app
 // owns. They already exist on every store and creating them is always refused
@@ -121,7 +135,7 @@ function qv(value) {
 }
 
 // ── Generic paginated fetch over a connection ────────────────────────────────
-export { gql, sleep };
+export { gql, sleep, fetchAll, errText, qv, metafieldsInput, mapGid, findOnTarget, isReservedNamespace };
 
 async function fetchAll(admin, query, rootKey, variables = {}, onPage) {
   let cursor = null;
@@ -1948,7 +1962,133 @@ const METAFIELD_OWNER_TYPES = [
   "CUSTOMER",
   "ORDER",
   "DRAFTORDER",
+  "SHOP",
+  "LOCATION",
+  "MARKET",
+  "COMPANY",
+  "COMPANY_LOCATION",
+  "SELLING_PLAN",
+  "MEDIA_IMAGE",
+  "DISCOUNT",
+  "GIFT_CARD_TRANSACTION",
+  "TRANSFER",
+  // definitions used by Shopify Functions settings
+  "CARTTRANSFORM",
+  "DELIVERY_CUSTOMIZATION",
+  "PAYMENT_CUSTOMIZATION",
+  "VALIDATION",
+  "FULFILLMENT_CONSTRAINT_RULE",
+  "ORDER_ROUTING_LOCATION_RULE",
 ];
+
+// Owner types a store may simply not have (B2B without Plus, no Functions):
+// an unreadable one is a note, not a failure.
+const OPTIONAL_OWNER_TYPES = new Set([
+  "COMPANY",
+  "COMPANY_LOCATION",
+  "SELLING_PLAN",
+  "GIFT_CARD_TRANSACTION",
+  "TRANSFER",
+  "CARTTRANSFORM",
+  "DELIVERY_CUSTOMIZATION",
+  "PAYMENT_CUSTOMIZATION",
+  "VALIDATION",
+  "FULFILLMENT_CONSTRAINT_RULE",
+  "ORDER_ROUTING_LOCATION_RULE",
+]);
+
+const Q_SHOP_METAFIELDS = `#graphql
+  query ShopMetafields($cursor: String) {
+    shop {
+      id
+      metafields(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges { node { namespace key type value } }
+      }
+    }
+  }`;
+
+const M_SHOP_METAFIELDS_SET = `#graphql
+  mutation ShopMetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+    metafieldsSet(metafields: $metafields) {
+      metafields { id }
+      userErrors { field message }
+    }
+  }`;
+
+async function readShopMetafields(admin) {
+  let cursor = null;
+  let id = null;
+  const edges = [];
+  do {
+    const d = await gql(admin, Q_SHOP_METAFIELDS, { cursor });
+    id = d?.shop?.id;
+    const conn = d?.shop?.metafields;
+    edges.push(...(conn?.edges || []));
+    cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+  } while (cursor);
+  return { id, edges };
+}
+
+// Store-wide metafields (shop.metafields) — values, not just definitions.
+// Migrate fills keys this store doesn't have; sync replaces them.
+async function migrateShopMetafields(ctx) {
+  const { source, target, onLog, counters } = ctx;
+  let src;
+  let tgt;
+  try {
+    src = await readShopMetafields(source);
+    tgt = await readShopMetafields(target);
+  } catch (err) {
+    onLog(`✕ Store metafields — ${String(err.message).slice(0, 100)}`);
+    return;
+  }
+  const have = new Map(tgt.edges.map((e) => [`${e.node.namespace}.${e.node.key}`, e.node.value]));
+  const all = await metafieldsInput(ctx, { metafields: { edges: src.edges.filter((e) => !isReservedNamespace(e.node.namespace)) } });
+  const todo = [];
+  for (const m of all) {
+    const k = `${m.namespace}.${m.key}`;
+    if (have.has(k) && (ctx.mode !== "sync" || have.get(k) === m.value)) {
+      counters.skipped++;
+      continue;
+    }
+    if (!have.has(k) && !ctx.canCreate()) {
+      ctx.notCreated(`store metafield ${k}`);
+      continue;
+    }
+    if (ctx.dryRun) continue;
+    todo.push({ ...m, ownerId: tgt.id, existed: have.has(k) });
+  }
+  if (!todo.length) {
+    if (src.edges.length) onLog(`Store metafields: nothing new to copy (${src.edges.length} on the source).`);
+    return;
+  }
+  for (let i = 0; i < todo.length; i += 25) {
+    const batch = todo.slice(i, i + 25);
+    try {
+      const d = await gql(target, M_SHOP_METAFIELDS_SET, {
+        metafields: batch.map(({ existed, ...m }) => (void existed, m)),
+      });
+      const errs = d?.metafieldsSet?.userErrors;
+      if (errs?.length) {
+        counters.failed += batch.length;
+        onLog(`✕ Store metafields — ${errText(errs)}`);
+        continue;
+      }
+      for (const m of batch) {
+        if (m.existed) counters.updated++;
+        else {
+          counters.created++;
+          ctx.consume();
+        }
+      }
+      onLog(`✓ Store metafields: ${batch.map((m) => `${m.namespace}.${m.key}`).join(", ")}`);
+    } catch (err) {
+      counters.failed += batch.length;
+      onLog(`✕ Store metafields — ${String(err.message).slice(0, 100)}`);
+    }
+  }
+}
 
 const M_METAFIELD_DEF_CREATE = `#graphql
   mutation MFDefCreate($definition: MetafieldDefinitionInput!) {
@@ -1974,7 +2114,11 @@ async function migrateMetafields(ctx) {
       });
     } catch (err) {
       // one unreadable owner type (missing scope, etc.) must not kill the rest
-      onLog(`✕ ${ownerType} definitions — ${String(err.message).slice(0, 100)}`);
+      if (OPTIONAL_OWNER_TYPES.has(ownerType)) {
+        onLog(`↪︎ ${ownerType} definitions not available on the source store — skipped`);
+      } else {
+        onLog(`✕ ${ownerType} definitions — ${String(err.message).slice(0, 100)}`);
+      }
       continue;
     }
 
@@ -2035,6 +2179,7 @@ async function migrateMetafields(ctx) {
       await sleep(140);
     }
   }
+  await migrateShopMetafields(ctx);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -4348,6 +4493,11 @@ const RUNNERS = {
   giftCards: migrateGiftCards,
   policies: migratePolicies,
   theme: migrateTheme,
+  locations: migrateLocations,
+  shipping: migrateShipping,
+  markets: migrateMarkets,
+  b2b: migrateB2B,
+  sellingPlans: migrateSellingPlans,
 };
 
 // Order matters:
@@ -4421,7 +4571,7 @@ const M_INVENTORY_SET = `#graphql
     }
   }`;
 
-const NEEDS_PERMISSION = /access denied|access scope|not approved|required access/i;
+export const NEEDS_PERMISSION = /access denied|access scope|not approved|required access/i;
 
 async function setStock(ctx, quantities) {
   const send = async () => {
@@ -4556,16 +4706,30 @@ async function migrateInventory(ctx) {
 // ═════════════════════════════════════════════════════════════════════════════
 //  TRANSLATIONS
 //
-//  Copies translations for languages enabled on both stores. A translation is
-//  registered against a digest of the TARGET's own content, so the digest is
-//  always read from the target. Migrate keeps translations the target already
-//  has; sync replaces them.
+//  Copies translations for every language of the source store. Languages the
+//  target doesn't have yet are added to it unpublished (write_locales). A
+//  translation is registered against a digest of the TARGET's own content, so
+//  the digest is always read from the target. Migrate keeps translations the
+//  target already has; sync replaces them.
+//
+//  How each resource type finds its copy on the target is listed in
+//  app/lib/translation-match.js: by handle / SKU / filename ("mapped"), menu
+//  handle and link position ("menu"), the store itself ("shop"), owner +
+//  namespace.key ("metafield"), product handle + option name ("option"), or by
+//  identical original text ("digest": policies, notification templates,
+//  delivery methods, selling plans, theme content...).
 // ═════════════════════════════════════════════════════════════════════════════
-const TRANSLATED_TYPES = ["PRODUCT", "COLLECTION", "PAGE", "ARTICLE", "METAOBJECT"];
-
 const Q_SHOP_LOCALES = `#graphql
   query ShopLocales {
-    shopLocales { locale primary }
+    shopLocales { locale primary published }
+  }`;
+
+const M_SHOP_LOCALE_ENABLE = `#graphql
+  mutation EnableLocale($locale: String!) {
+    shopLocaleEnable(locale: $locale) {
+      shopLocale { locale published }
+      userErrors { field message }
+    }
   }`;
 
 const Q_SOURCE_TRANSLATIONS = `#graphql
@@ -4574,7 +4738,20 @@ const Q_SOURCE_TRANSLATIONS = `#graphql
       pageInfo { hasNextPage endCursor }
       edges { node {
         resourceId
+        translatableContent { key digest }
         translations(locale: $locale) { key value }
+      } }
+    }
+  }`;
+
+const Q_TARGET_TRANSLATABLE_LIST = `#graphql
+  query TargetTranslatableList($type: TranslatableResourceType!, $locale: String!, $cursor: String) {
+    translatableResources(first: 50, resourceType: $type, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        resourceId
+        translatableContent { key digest }
+        translations(locale: $locale) { key }
       } }
     }
   }`;
@@ -4593,6 +4770,132 @@ const M_TRANSLATIONS_REGISTER = `#graphql
       userErrors { field message }
     }
   }`;
+
+const Q_SHOP_ID = `#graphql
+  query ShopId { shop { id } }`;
+
+const Q_METAFIELD_OWNER = `#graphql
+  query MetafieldOwner($id: ID!) {
+    node(id: $id) {
+      ... on Metafield {
+        namespace key
+        owner {
+          __typename
+          ... on Product { id handle }
+          ... on Collection { id handle }
+          ... on Page { id handle }
+          ... on Article { id handle }
+          ... on ProductVariant { id sku }
+          ... on Shop { id }
+        }
+      }
+    }
+  }`;
+
+const Q_TARGET_METAFIELD_ID = `#graphql
+  query TargetMetafieldId($id: ID!, $namespace: String!, $key: String!) {
+    node(id: $id) {
+      ... on HasMetafields { metafield(namespace: $namespace, key: $key) { id } }
+    }
+  }`;
+
+const Q_PRODUCT_OPTIONS_ALL = `#graphql
+  query ProductOptionsAll($cursor: String) {
+    products(first: 100, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { handle options { id name optionValues { id name } } } }
+    }
+  }`;
+
+const Q_TARGET_PRODUCT_OPTIONS = `#graphql
+  query TargetProductOptions($handle: String!) {
+    productByHandle(handle: $handle) { options { id name optionValues { id name } } }
+  }`;
+
+// source menu / link gid → target gid (menus by handle, links by position)
+async function menuTranslationMap(ctx) {
+  if (ctx._menuMap) return ctx._menuMap;
+  const map = new Map();
+  try {
+    const src = await fetchAll(ctx.source, Q_MENUS, "menus");
+    const tgt = await fetchAll(ctx.target, Q_MENUS, "menus");
+    const tByHandle = new Map(tgt.map((m) => [m.handle, m]));
+    for (const m of src) {
+      const t = tByHandle.get(m.handle);
+      if (!t) continue;
+      map.set(m.id, t.id);
+      const tPaths = menuLinkPaths(t);
+      for (const [path, id] of menuLinkPaths(m)) {
+        if (tPaths.has(path)) map.set(id, tPaths.get(path));
+      }
+    }
+  } catch {
+    /* menus not readable — their translations are skipped */
+  }
+  ctx._menuMap = map;
+  return map;
+}
+
+async function optionTranslationTarget(ctx, sourceId) {
+  if (!ctx._optionIndex) {
+    const idx = new Map();
+    try {
+      for (const p of await fetchAll(ctx.source, Q_PRODUCT_OPTIONS_ALL, "products")) {
+        for (const o of p.options || []) {
+          idx.set(o.id, { handle: p.handle, option: o.name });
+          for (const v of o.optionValues || []) idx.set(v.id, { handle: p.handle, option: o.name, value: v.name });
+        }
+      }
+    } catch {
+      /* no index */
+    }
+    ctx._optionIndex = idx;
+    ctx._targetOptions = new Map();
+  }
+  const hit = ctx._optionIndex.get(sourceId);
+  if (!hit) return null;
+  if (!ctx._targetOptions.has(hit.handle)) {
+    const d = await gql(ctx.target, Q_TARGET_PRODUCT_OPTIONS, { handle: hit.handle });
+    ctx._targetOptions.set(hit.handle, d?.productByHandle?.options || []);
+  }
+  const opt = ctx._targetOptions.get(hit.handle).find((o) => o.name === hit.option);
+  if (!opt) return null;
+  if (hit.value == null) return opt.id;
+  return (opt.optionValues || []).find((v) => v.name === hit.value)?.id || null;
+}
+
+async function targetShopId(ctx) {
+  if (!ctx._targetShopId) ctx._targetShopId = (await gql(ctx.target, Q_SHOP_ID))?.shop?.id || null;
+  return ctx._targetShopId;
+}
+
+async function metafieldTranslationTarget(ctx, sourceId) {
+  const d = await gql(ctx.source, Q_METAFIELD_OWNER, { id: sourceId });
+  const mf = d?.node;
+  if (!mf?.owner) return null;
+  const ownerId = mf.owner.__typename === "Shop" ? await targetShopId(ctx) : await findOnTarget(ctx, mf.owner);
+  if (!ownerId) return null;
+  const t = await gql(ctx.target, Q_TARGET_METAFIELD_ID, { id: ownerId, namespace: mf.namespace, key: mf.key });
+  return t?.node?.metafield?.id || null;
+}
+
+// → target resource id for a source translatable resource (non-digest kinds)
+async function translationTarget(ctx, kind, resourceId) {
+  switch (kind) {
+    case "mapped":
+      return mapGid(ctx, resourceId);
+    case "menu":
+      return (await menuTranslationMap(ctx)).get(resourceId) || null;
+    case "shop":
+      return targetShopId(ctx);
+    case "metafield":
+      return metafieldTranslationTarget(ctx, resourceId);
+    case "option":
+      return optionTranslationTarget(ctx, resourceId);
+    default:
+      return null;
+  }
+}
 
 async function migrateTranslations(ctx) {
   const { source, target, onLog, counters, consume } = ctx;
@@ -4614,9 +4917,26 @@ async function migrateTranslations(ctx) {
   const onTarget = new Set(targetLocales.map((l) => l.locale));
   const wanted = sourceLocales.filter((l) => !l.primary).map((l) => l.locale);
   const locales = wanted.filter((l) => onTarget.has(l));
-  const missing = wanted.filter((l) => !onTarget.has(l));
-  if (missing.length) {
-    onLog(`⚠ Add these languages to this store first: ${missing.join(", ")}`);
+  for (const l of wanted.filter((x) => !onTarget.has(x))) {
+    if (ctx.dryRun) {
+      onLog(`• Would add language ${l} to this store (unpublished)`);
+      continue;
+    }
+    try {
+      const d = await gql(target, M_SHOP_LOCALE_ENABLE, { locale: l });
+      const errs = d?.shopLocaleEnable?.userErrors;
+      if (errs?.length) onLog(`⚠ Language ${l} couldn't be added here — ${errText(errs)}`);
+      else {
+        locales.push(l);
+        onLog(`✓ Added language ${l} to this store, unpublished — publish it in Settings › Languages when it's ready`);
+      }
+    } catch (err) {
+      onLog(
+        NEEDS_PERMISSION.test(err.message)
+          ? `⚠ Add language ${l} to this store first (or approve ZS StoreSync's new languages permission)`
+          : `⚠ Language ${l} couldn't be added — ${String(err.message).slice(0, 100)}`,
+      );
+    }
   }
   if (!locales.length) {
     onLog("No languages in common between the two stores.");
@@ -4624,47 +4944,68 @@ async function migrateTranslations(ctx) {
   }
 
   for (const locale of locales) {
-    for (const type of TRANSLATED_TYPES) {
+    for (const type of TRANSLATION_ORDER) {
       if (ctx.stopOnQuota()) {
         onLog("Quota reached — stopping translations.");
         return;
       }
-      const resources = await fetchAll(source, Q_SOURCE_TRANSLATIONS, "translatableResources", {
-        type,
-        locale,
-      });
+      const kind = TRANSLATION_TYPES[type];
+      let resources;
+      try {
+        resources = await fetchAll(source, Q_SOURCE_TRANSLATIONS, "translatableResources", { type, locale });
+      } catch (err) {
+        onLog(`↪︎ ${type.toLowerCase()} translations not readable — ${String(err.message).slice(0, 100)}`);
+        continue;
+      }
+      resources = resources.filter((r) => r.translations?.length);
+      if (!resources.length) continue;
+
+      // digest kinds: all target resources of this type, read once
+      let targetList = null;
+      if (kind === "digest") {
+        try {
+          targetList = await fetchAll(target, Q_TARGET_TRANSLATABLE_LIST, "translatableResources", { type, locale });
+        } catch {
+          targetList = [];
+        }
+      }
+      let unmatched = 0;
 
       for (const res of resources) {
-        if (!res.translations?.length) continue;
         if (ctx.stopOnQuota()) {
           onLog("Quota reached — stopping translations.");
           return;
         }
-        const label = `${type.toLowerCase()} ${res.resourceId.split("/").pop()} (${locale})`;
+        const label = `${type.toLowerCase().replace(/_/g, " ")} ${res.resourceId.split("/").pop()} (${locale})`;
         try {
-          const targetId = await mapGid(ctx, res.resourceId);
+          let targetId;
+          let content;
+          let existing;
+          if (kind === "digest") {
+            const hit = bestDigestMatch(res.translatableContent, targetList);
+            targetId = hit?.resourceId || null;
+            content = hit?.translatableContent || [];
+            existing = new Set((hit?.translations || []).map((t) => t.key));
+          } else {
+            targetId = await translationTarget(ctx, kind, res.resourceId);
+            if (targetId) {
+              const d = await gql(target, Q_TARGET_TRANSLATABLE, { id: targetId, locale });
+              content = d?.translatableResource?.translatableContent || [];
+              existing = new Set((d?.translatableResource?.translations || []).map((t) => t.key));
+            }
+          }
           if (!targetId) {
             counters.skipped++;
-            onLog(`↪︎ Skipped (not on this store): ${label}`);
+            unmatched++;
+            if (kind !== "digest") onLog(`↪︎ Skipped (not on this store): ${label}`);
             continue;
           }
-          const d = await gql(target, Q_TARGET_TRANSLATABLE, { id: targetId, locale });
-          const digests = new Map(
-            (d?.translatableResource?.translatableContent || []).map((c) => [c.key, c.digest]),
-          );
-          const existing = new Set(
-            (d?.translatableResource?.translations || []).map((t) => t.key),
-          );
-          const translations = res.translations
-            .filter((t) => t.value && digests.has(t.key))
-            .filter((t) => ctx.mode === "sync" || !existing.has(t.key))
-            .map((t) => ({
-              locale,
-              key: t.key,
-              value: t.value,
-              translatableContentDigest: digests.get(t.key),
-            }));
+          const translations = translationsToRegister(res.translations, content, existing, locale, ctx.mode === "sync");
           if (!translations.length) {
+            counters.skipped++;
+            continue;
+          }
+          if (ctx.dryRun) {
             counters.skipped++;
             continue;
           }
@@ -4687,15 +5028,35 @@ async function migrateTranslations(ctx) {
         }
         await sleep(120);
       }
+      if (kind === "digest" && unmatched) {
+        onLog(
+          `↪︎ ${unmatched} ${type.toLowerCase().replace(/_/g, " ")} translation(s) (${locale}) skipped — the original text isn't the same on this store${type.startsWith("ONLINE_STORE_THEME") ? " (or the theme isn't here yet)" : ""}`,
+        );
+      }
     }
   }
+  onLog("  Market-specific translations aren't copied.");
 }
 
 // Modules that only create behind canCreate(), so they can report item by item.
-export const DRY_RUN_TYPES = ["products", "collections", "pages", "discounts", "redirects", "menus"];
+export const DRY_RUN_TYPES = [
+  "products",
+  "collections",
+  "pages",
+  "discounts",
+  "redirects",
+  "menus",
+  "locations",
+  "shipping",
+  "markets",
+  "b2b",
+  "sellingPlans",
+];
 
 const RUN_ORDER = [
   "policies",
+  // before stock levels and shipping, which match locations by name
+  "locations",
   "metafields",
   "files",
   "metaobjects",
@@ -4708,10 +5069,17 @@ const RUN_ORDER = [
   "redirects",
   // menus link to collections/pages/blogs by handle — run after them
   "menus",
-  // needs products, collections, pages and articles to exist on the target
+  // the next three attach products / variants that must already be here
+  "shipping",
+  "sellingPlans",
+  "markets",
+  // needs products, collections, pages, articles, menus, shipping rates and
+  // selling plans to exist on the target
   "translations",
   "orders",
   "customers",
+  // contacts are linked to customers by email
+  "b2b",
   // after customers, so each card can be linked to its customer
   "giftCards",
   // last: checks that what the theme points at already exists here
@@ -4814,6 +5182,11 @@ export async function runMigration({
         onLog(`↪︎ Skipped (quota reached, not created): ${name}`);
       }
     },
+    // record a created item for Undo without counting it against quota
+    // (a market's catalog, a company's price list...)
+    record: (gid) => {
+      if (gid && !dryRun) onCreated(gid);
+    },
     // gid: what was created, so the run can be undone later
     consume: (gid) => {
       consume(currentType);
@@ -4915,12 +5288,54 @@ const COUNT_QUERIES = {
   { ordersCount { count } }`,
   customers: `#graphql
   { customersCount { count } }`,
+  locations: `#graphql
+  { locationsCount { count } }`,
+  b2b: `#graphql
+  { companiesCount { count } }`,
+};
+
+// Types without a *Count field: counted by listing (they are small lists).
+const Q_COUNT_PROFILES = `#graphql
+  query CountProfiles($cursor: String) {
+    deliveryProfiles(first: 50, after: $cursor, merchantOwnedOnly: true) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id } }
+    }
+  }`;
+const Q_COUNT_MARKETS = `#graphql
+  query CountMarkets($cursor: String) {
+    markets(first: 100, after: $cursor, type: REGION) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id } }
+    }
+  }`;
+const Q_COUNT_SPGS = `#graphql
+  query CountSPGs($cursor: String) {
+    sellingPlanGroups(first: 100, after: $cursor, query: "app_id:ALL") {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id } }
+    }
+  }`;
+const COUNT_LISTS = {
+  shipping: [Q_COUNT_PROFILES, "deliveryProfiles"],
+  markets: [Q_COUNT_MARKETS, "markets"],
+  sellingPlans: [Q_COUNT_SPGS, "sellingPlanGroups"],
 };
 
 export async function previewCounts({ source, target, types }) {
   const result = {};
   for (const t of types) {
-    if (COUNT_QUERIES[t]) {
+    if (COUNT_LISTS[t]) {
+      try {
+        const [q, root] = COUNT_LISTS[t];
+        result[t] = {
+          source: (await fetchAll(source, q, root)).length,
+          target: (await fetchAll(target, q, root)).length,
+        };
+      } catch {
+        result[t] = { source: null, target: null, note: "unavailable" };
+      }
+    } else if (COUNT_QUERIES[t]) {
       try {
         const s = await gql(source, COUNT_QUERIES[t]);
         const key = Object.keys(s)[0];

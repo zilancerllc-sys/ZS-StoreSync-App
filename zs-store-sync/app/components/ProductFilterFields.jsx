@@ -27,8 +27,41 @@ export function NewTypeNotes({ picked }) {
       )}
       {picked.includes("translations") && (
         <p style={note}>
-          {t("Translations copies products, collections, pages, blog posts and metaobjects, for languages enabled on both stores.")}
+          {t("Translations copies every language of the source store: products, options, collections, pages, blogs, metaobjects, metafields, menus and links, store policies, shop SEO, shipping rates, selling plans, notification templates and theme content. Languages missing here are added unpublished. Items whose text isn't the same on both stores are listed in the log.")}
         </p>
+      )}
+      {picked.includes("locations") && (
+        <p style={note}>
+          {t("Locations creates the source's locations that this store doesn't have (matched by name) with their address, local pickup and metafields. Your Shopify plan's location limit still applies. Run Stock levels afterwards to copy their stock.")}
+        </p>
+      )}
+      {picked.includes("shipping") && (
+        <p style={note}>
+          {t("Shipping copies shipping profiles, zones and rates. Zones missing from your General profile are added to it; custom profiles are created with their products. Locations are matched by name, so copy Locations and Products first.")}
+        </p>
+      )}
+      {picked.includes("markets") && (
+        <p style={note}>
+          {t("Markets copies region markets with their countries, currency, tax display, language subfolders and price lists. Your home market stays as it is, and domains can't be moved between stores.")}
+        </p>
+      )}
+      {picked.includes("b2b") && (
+        <p style={note}>
+          {t("B2B companies copies companies, their locations, payment terms, contacts and catalogs. Shopify allows B2B only on Shopify Plus stores. Contacts are linked to customers with the same email, so copy Customers first.")}
+        </p>
+      )}
+      {picked.includes("sellingPlans") && (
+        <div style={note}>
+          <p style={{ margin: "0 0 6px" }}>
+            {t("Selling plans copies subscription, pre-order and try-before-you-buy plans and attaches them to the same products here. The copied plans belong to ZS StoreSync, which doesn't charge renewals or remaining balances.")}
+          </p>
+          <label style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+            <input type="checkbox" name="sellingPlansAck" />
+            <span>
+              {t("I understand: also copy plans that charge customers after checkout. My subscription app will manage billing on this store.")}
+            </span>
+          </label>
+        </div>
       )}
     </>
   );

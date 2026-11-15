@@ -397,6 +397,11 @@ const TYPE_LABEL = {
   customers: "Customers",
   giftCards: "Gift cards",
   policies: "Store policies",
+  locations: "Locations",
+  shipping: "Shipping",
+  markets: "Markets",
+  b2b: "B2B companies",
+  sellingPlans: "Selling plans",
 };
 
 const DISPLAY_TYPES = [
@@ -416,6 +421,11 @@ const DISPLAY_TYPES = [
   "translations",
   "giftCards",
   "policies",
+  "locations",
+  "shipping",
+  "markets",
+  "b2b",
+  "sellingPlans",
 ];
 
 const faqs = [
@@ -438,6 +448,14 @@ const faqs = [
   {
     q: "How much order history can be migrated?",
     a: "All of it. ZS StoreSync has Shopify's approval to read a store's full order history, so orders are copied oldest first with their original dates; your plan's order allowance caps how many are migrated each month, not how far back they go. The source store has to accept the app's latest permissions once — until it does, Shopify shows only the last 60 days and the run log says so. Orders are recreated with their line items, addresses, note and tags; payment, fulfilment and refund records stay on the original store.",
+  },
+  {
+    q: "Does ZS StoreSync copy shipping, markets, B2B and subscriptions?",
+    a: "Yes. Shipping copies delivery profiles, zones and rates (flat, price- or weight-based, and carrier-calculated rates when the same carrier is on the target), matching locations by name. Markets copies region markets with their countries, currency settings, language subfolders and price lists. B2B copies companies, their locations, contacts (linked to customers with the same email) and catalogs; Shopify allows B2B only on Shopify Plus, so the target must be a Plus store. Selling plans copies subscription, pre-order and try-before-you-buy plans and attaches them to the copied products — ZS StoreSync doesn't charge renewals, so plans that bill after checkout are copied only when you confirm that, and your subscription app has to manage them on the new store.",
+  },
+  {
+    q: "What can't any app copy?",
+    a: "Shopify keeps some settings out of every app: payments, checkout settings, notification email templates, taxes and duties, domains, staff accounts, store currency and time zone, local delivery, and the data that other apps keep. The Manual steps page lists each one with a direct link to the right settings page on your new store.",
   },
   {
     q: "Why do Orders and Customers sometimes fail to migrate?",
@@ -490,6 +508,17 @@ function buildFeatures(planId, L, t) {
       ok: true,
     },
     { text: t("{n} Gift cards, store policies", { n: fmt(L.giftCards) }), ok: true },
+    {
+      text: t("{locations} Locations, {shipping} Shipping profiles / zones with rates", {
+        locations: fmt(L.locations),
+        shipping: fmt(L.shipping),
+      }),
+      ok: (L.locations || 0) > 0,
+    },
+    { text: t("{n} Markets with currencies, languages and price lists", { n: fmt(L.markets) }), ok: (L.markets || 0) > 0 },
+    { text: t("{n} Selling plan groups (subscriptions, pre-orders)", { n: fmt(L.sellingPlans) }), ok: (L.sellingPlans || 0) > 0 },
+    { text: t("{n} B2B companies with catalogs (Shopify Plus stores)", { n: fmt(L.b2b) }), ok: (L.b2b || 0) > 0 },
+    { text: t("Manual steps checklist for what Shopify keeps out of apps"), ok: true },
     { text: t(sync.text), ok: sync.ok },
     { text: t("Price rules on sync (markup, markdown, rounding)"), ok: planHas(planId, "priceRules") },
     { text: t("Backup before sync, one-click restore (30 days)"), ok: planHas(planId, "backups") },

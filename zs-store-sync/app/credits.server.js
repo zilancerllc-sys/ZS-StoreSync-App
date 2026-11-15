@@ -27,6 +27,11 @@ export const PLAN_LIMITS = {
     giftCards: 5,
     policies: 10,
     theme: 0,
+    locations: 2,
+    shipping: 1,
+    markets: 0,
+    b2b: 0,
+    sellingPlans: 0,
   },
   starter: {
     products: 500,
@@ -46,6 +51,11 @@ export const PLAN_LIMITS = {
     giftCards: 200,
     policies: 10,
     theme: 0,
+    locations: 5,
+    shipping: 10,
+    markets: 3,
+    b2b: 0,
+    sellingPlans: 10,
   },
   growth: {
     products: 1500,
@@ -65,6 +75,11 @@ export const PLAN_LIMITS = {
     giftCards: 1000,
     policies: 10,
     theme: 5,
+    locations: 20,
+    shipping: 50,
+    markets: 10,
+    b2b: 100,
+    sellingPlans: 50,
   },
   pro: {
     products: 3000,
@@ -84,6 +99,11 @@ export const PLAN_LIMITS = {
     giftCards: 5000,
     policies: 10,
     theme: 20,
+    locations: 50,
+    shipping: 200,
+    markets: 50,
+    b2b: 1000,
+    sellingPlans: 200,
   },
 };
 
@@ -108,6 +128,11 @@ export const OVERAGE_RATE = {
   giftCards: 0.05,
   policies: 0,
   theme: 0,
+  locations: 0,
+  shipping: 0,
+  markets: 0,
+  b2b: 0,
+  sellingPlans: 0,
 };
 
 // ─── Which plans allow overage (pay-per-item past the limit) ──────────────────
@@ -150,6 +175,7 @@ export const ALL_DATA_TYPES = [
   "files", "menus", "redirects", "metaobjects",
   "blogPosts", "metafields", "orders", "customers",
   "inventory", "translations", "giftCards", "policies", "theme",
+  "locations", "shipping", "markets", "b2b", "sellingPlans",
 ];
 
 const PERIOD_MS = 30 * 24 * 60 * 60 * 1000;

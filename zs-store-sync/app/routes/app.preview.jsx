@@ -64,7 +64,7 @@ export const action = async ({ request }) => {
     if (dryTypes.length === 0) {
       return {
         ok: false,
-        error: "Item-by-item check covers Products, Collections, Pages, Discounts, Redirects and Menus.",
+        error: "Item-by-item check covers Products, Collections, Pages, Discounts, Redirects, Menus, Locations, Shipping, Markets, B2B companies and Selling plans.",
       };
     }
     const busy = "A migration or sync is already running for this store. Wait for it to finish (see History).";
@@ -124,6 +124,11 @@ const TYPES = [
   { id: "metaobjects", name: "Metaobjects" },
   { id: "blogPosts", name: "Blog Posts" },
   { id: "metafields", name: "Metafields" },
+  { id: "locations", name: "Locations" },
+  { id: "shipping", name: "Shipping" },
+  { id: "markets", name: "Markets" },
+  { id: "b2b", name: "B2B companies" },
+  { id: "sellingPlans", name: "Selling plans" },
 ];
 
 export default function Preview() {
@@ -300,8 +305,10 @@ export default function Preview() {
                             // scope isn't granted) — say which, rather than
                             // showing three dashes that read as a failure.
                             <td colSpan={3} className="zs-nocount">
-                              {c.note === "unavailable"
+                              {c.note === "unavailable" && (type === "orders" || type === "customers")
                                 ? t("Count unavailable — needs Protected Customer Data approval")
+                                : c.note === "unavailable"
+                                ? t("Count unavailable — open ZS StoreSync on both stores to approve its new permissions (B2B also needs Shopify Plus)")
                                 : t("No count API — totals are reported during the run")}
                             </td>
                           )}
