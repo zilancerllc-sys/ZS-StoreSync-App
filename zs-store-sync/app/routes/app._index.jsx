@@ -786,6 +786,8 @@ export default function Index() {
                       is the only useful next click. */}
                   {needsSetup ? (
                     <RouterLink to="/app/start" className="zs-btn-primary">{t("Set Up Your First Migration")} <span>→</span></RouterLink>
+                  ) : sourceFor?.length > 0 ? (
+                    <RouterLink to="/app/start?role=from" className="zs-btn-primary">{t("See connection")} <span>→</span></RouterLink>
                   ) : (
                     <RouterLink to="/app/migrate" className="zs-btn-primary">{t("Start a Migration")} <span>→</span></RouterLink>
                   )}
