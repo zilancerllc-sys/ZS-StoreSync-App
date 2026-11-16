@@ -11,7 +11,7 @@ import { unauthenticated } from "./shopify.server";
 import { gql, sleep } from "./migrator.server";
 import { redactPII } from "./redact.server";
 import { safeLogsJson } from "./jobs.server";
-import { zoneUndoVariables, metafieldUndoVariables } from "./lib/undo-gids.js";
+import { zoneUndoVariables, metafieldUndoVariables, policyUndoVariables } from "./lib/undo-gids.js";
 
 export const UNDO_DAYS = 30;
 const UNDO_MS = UNDO_DAYS * 24 * 60 * 60 * 1000;
@@ -214,6 +214,14 @@ const M_DEL_METAFIELD = `#graphql
     }
   }`;
 
+const M_EMPTY_POLICY = `#graphql
+  mutation UndoPolicy($shopPolicy: ShopPolicyInput!) {
+    shopPolicyUpdate(shopPolicy: $shopPolicy) {
+      shopPolicy { id }
+      userErrors { field message }
+    }
+  }`;
+
 const byId = (id) => ({ id });
 const byLocationId = (locationId) => ({ locationId });
 // Shopify refuses locationDeactivate without @idempotent (Admin API 2026-04+).
@@ -256,6 +264,8 @@ const DELETERS = {
   SellingPlanGroup: [M_DEL_SELLING_PLAN_GROUP, "sellingPlanGroupDelete", byId],
   // store metafields (recorded with owner, namespace and key)
   Metafield: [M_DEL_METAFIELD, "metafieldsDelete", metafieldUndoVariables],
+  // store policies a migration filled in (emptied again; policies can't be deleted)
+  ShopPolicy: [M_EMPTY_POLICY, "shopPolicyUpdate", policyUndoVariables],
 };
 
 export const gidType = (gid) => /^gid:\/\/shopify\/([^/]+)\//.exec(String(gid))?.[1] || "";

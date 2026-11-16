@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { randomUUID } from "node:crypto";
-import { metafieldUndoGid } from "./lib/undo-gids.js";
+import { policyUndoGid, metafieldUndoGid } from "./lib/undo-gids.js";
 import { Buffer } from "node:buffer";
 import { customerRef } from "./redact.server";
 import { sourcesFromRuleSet } from "./lib/collection-sources";
@@ -4010,7 +4010,7 @@ const Q_SHOP_POLICIES = `#graphql
 const M_SHOP_POLICY_UPDATE = `#graphql
   mutation UpdatePolicy($shopPolicy: ShopPolicyInput!) {
     shopPolicyUpdate(shopPolicy: $shopPolicy) {
-      shopPolicy { type }
+      shopPolicy { id type }
       userErrors { field message }
     }
   }`;
@@ -4070,7 +4070,9 @@ async function migratePolicies(ctx) {
         onLog(`↻ Updated: ${label}`);
       } else {
         counters.created++;
-        consume();
+        // recorded with its type, so Undo can empty the policy it filled
+        const pid = d?.shopPolicyUpdate?.shopPolicy?.id;
+        consume(pid ? policyUndoGid(pid, p.type) : null);
         onLog(`✓ ${label}`);
       }
     } catch (err) {
@@ -5315,6 +5317,15 @@ const Q_COUNT_PROFILES = `#graphql
       edges { node { id } }
     }
   }`;
+// This store's side counts every profile: ones ZS StoreSync created here are
+// owned by the app, and merchantOwnedOnly would leave them out of "already here".
+const Q_COUNT_PROFILES_TARGET = `#graphql
+  query CountProfilesTarget($cursor: String) {
+    deliveryProfiles(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id } }
+    }
+  }`;
 const Q_COUNT_MARKETS = `#graphql
   query CountMarkets($cursor: String) {
     markets(first: 100, after: $cursor, type: REGION) {
@@ -5330,7 +5341,8 @@ const Q_COUNT_SPGS = `#graphql
     }
   }`;
 const COUNT_LISTS = {
-  shipping: [Q_COUNT_PROFILES, "deliveryProfiles"],
+  // [source query, root, target query (optional)]
+  shipping: [Q_COUNT_PROFILES, "deliveryProfiles", Q_COUNT_PROFILES_TARGET],
   markets: [Q_COUNT_MARKETS, "markets"],
   sellingPlans: [Q_COUNT_SPGS, "sellingPlanGroups"],
 };
@@ -5340,10 +5352,10 @@ export async function previewCounts({ source, target, types }) {
   for (const t of types) {
     if (COUNT_LISTS[t]) {
       try {
-        const [q, root] = COUNT_LISTS[t];
+        const [q, root, tq = q] = COUNT_LISTS[t];
         result[t] = {
           source: (await fetchAll(source, q, root)).length,
-          target: (await fetchAll(target, q, root)).length,
+          target: (await fetchAll(target, tq, root)).length,
         };
       } catch {
         result[t] = { source: null, target: null, note: "unavailable" };

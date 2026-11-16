@@ -771,5 +771,7 @@
   "{n} Markets with currencies, languages and price lists": "{n} マーケット（通貨・言語・価格リスト付き）",
   "{n} Selling plan groups (subscriptions, pre-orders)": "{n} 販売プラングループ（定期購入・予約注文）",
   "Delete 1 item": "1件を削除",
-  "This permanently deletes the item this run created on this store, including any changes you made to it since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.": "この実行でストアに作成した1件を、その後の変更も含めて完全に削除します。更新またはスキップされた項目はそのままで、月間使用量は返還されません。"
+  "This permanently deletes the item this run created on this store, including any changes you made to it since. Items it updated or skipped stay as they are, and monthly usage isn't refunded.": "この実行でストアに作成した1件を、その後の変更も含めて完全に削除します。更新またはスキップされた項目はそのままで、月間使用量は返還されません。",
+  "Restore 1 item": "1 件のアイテムを復元",
+  "This puts the product, collection or page this sync changed back the way they were just before it ran: titles, descriptions, tags, SEO, prices, SKUs, barcodes and the metafields it wrote. Changes you made to it since are overwritten. Items the sync created aren't touched (use Undo for those), and variants or options it added stay.": "この同期で変更された 1 件の商品・コレクション・ページを、同期実行直前の状態に戻します：タイトル、説明、タグ、SEO、価格、SKU、バーコード、書き込まれたメタフィールド。それ以降に行った変更は上書きされます。同期で作成されたアイテムは変更されず（それらには「取り消し」を使用してください）、追加されたバリエーションやオプションはそのまま残ります。"
 }

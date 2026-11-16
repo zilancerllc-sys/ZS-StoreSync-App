@@ -44,7 +44,7 @@ import {
   TRANSLATION_ORDER,
 } from "../app/lib/translation-match.js";
 import { MANUAL_STEPS, adminUrl, storeHandle } from "../app/lib/manual-steps.js";
-import { zoneUndoVariables } from "../app/lib/undo-gids.js";
+import { policyUndoGid, policyUndoVariables, zoneUndoVariables } from "../app/lib/undo-gids.js";
 
 // ── shipping ────────────────────────────────────────────────────────────────
 test("zone countries: whole country, listed provinces, rest of world", () => {
@@ -382,4 +382,10 @@ test("a created store metafield undoes by owner, namespace and key", async () =>
   assert.deepEqual(metafieldUndoVariables(gid), {
     metafields: [{ ownerId: "gid://shopify/Shop/1", namespace: "judgeme", key: "settings" }],
   });
+});
+
+test("store policy undo empties the policy it filled", () => {
+  const gid = policyUndoGid("gid://shopify/ShopPolicy/7", "REFUND_POLICY");
+  assert.equal(gid, "gid://shopify/ShopPolicy/7?type=REFUND_POLICY");
+  assert.deepEqual(policyUndoVariables(gid), { shopPolicy: { type: "REFUND_POLICY", body: "" } });
 });

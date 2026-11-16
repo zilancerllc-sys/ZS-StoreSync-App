@@ -19,3 +19,14 @@ export function metafieldUndoVariables(gid) {
   const q = new URLSearchParams(String(gid).split("?")[1] || "");
   return { metafields: [{ ownerId: q.get("owner") || "", namespace: q.get("ns") || "", key: q.get("key") || "" }] };
 }
+
+// A store policy a migration filled in: "gid://shopify/ShopPolicy/1?type=REFUND_POLICY".
+// Policies can't be deleted, so Undo empties the body again.
+export function policyUndoGid(id, type) {
+  return `${id}?${new URLSearchParams({ type }).toString()}`;
+}
+
+export function policyUndoVariables(gid) {
+  const q = new URLSearchParams(String(gid).split("?")[1] || "");
+  return { shopPolicy: { type: q.get("type") || "", body: "" } };
+}
