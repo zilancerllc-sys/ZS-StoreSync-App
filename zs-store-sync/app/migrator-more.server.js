@@ -595,10 +595,11 @@ const Q_SHIPPING_MARKETS = `#graphql
     }
   }`;
 
-const RATE_CONDITIONS = `conditions { collections(first: 50) { nodes { handle } } originLocations(first: 50) { nodes { name } } }`;
+const RATE_CONDITIONS = `conditions { collections(first: 10) { nodes { handle } } originLocations(first: 10) { nodes { name } } }`;
 const MONEY = `amount currencyCode`;
 const TRANSIT = `transitTimeMinSeconds transitTimeMaxSeconds`;
 
+// Kept under Shopify's 1000-point single query cost limit.
 const Q_MARKET_SHIPPING = `#graphql
   query MoreMarketShipping($id: ID!) {
     market(id: $id) {
@@ -606,21 +607,21 @@ const Q_MARKET_SHIPPING = `#graphql
       delivery {
         shipping {
           isEnabled
-          optionDefinitions(first: 100) {
+          optionDefinitions(first: 40) {
             nodes {
               __typename id currency description isActive
               freeDeliveryMinimumValue { ${MONEY} }
               ... on DeliveryFlatRateOptionDefinition {
                 name
-                rateGroups(first: 50) { nodes { ${RATE_CONDITIONS} rate { price { ${MONEY} } ${TRANSIT} } } }
+                rateGroups(first: 10) { nodes { ${RATE_CONDITIONS} rate { price { ${MONEY} } ${TRANSIT} } } }
               }
               ... on DeliveryValueBasedOptionDefinition {
                 name
-                rateGroups(first: 50) { nodes { ${RATE_CONDITIONS} rates(first: 50) { nodes { minValue { ${MONEY} } maxValue { ${MONEY} } price { ${MONEY} } ${TRANSIT} } } } }
+                rateGroups(first: 5) { nodes { ${RATE_CONDITIONS} rates(first: 10) { nodes { minValue { ${MONEY} } maxValue { ${MONEY} } price { ${MONEY} } ${TRANSIT} } } } }
               }
               ... on DeliveryWeightBasedOptionDefinition {
                 name
-                rateGroups(first: 1) { nodes { ${RATE_CONDITIONS} rates(first: 50) { nodes { minWeight { unit value } maxWeight { unit value } price { ${MONEY} } ${TRANSIT} } } } }
+                rateGroups(first: 1) { nodes { ${RATE_CONDITIONS} rates(first: 20) { nodes { minWeight { unit value } maxWeight { unit value } price { ${MONEY} } ${TRANSIT} } } } }
               }
               ... on DeliveryCarrierCalculatedOptionDefinition {
                 rateGroups(first: 1) { nodes {
