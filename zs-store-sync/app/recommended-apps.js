@@ -9,15 +9,6 @@
 
 export const RECOMMENDED_APPS = [
   {
-    name: "ZS Smart Content AI",
-    category: "Marketing",
-    description: "Generate high-quality product descriptions, SEO copy, and ad texts with AI straight from your Shopify admin.",
-    link: "https://apps.shopify.com/zs-smart-content-ai",
-    icon: "https://cdn.shopify.com/s/files/1/1013/3821/8865/files/ZS_Smart_Content_Logo.png?v=1780889058",
-    colorClass: "rose",
-    badge: "Free plan available",
-  },
-  {
     name: "ZS Sections: Theme Sections",
     category: "Store Design",
     description: "Drag and drop professionally designed, high-converting theme sections onto your store without any coding.",
