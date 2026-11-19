@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { isCompShop } from "../credits.server";
-import { Await, Outlet, useLoaderData, useRouteError } from "react-router";
+import { Await, Outlet, useLoaderData, useLocation, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { MessageCircle } from "lucide-react";
@@ -13,6 +13,7 @@ import { messagesFor, resolveLocale } from "../i18n/messages.server";
 
 import SetupBar from "../components/SetupBar.jsx";
 import SetupStatus from "../components/SetupStatus.jsx";
+import AppSidebar, { SIDEBAR_STYLES, activeItemFor } from "../components/AppSidebar.jsx";
 import { setupStatus } from "../lib/setup-status.server";
 const TAWK_SRC = "https://embed.tawk.to/6a538d517c60fa1d457184bb/1jtb60286";
 
@@ -159,6 +160,37 @@ export default function App() {
 
 function AppShell({ apiKey, shop, supportEmail, plan, isOwner, setup }) {
   const t = useT();
+  const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // The drawer (narrow screens) closes on navigation and on Escape.
+  useEffect(() => setMenuOpen(false), [location.pathname, location.search, location.hash]);
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onKey = (e) => e.key === "Escape" && setMenuOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
+  // Sidebar section links (/app/sync#automatic-sync, /app/migrate#copy-catalog):
+  // scroll to the section once it is on the page (it may still be loading). A
+  // section can answer for several links with data-nav-anchors="a b".
+  useEffect(() => {
+    const id = location.hash.replace(/^#/, "");
+    if (!id || !/^[\w-]+$/.test(id)) return undefined;
+    let tries = 0;
+    const timer = setInterval(() => {
+      const el = document.getElementById(id) || document.querySelector(`[data-nav-anchors~="${id}"]`);
+      if (el || ++tries > 30) {
+        clearInterval(timer);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 80);
+    return () => clearInterval(timer);
+  }, [location.key, location.hash]);
+
+  const current = activeItemFor(location.pathname, location.search, location.hash);
+  const currentLabel = current ? current.rawLabel || t(current.label) : "";
 
   // v2's AppProvider takes only children and apiKey, and always injects App
   // Bridge — the `embedded` prop it used to need is gone.
@@ -179,13 +211,48 @@ function AppShell({ apiKey, shop, supportEmail, plan, isOwner, setup }) {
         <s-link href="/app/settings">{t("Settings")}</s-link>
         {isOwner && <s-link href="/app/stores">Owner dashboard</s-link>}
       </s-app-nav>
-      <SetupBar appName="ZS StoreSync" shop={shop} email={supportEmail} />
-      <Suspense fallback={null}>
-        <Await resolve={setup} errorElement={null}>
-          {(status) => <SetupStatus status={status} />}
-        </Await>
-      </Suspense>
-      <Outlet />
+      {/* Every page sits right of the app's own sidebar (like ZS B2B Gateway). */}
+      <style dangerouslySetInnerHTML={{ __html: SIDEBAR_STYLES }} />
+      <div className="zs-shell">
+        <AppSidebar
+          isOwner={isOwner}
+          plan={plan}
+          shop={shop}
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+        />
+        <button
+          type="button"
+          className={"zs-nav-backdrop" + (menuOpen ? " is-open" : "")}
+          aria-hidden="true"
+          tabIndex={-1}
+          onClick={() => setMenuOpen(false)}
+        />
+        <div className="zs-shell-main">
+          <div className="zs-menu-bar">
+            <button
+              type="button"
+              className="zs-menu-btn"
+              aria-controls="zs-app-nav"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen(true)}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+              {t("Menu")}
+            </button>
+            <span className="zs-menu-title">{currentLabel}</span>
+          </div>
+          <SetupBar appName="ZS StoreSync" shop={shop} email={supportEmail} />
+          <Suspense fallback={null}>
+            <Await resolve={setup} errorElement={null}>
+              {(status) => <SetupStatus status={status} />}
+            </Await>
+          </Suspense>
+          <Outlet />
+        </div>
+      </div>
     </AppProvider>
   );
 }

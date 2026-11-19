@@ -155,7 +155,7 @@ export default function Settings() {
               })}
             </p>
 
-            <div className="zs-card">
+            <div className="zs-card" id="connection-code">
               <div className="zs-card-head">
                 <div className="ico">
                   <KeyRound size={22} />
@@ -261,7 +261,7 @@ export default function Settings() {
               </fetcher.Form>
             </div>
 
-            <div className="zs-card" style={{ marginTop: 20 }}>
+            <div className="zs-card" id="connected-stores" style={{ marginTop: 20 }}>
               <div className="zs-card-head">
                 <div className="ico">
                   <Store size={22} />
@@ -308,7 +308,7 @@ export default function Settings() {
               )}
             </div>
 
-            <div className="zs-card" style={{ marginTop: 20 }}>
+            <div className="zs-card" id="emails" style={{ marginTop: 20 }}>
               <div className="zs-card-head">
                 <div className="ico">
                   <Mail size={22} />

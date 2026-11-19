@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import {
   useLoaderData,
   useFetcher,
+  useLocation,
   useRevalidator,
   Link as RouterLink,
 } from "react-router";
@@ -23,6 +24,7 @@ import { useT } from "../i18n";
 import { ProductFilterFields, NewTypeNotes } from "../components/ProductFilterFields";
 import { Languages, Warehouse, Gift, ScrollText, MapPin, Truck, Globe, Building2, Repeat, ListChecks } from "lucide-react";
 import { StopRunButton } from "../components/StopRunButton";
+import { COPY_GROUPS } from "../components/AppSidebar.jsx";
 import { productFilterFromForm } from "../lib/product-filter";
 import {
   ArrowLeftRight,
@@ -440,6 +442,17 @@ export default function Migrate() {
   const [domain, setDomain] = useState("");
   const [code, setCode] = useState("");
   const [picked, setPicked] = useState(["products", "collections", "pages"]);
+
+  // Sidebar links like #copy-customers tick that group of data types (the
+  // ones this plan allows) and scroll to step 2; app.jsx does the scrolling.
+  const { hash } = useLocation();
+  useEffect(() => {
+    const group = COPY_GROUPS[hash.replace(/^#copy-/, "")];
+    if (!hash.startsWith("#copy-") || !group) return;
+    const allowed = group.filter((id) => allowedTypes.includes(id));
+    if (allowed.length) setPicked(allowed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hash]);
   const [authOpenedFor, setAuthOpenedFor] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
 
@@ -552,7 +565,7 @@ export default function Migrate() {
             </div>
 
             {/* Step 1 */}
-            <div className="zs-card zs-reveal zs-d1">
+            <div className="zs-card zs-reveal zs-d1" id="connect">
               <div className="zs-card-head">
                 <span className="zs-step-num">1</span>
                 <h3>{t("Connect a source store")}</h3>
@@ -770,7 +783,11 @@ export default function Migrate() {
             </div>
 
             {/* Step 2 */}
-            <div className="zs-card zs-reveal zs-d2">
+            <div
+              className="zs-card zs-reveal zs-d2"
+              id="choose"
+              data-nav-anchors="copy-catalog copy-content copy-customers copy-setup"
+            >
               <div className="zs-card-head">
                 <span className="zs-step-num">2</span>
                 <h3>{t("Choose what to migrate")}</h3>
@@ -827,7 +844,7 @@ export default function Migrate() {
             </div>
 
             {/* Step 3 */}
-            <div className="zs-card zs-reveal zs-d3">
+            <div className="zs-card zs-reveal zs-d3" id="run">
               <div className="zs-card-head">
                 <span className="zs-step-num">3</span>
                 <h3>{t("Run the migration")}</h3>

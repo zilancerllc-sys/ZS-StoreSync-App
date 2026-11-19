@@ -245,7 +245,7 @@ export default function Rules() {
               {t("Rules for everything copied from one source store into this store: migrations, scheduled syncs and instant syncs.")}
             </p>
             {!source ? (
-              <div className="zs-banner err">
+              <div className="zs-banner err" data-nav-anchors="price-rules live-stock">
                 <AlertCircle size={16} />
                 <span>
                   {t("No authorized source stores. Connect one on the Migrate page.")}{" "}
@@ -296,7 +296,7 @@ function PriceRuleCard({ source, rule, canPrice }) {
   };
 
   return (
-    <div className="zs-card">
+    <div className="zs-card" id="price-rules">
       <div className="zs-head">
         <div className="zs-ico">
           <BadgePercent size={19} />
@@ -449,7 +449,7 @@ function LiveStockCard({ source, live, canLive }) {
   const allTo = (id) => setMap(Object.fromEntries(live.sourceLocations.map((l) => [l.id, id])));
 
   return (
-    <div className="zs-card">
+    <div className="zs-card" id="live-stock">
       <div className="zs-head">
         <div className="zs-ico">
           <Warehouse size={19} />

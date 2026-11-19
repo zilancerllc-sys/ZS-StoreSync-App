@@ -419,7 +419,8 @@ export default function Sync() {
               {t("Already migrated before? Bring this store up to date with the source: new items are created, and products, collections, pages, blog posts and redirects that already exist are updated to match. Nothing on this store is deleted.")}
             </p>
 
-            <div className="zs-card">
+            {/* Answers the sidebar's sync links while their cards aren't shown. */}
+            <div className="zs-card" data-nav-anchors="instant-sync automatic-sync">
               {connections.length === 0 ? (
                 <div className="zs-banner err">
                   <AlertCircle size={16} />{" "}
@@ -553,7 +554,7 @@ function InstantSyncCard({ src, canUse, on }) {
   const fetcher = useFetcher();
   const error = fetcher.data?.error;
   return (
-    <div className="zs-card" style={{ marginTop: 22 }}>
+    <div className="zs-card" id="instant-sync" style={{ marginTop: 22 }}>
       <div className="zs-auto-head">
         <div className="zs-auto-ico">
           <Zap size={19} />
@@ -621,7 +622,7 @@ function AutoSyncCard({
     .join(", ");
 
   return (
-    <div className="zs-card" style={{ marginTop: 22 }}>
+    <div className="zs-card" id="automatic-sync" style={{ marginTop: 22 }}>
       <div className="zs-auto-head">
         <div className="zs-auto-ico">
           <Clock size={19} />
