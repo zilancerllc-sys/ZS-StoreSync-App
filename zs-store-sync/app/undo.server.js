@@ -12,6 +12,7 @@ import { gql, sleep } from "./migrator.server";
 import { redactPII } from "./redact.server";
 import { safeLogsJson } from "./jobs.server";
 import { zoneUndoVariables, metafieldUndoVariables, policyUndoVariables } from "./lib/undo-gids.js";
+import { OPTION_GID_TYPES, optionUndoVariables } from "./lib/market-shipping-core.js";
 
 export const UNDO_DAYS = 30;
 const UNDO_MS = UNDO_DAYS * 24 * 60 * 60 * 1000;
@@ -142,6 +143,16 @@ const M_DEL_ZONE = `#graphql
     }
   }`;
 
+// A shipping option added to a market (market-driven shipping) is removed
+// through that market.
+const M_DEL_MARKET_OPTION = `#graphql
+  mutation UndoMarketShippingOption($id: ID!, $input: MarketUpdateInput!) {
+    marketUpdate(id: $id, input: $input) {
+      market { id }
+      userErrors { field message }
+    }
+  }`;
+
 const M_DEACTIVATE_LOCATION = `#graphql
   mutation UndoLocationOff($locationId: ID!, $key: String!) {
     locationDeactivate(locationId: $locationId) @idempotent(key: $key) {
@@ -253,6 +264,7 @@ const DELETERS = {
   OnlineStoreTheme: [M_DEL_THEME, "themeDelete", byId],
   DeliveryProfile: [M_DEL_PROFILE, "deliveryProfileRemove", byId],
   DeliveryZone: [M_DEL_ZONE, "deliveryProfileUpdate", zoneUndoVariables],
+  ...Object.fromEntries(OPTION_GID_TYPES.map((t) => [t, [M_DEL_MARKET_OPTION, "marketUpdate", optionUndoVariables]])),
   // a location must be deactivated before it can be deleted
   Location: [M_DEL_LOCATION, "locationDelete", byLocationId, [M_DEACTIVATE_LOCATION, "locationDeactivate", deactivateVariables]],
   Market: [M_DEL_MARKET, "marketDelete", byId],

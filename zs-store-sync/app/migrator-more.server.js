@@ -23,6 +23,17 @@ import {
 import { locationSkipReason, findTargetLocation, locationAddInput, pickupInput } from "./lib/locations-core.js";
 import { zoneInput, mapLocationIds, carrierKey, variantKeys } from "./lib/shipping-core.js";
 import {
+  optionCreateInput,
+  optionKey,
+  optionName,
+  inputKey,
+  findTargetMarket,
+  marketForZone,
+  zoneMethodsToOptions,
+  marketToZoneInput,
+  optionUndoGid,
+} from "./lib/market-shipping-core.js";
+import {
   COPYABLE_MARKET_TYPES,
   findExistingMarket,
   marketCreateInput,
@@ -392,7 +403,7 @@ async function profileVariantIds(ctx, profileId) {
   return { ids, missing };
 }
 
-export async function migrateShipping(ctx) {
+async function migrateShippingLegacy(ctx) {
   const { source, target, onLog, counters } = ctx;
   let list;
   let targetList;
@@ -552,6 +563,395 @@ export async function migrateShipping(ctx) {
     }
   }
   onLog("  Local delivery areas, packages and shipping label settings aren't open to apps — see Manual steps.");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  MARKET-DRIVEN SHIPPING
+//
+//  On a store that uses market-driven shipping (ShopFeatures.marketDrivenShipping,
+//  Admin API 2026-07+) shipping options live on each market and Shopify ignores
+//  the zones and rates of merchant-owned delivery profiles at checkout. So the
+//  delivery-profile path above is only used when BOTH stores are still on the
+//  legacy model; otherwise shipping is read from / written to Market.delivery:
+//    both market-driven     → each market's options onto the market with the
+//                             same handle / name (home market ↔ home market)
+//    source legacy only     → General profile zones onto the market with
+//                             exactly the zone's countries
+//    this store legacy only → each market's options as a zone (named after the
+//                             market) in this store's General profile
+//  https://shopify.dev/docs/apps/build/orders-fulfillment/market-driven-shipping/upgrade-your-app
+// ═════════════════════════════════════════════════════════════════════════════
+const Q_SHOP_FEATURES = `#graphql
+  query MoreShopFeatures { shop { currencyCode features { marketDrivenShipping } } }`;
+
+const Q_SHIPPING_MARKETS = `#graphql
+  query MoreShippingMarkets($cursor: String) {
+    markets(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id name handle type status primary
+        conditions { regionsCondition { regions(first: 250) { nodes { __typename ... on MarketRegionCountry { code } } } } }
+      } }
+    }
+  }`;
+
+const RATE_CONDITIONS = `conditions { collections(first: 50) { nodes { handle } } originLocations(first: 50) { nodes { name } } }`;
+const MONEY = `amount currencyCode`;
+const TRANSIT = `transitTimeMinSeconds transitTimeMaxSeconds`;
+
+const Q_MARKET_SHIPPING = `#graphql
+  query MoreMarketShipping($id: ID!) {
+    market(id: $id) {
+      id
+      delivery {
+        shipping {
+          isEnabled
+          optionDefinitions(first: 100) {
+            nodes {
+              __typename id currency description isActive
+              freeDeliveryMinimumValue { ${MONEY} }
+              ... on DeliveryFlatRateOptionDefinition {
+                name
+                rateGroups(first: 50) { nodes { ${RATE_CONDITIONS} rate { price { ${MONEY} } ${TRANSIT} } } }
+              }
+              ... on DeliveryValueBasedOptionDefinition {
+                name
+                rateGroups(first: 50) { nodes { ${RATE_CONDITIONS} rates(first: 50) { nodes { minValue { ${MONEY} } maxValue { ${MONEY} } price { ${MONEY} } ${TRANSIT} } } } }
+              }
+              ... on DeliveryWeightBasedOptionDefinition {
+                name
+                rateGroups(first: 1) { nodes { ${RATE_CONDITIONS} rates(first: 50) { nodes { minWeight { unit value } maxWeight { unit value } price { ${MONEY} } ${TRANSIT} } } } }
+              }
+              ... on DeliveryCarrierCalculatedOptionDefinition {
+                rateGroups(first: 1) { nodes {
+                  ${RATE_CONDITIONS}
+                  carrierService { id name formattedName }
+                  absoluteAdjustment { ${MONEY} }
+                  percentageAdjustment autoIncludeNewServices
+                  serviceConfiguration { name status }
+                } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }`;
+
+const M_MARKET_SHIPPING_UPDATE = `#graphql
+  mutation MoreMarketShippingUpdate($id: ID!, $input: MarketUpdateInput!) {
+    marketUpdate(id: $id, input: $input) {
+      market { id delivery { shipping { optionDefinitions(first: 100) { nodes { id } } } } }
+      userErrors { field message }
+    }
+  }`;
+
+const Q_COLLECTION_BY_HANDLE = `#graphql
+  query MoreCollectionByHandle($handle: String!) { collectionByIdentifier(identifier: { handle: $handle }) { id } }`;
+
+async function shopShipping(admin) {
+  try {
+    const d = await gql(admin, Q_SHOP_FEATURES);
+    return { marketDriven: !!d?.shop?.features?.marketDrivenShipping, currency: d?.shop?.currencyCode };
+  } catch (err) {
+    if (NEEDS_PERMISSION.test(err?.message || "")) throw err;
+    return { marketDriven: false, currency: null };
+  }
+}
+
+export async function migrateShipping(ctx) {
+  let src;
+  let tgt;
+  try {
+    src = await shopShipping(ctx.source);
+    tgt = await shopShipping(ctx.target);
+  } catch (err) {
+    if (permissionStop(ctx, err, "Shipping")) return;
+    throw err;
+  }
+  if (!src.marketDriven && !tgt.marketDriven) return migrateShippingLegacy(ctx);
+  try {
+    return await migrateShippingMarkets(ctx, { src, tgt });
+  } catch (err) {
+    if (permissionStop(ctx, err, "Shipping")) return;
+    throw err;
+  }
+}
+
+const Q_MARKET_OPTION_COUNT = `#graphql
+  query MoreMarketOptionCount($id: ID!) {
+    market(id: $id) { delivery { shipping { optionDefinitionsCount { count } } } }
+  }`;
+
+// Preview count for the Shipping type: shipping profiles on a legacy store,
+// shipping options across its markets on a market-driven store.
+export async function shippingCount(admin, { isTarget = false } = {}) {
+  const { marketDriven } = await shopShipping(admin);
+  if (!marketDriven) return (await fetchAll(admin, isTarget ? Q_TARGET_PROFILE_LIST : Q_PROFILE_LIST, "deliveryProfiles")).length;
+  let n = 0;
+  for (const m of await fetchAll(admin, Q_SHIPPING_MARKETS, "markets")) {
+    const d = await gql(admin, Q_MARKET_OPTION_COUNT, { id: m.id });
+    n += d?.market?.delivery?.shipping?.optionDefinitionsCount?.count || 0;
+  }
+  return n;
+}
+
+// collection handles → this store's collection ids (looked up as needed)
+async function collectionMap(ctx, options) {
+  if (!ctx._colByHandle) ctx._colByHandle = new Map();
+  const map = ctx._colByHandle;
+  for (const opt of options) {
+    for (const g of nodes(opt.rateGroups)) {
+      for (const c of nodes(g.conditions?.collections)) {
+        const h = lc(c.handle);
+        if (!h || map.has(h)) continue;
+        const d = await gql(ctx.target, Q_COLLECTION_BY_HANDLE, { handle: c.handle });
+        map.set(h, d?.collectionByIdentifier?.id || null);
+      }
+    }
+  }
+  return new Map([...map].filter(([, id]) => id));
+}
+
+async function locationNameMap(ctx) {
+  const { source: srcLocs, target: tgtLocs } = await locationLists(ctx);
+  const map = new Map(tgtLocs.map((l) => [lc(l.name), l.id]));
+  // two single-location stores map to each other whatever they are called
+  if (srcLocs.length === 1 && tgtLocs.length === 1 && !map.has(lc(srcLocs[0].name))) {
+    map.set(lc(srcLocs[0].name), tgtLocs[0].id);
+  }
+  return map;
+}
+
+async function targetCarriers(ctx) {
+  const carriers = new Map();
+  try {
+    for (const c of nodes((await gql(ctx.target, Q_CARRIERS))?.carrierServices)) {
+      if (c.active) carriers.set(carrierKey(c), c.id);
+    }
+  } catch {
+    /* no carriers */
+  }
+  return carriers;
+}
+
+async function marketShipping(admin, id) {
+  return (await gql(admin, Q_MARKET_SHIPPING, { id }))?.market?.delivery?.shipping || null;
+}
+
+// Add option inputs to one market of this store, one option per call so one
+// refused option doesn't take the others down with it.
+async function addMarketOptions(ctx, market, inputs, { label, enable } = {}) {
+  const { onLog, counters } = ctx;
+  let shipping = await marketShipping(ctx.target, market.id);
+  const have = new Set(nodes(shipping?.optionDefinitions).map(optionKey));
+  let first = !shipping;
+  let added = 0;
+  for (const input of inputs) {
+    const key = inputKey(input);
+    const name = input[Object.keys(input)[0]]?.name || "Carrier-calculated rates";
+    if (have.has(key)) {
+      counters.skipped++;
+      onLog(`↪︎ Exists: ${label} › ${name}`);
+      continue;
+    }
+    if (!ctx.canCreate()) {
+      ctx.notCreated(`${label} › shipping option ${name}`);
+      continue;
+    }
+    const shippingInput = { optionDefinitionsToCreate: [input] };
+    if (first) shippingInput.isEnabled = enable !== false;
+    try {
+      const before = new Set(nodes(shipping?.optionDefinitions).map((o) => o.id));
+      const { data, errs } = await mutate(ctx, M_MARKET_SHIPPING_UPDATE, { id: market.id, input: { delivery: { shipping: shippingInput } } }, "marketUpdate");
+      if (errs.length) {
+        counters.failed++;
+        onLog(`✕ ${label} › ${name} — ${errText(errs)}`);
+        continue;
+      }
+      first = false;
+      added++;
+      counters.created++;
+      have.add(key);
+      const after = nodes(data?.market?.delivery?.shipping?.optionDefinitions);
+      const created = after.find((o) => !before.has(o.id));
+      ctx.consume(created ? optionUndoGid(created.id, market.id) : null);
+      shipping = { optionDefinitions: { nodes: after } };
+      onLog(`✓ ${label} › shipping option ${name}`);
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ ${label} › ${name} — ${short(err)}`);
+    }
+    await sleep(200);
+  }
+  return added;
+}
+
+const MANUAL_NOTE = "  Local delivery areas, packages and shipping label settings aren't open to apps — see Manual steps.";
+
+async function migrateShippingMarkets(ctx, { src, tgt }) {
+  const { source, target, onLog, counters } = ctx;
+  const currency = tgt.currency || src.currency;
+  if (src.currency && tgt.currency && src.currency !== tgt.currency) {
+    onLog(`⚠ The source store sells in ${src.currency} and this store in ${tgt.currency}: rate amounts are copied as the same numbers in ${tgt.currency}. Check them after the run.`);
+  }
+  const carriers = await targetCarriers(ctx);
+
+  // ── both stores on market-driven shipping ──────────────────────────────────
+  if (src.marketDriven && tgt.marketDriven) {
+    onLog("Both stores use market-driven shipping: shipping options are copied market by market.");
+    const sMarkets = await fetchAll(source, Q_SHIPPING_MARKETS, "markets");
+    const tMarkets = await fetchAll(target, Q_SHIPPING_MARKETS, "markets");
+    const locations = await locationNameMap(ctx);
+    let withShipping = 0;
+    for (const m of sMarkets) {
+      if (ctx.stopOnQuota()) {
+        onLog("Quota reached — stopping shipping.");
+        break;
+      }
+      let shipping;
+      try {
+        shipping = await marketShipping(source, m.id);
+      } catch (err) {
+        counters.failed++;
+        onLog(`✕ Market ${m.name} — couldn't read its shipping: ${short(err)}`);
+        continue;
+      }
+      if (!shipping) continue; // inherits shipping from its parent market
+      withShipping++;
+      const tm = findTargetMarket(m, tMarkets);
+      if (!tm) {
+        counters.skipped++;
+        onLog(`↪︎ Skipped shipping of market ${m.name} — no market with that name here; copy Markets first, then run Shipping again`);
+        continue;
+      }
+      const options = nodes(shipping.optionDefinitions);
+      const collections = await collectionMap(ctx, options);
+      const inputs = [];
+      for (const opt of options) {
+        const built = optionCreateInput(opt, { collections, locations, carriers, currency });
+        if (built.input) {
+          for (const s of built.skipped || []) onLog(`  ⚠ Market ${m.name} › ${optionName(opt)}: ${s} — not copied`);
+          inputs.push(built.input);
+        } else {
+          counters.skipped++;
+          onLog(`  ⚠ Market ${m.name} › ${optionName(opt)}: ${built.skip} — not copied`);
+        }
+      }
+      if (inputs.length) await addMarketOptions(ctx, tm, inputs, { label: `Market ${tm.name}`, enable: shipping.isEnabled });
+    }
+    onLog(`Total ${withShipping} market(s) with their own shipping found.`);
+    onLog(MANUAL_NOTE);
+    return;
+  }
+
+  // ── source on delivery profiles, this store on market-driven shipping ─────
+  if (tgt.marketDriven) {
+    onLog("This store uses market-driven shipping and the source store uses shipping profiles: the General profile's zones are copied onto the market with the same countries.");
+    const list = await fetchAll(source, Q_PROFILE_LIST, "deliveryProfiles");
+    const tMarkets = await fetchAll(target, Q_SHIPPING_MARKETS, "markets");
+    const custom = list.filter((p) => !p.default);
+    if (custom.length) {
+      onLog(`  ⚠ ${custom.length} custom shipping profile(s) (${custom.map((p) => p.name).slice(0, 5).join(", ")}) give some products their own rates; under market-driven shipping that is a rate limited to a collection — set those up by hand in Settings › Markets.`);
+    }
+    const general = list.find((p) => p.default);
+    if (!general) {
+      onLog("No General shipping profile found on the source store.");
+      return;
+    }
+    const sp = (await gql(source, Q_PROFILE_DETAIL, { id: general.id }))?.deliveryProfile;
+    for (const g of sp?.profileLocationGroups || []) {
+      for (const z of nodes(g.locationGroupZones)) {
+        if (ctx.stopOnQuota()) {
+          onLog("Quota reached — stopping shipping.");
+          return;
+        }
+        const tm = marketForZone(z.zone, tMarkets);
+        if (!tm) {
+          counters.skipped++;
+          onLog(`↪︎ Skipped zone ${z.zone.name} — no market here has exactly its countries; copy Markets first or add the rates in Settings › Markets`);
+          continue;
+        }
+        const { options, skipped } = zoneMethodsToOptions(nodes(z.methodDefinitions), { carriers, currency });
+        for (const s of skipped) onLog(`  ⚠ Zone ${z.zone.name} › rate ${s} — not copied`);
+        if (options.length) await addMarketOptions(ctx, tm, options, { label: `Market ${tm.name}` });
+      }
+    }
+    onLog(MANUAL_NOTE);
+    return;
+  }
+
+  // ── source on market-driven shipping, this store on delivery profiles ─────
+  onLog("The source store uses market-driven shipping and this store uses shipping profiles: each market's options are copied as a zone in this store's General profile.");
+  const sMarkets = await fetchAll(source, Q_SHIPPING_MARKETS, "markets");
+  const tList = await fetchAll(target, Q_TARGET_PROFILE_LIST, "deliveryProfiles");
+  const tp = tList.find((x) => x.default);
+  const tDetail = tp ? (await gql(target, Q_PROFILE_DETAIL, { id: tp.id }))?.deliveryProfile : null;
+  if (!tDetail) {
+    counters.failed++;
+    onLog("✕ This store has no General shipping profile to add the zones to.");
+    return;
+  }
+  const tGroups = groupsOf(tDetail);
+  const tg = tGroups[0];
+  if (!tg) {
+    counters.failed++;
+    onLog("✕ This store's General shipping profile has no locations yet — add a location under Settings › Shipping and delivery first.");
+    return;
+  }
+  const have = new Set(tGroups.flatMap((x) => x.zones).map((z) => lc(z.name)));
+  for (const m of sMarkets) {
+    if (ctx.stopOnQuota()) {
+      onLog("Quota reached — stopping shipping.");
+      break;
+    }
+    let shipping;
+    try {
+      shipping = await marketShipping(source, m.id);
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ Market ${m.name} — couldn't read its shipping: ${short(err)}`);
+      continue;
+    }
+    if (!shipping || !shipping.isEnabled) continue;
+    const built = marketToZoneInput(m, nodes(shipping.optionDefinitions), { carriers, currency });
+    for (const s of built.skipped) onLog(`  ⚠ Market ${m.name} › ${s} — not copied`);
+    if (built.skip) {
+      counters.skipped++;
+      onLog(`↪︎ Skipped market ${m.name} — ${built.skip}`);
+      continue;
+    }
+    if (!built.input.methodDefinitionsToCreate.length) continue;
+    if (have.has(lc(built.input.name))) {
+      counters.skipped++;
+      onLog(`↪︎ Exists: General profile › ${built.input.name}`);
+      continue;
+    }
+    if (!ctx.canCreate()) {
+      ctx.notCreated(`General profile › zone ${built.input.name}`);
+      continue;
+    }
+    try {
+      const profile = { locationGroupsToUpdate: [{ id: tg.groupId, zonesToCreate: [built.input] }] };
+      const { errs } = await mutate(ctx, M_PROFILE_UPDATE, { id: tDetail.id, profile }, "deliveryProfileUpdate");
+      if (errs.length) {
+        counters.failed++;
+        onLog(`✕ General profile › ${built.input.name} — ${errText(errs)}`);
+        continue;
+      }
+      counters.created++;
+      have.add(lc(built.input.name));
+      const fresh = (await gql(target, Q_PROFILE_DETAIL, { id: tDetail.id }))?.deliveryProfile;
+      const zone = groupsOf(fresh).flatMap((x) => x.zones).find((x) => lc(x.name) === lc(built.input.name));
+      ctx.consume(zone ? `${zone.id}?profile=${encodeURIComponent(tDetail.id)}` : null);
+      onLog(`✓ General profile › zone ${built.input.name} (${built.input.methodDefinitionsToCreate.length} rate(s))`);
+    } catch (err) {
+      counters.failed++;
+      onLog(`✕ General profile › ${built.input.name} — ${short(err)}`);
+    }
+    await sleep(200);
+  }
+  onLog(MANUAL_NOTE);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

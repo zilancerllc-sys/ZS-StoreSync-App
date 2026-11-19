@@ -41,6 +41,7 @@ import {
 import {
   migrateLocations,
   migrateShipping,
+  shippingCount,
   migrateMarkets,
   migrateB2B,
   migrateSellingPlans,
@@ -5310,22 +5311,6 @@ const COUNT_QUERIES = {
 };
 
 // Types without a *Count field: counted by listing (they are small lists).
-const Q_COUNT_PROFILES = `#graphql
-  query CountProfiles($cursor: String) {
-    deliveryProfiles(first: 50, after: $cursor, merchantOwnedOnly: true) {
-      pageInfo { hasNextPage endCursor }
-      edges { node { id } }
-    }
-  }`;
-// This store's side counts every profile: ones ZS StoreSync created here are
-// owned by the app, and merchantOwnedOnly would leave them out of "already here".
-const Q_COUNT_PROFILES_TARGET = `#graphql
-  query CountProfilesTarget($cursor: String) {
-    deliveryProfiles(first: 50, after: $cursor) {
-      pageInfo { hasNextPage endCursor }
-      edges { node { id } }
-    }
-  }`;
 const Q_COUNT_MARKETS = `#graphql
   query CountMarkets($cursor: String) {
     markets(first: 100, after: $cursor, type: REGION) {
@@ -5342,7 +5327,6 @@ const Q_COUNT_SPGS = `#graphql
   }`;
 const COUNT_LISTS = {
   // [source query, root, target query (optional)]
-  shipping: [Q_COUNT_PROFILES, "deliveryProfiles", Q_COUNT_PROFILES_TARGET],
   markets: [Q_COUNT_MARKETS, "markets"],
   sellingPlans: [Q_COUNT_SPGS, "sellingPlanGroups"],
 };
@@ -5350,7 +5334,17 @@ const COUNT_LISTS = {
 export async function previewCounts({ source, target, types }) {
   const result = {};
   for (const t of types) {
-    if (COUNT_LISTS[t]) {
+    if (t === "shipping") {
+      // market-driven stores keep shipping on markets, not in profiles
+      try {
+        result[t] = {
+          source: await shippingCount(source),
+          target: await shippingCount(target, { isTarget: true }),
+        };
+      } catch {
+        result[t] = { source: null, target: null, note: "unavailable" };
+      }
+    } else if (COUNT_LISTS[t]) {
       try {
         const [q, root, tq = q] = COUNT_LISTS[t];
         result[t] = {
