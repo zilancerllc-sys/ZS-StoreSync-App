@@ -509,6 +509,9 @@ body{margin:0}
 .zs-nav-help-btn:hover{filter:brightness(1.08)}
 .zs-nav-help-btn:focus-visible{outline:2px solid var(--zsn-ink); outline-offset:2px}
 .zs-shell-main{flex:1; min-width:0}
+/* Pages break out to the full window width (width:100vw; margin-left:-50vw);
+   beside the sidebar they fill the content column instead. */
+.zs-shell-main .zs-section-wrap{width:auto !important; left:auto !important; right:auto !important; margin-left:0 !important; margin-right:0 !important}
 .zs-shell-main [id]{scroll-margin-top:12px}
 .zs-menu-bar{display:none}
 .zs-nav-backdrop{display:none}
