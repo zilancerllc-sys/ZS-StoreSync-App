@@ -25,6 +25,7 @@
 
 import { welcomeOfferCard } from "./welcome-offer.js";
 import { emailTags } from "./lib/email-track.js";
+import { isNoEmail } from "./lib/no-email.js";
 
 // The app tag on every email (lib/email-track.js): delivery, opens and
 // clicks show on the owner dashboard's Emails card.
@@ -60,6 +61,10 @@ export function esc(s = "") {
 export async function sendEmail({ type, shop, to, subject, html, text, replyTo, unsubscribeToken, from }) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey || !to) return false;
+  // The owner's no-email list (lib/no-email.js), by store as well as by
+  // address: a store that changes its email is still the store that asked not
+  // to hear from us. Team notices (to our own inbox, about a store) still go.
+  if (type !== "team" && isNoEmail({ shop, email: to })) return false;
 
   try {
     const res = await fetch("https://api.resend.com/emails", {

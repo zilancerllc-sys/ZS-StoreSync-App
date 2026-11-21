@@ -9,6 +9,8 @@ import { Link, useFetcher, useLoaderData, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import { requireOwnerShop } from "../lib/owner.server";
 import { checkStores, loadOwnerDashboard, setStoreMeta } from "../lib/owner-dashboard.server";
+import { cachedRevenue, loadRevenue } from "../lib/owner-revenue.server";
+import OwnerMoney from "../components/OwnerMoney";
 import { syncReviewsCached } from "../lib/app-store-reviews.server";
 import { requestReview } from "../lifecycle.server";
 import { listingTraffic } from "../lib/ga4.server";
@@ -21,6 +23,11 @@ import { loadEmailStats } from "../lib/email-stats.server";
 
 // This app's App Store listing, where reviews are read from.
 const APP_HANDLE = "zs-storesync";
+
+// The stores the money cards ask Shopify about: the ones the dashboard counts
+// (installed and active -- not closed, frozen or dormant -- and not test,
+// owner-owned, App Review or development stores).
+const countedShops = (rows) => rows.filter((r) => r.active && !r.isTest && !r.isDev).map((r) => r.shop);
 
 export const loader = async ({ request }) => {
   // Cross-shop data — owner store only. See lib/owner.server.js.
@@ -35,19 +42,30 @@ export const loader = async ({ request }) => {
   // The app's client id (public, App Bridge already exposes it) builds the
   // admin deep link in the status emails.
   const data = { ...(await loadOwnerDashboard(period)), reviews, apiKey: process.env.SHOPIFY_API_KEY || "" };
+  // Money cards: asks Shopify per store (cached for hours); a slow first count
+  // keeps going in the background and shows the last answer, if any, meanwhile.
+  const revenueP = Promise.race([
+    loadRevenue(countedShops(data.rows)).catch((e) => {
+      console.error("[revenue] load failed:", e?.message || e);
+      return null;
+    }),
+    new Promise((r) => setTimeout(() => r(undefined), 7000)),
+  ]).then((v) => (v === undefined ? { pending: true, last: cachedRevenue() } : v));
   // App Store listing visits and keywords come from GA4; slow or missing GA4
-  // must never hold up the rest of the page.
-  const traffic = await Promise.race([
-    listingTraffic(data.start.slice(0, 10)),
+  // must never hold up the rest of the page. A past day (Yesterday) ends there.
+  const endDay = data.end.slice(0, 10);
+  const trafficP = Promise.race([
+    listingTraffic(data.start.slice(0, 10), endDay === new Date().toISOString().slice(0, 10) ? "today" : endDay),
     new Promise((r) => setTimeout(() => r({ connected: true, error: "Google Analytics took too long; reload to try again." }), 8000)),
   ]);
-  const rank = await loadRanks(RANK.handle, RANK).catch((e) => {
+  const rankP = loadRanks(RANK.handle, RANK).catch((e) => {
     console.error("[rank] load failed:", e?.message || e);
     return null;
   });
   // Email delivery / open / click numbers, recorded by ZS Bundles from Resend.
-  const emails = await loadEmailStats("zs-storesync");
-  return { ...data, traffic, rank, emails };
+  const emailsP = loadEmailStats("zs-storesync");
+  const [traffic, rank, emails, revenue] = await Promise.all([trafficP, rankP, emailsP, revenueP]);
+  return { ...data, traffic, rank, emails, revenue };
 };
 
 export const action = async ({ request }) => {
@@ -60,6 +78,9 @@ export const action = async ({ request }) => {
   if (intent === "check") {
     const r = await checkStores();
     await syncReviewsCached(APP_HANDLE, { force: true });
+    // Re-count the money cards from Shopify with the stores' fresh states.
+    await loadRevenue(countedShops((await loadOwnerDashboard("today")).rows), { force: true })
+      .catch((e) => console.error("[revenue] refresh failed:", e?.message || e));
     const parts = Object.entries(r.tally).map(([k, n]) => `${n} ${k}`).join(", ");
     return { ok: true, message: `Checked ${r.checked} stores: ${parts || "none"}.` };
   }
@@ -368,6 +389,8 @@ export default function OwnerDashboard() {
   const post = (intent, shop, value) => fetcher.submit({ intent, shop, ...(value != null ? { value } : {}) }, { method: "post" });
   const funnelMax = Math.max(1, d.funnel[0]?.n || 1);
   const label = d.periods.find((p) => p.key === d.period)?.label;
+  // Store names for the Emails card's By store list (shop -> name, as stored).
+  const storeNames = useMemo(() => Object.fromEntries(d.rows.filter((r) => r.storeName).map((r) => [r.shop, r.storeName])), [d.rows]);
 
   return (
     <>
@@ -393,39 +416,6 @@ export default function OwnerDashboard() {
           </div>
         </div>
 
-        <div className="od-grid">
-          <div className="od-stat"><div className="od-stat-l">Installed</div><div className="od-stat-v" style={{ color: s.installs ? "var(--zs-ok)" : undefined }}>{s.installs ? `+${s.installs}` : 0}</div><div className="od-stat-h">{label}</div></div>
-          <div className="od-stat"><div className="od-stat-l">Uninstalled</div><div className="od-stat-v" style={{ color: s.uninstalls ? "var(--zs-bad)" : undefined }}>{s.uninstalls ? `-${s.uninstalls}` : 0}</div><div className="od-stat-h">{label}</div></div>
-          <div className="od-stat"><div className="od-stat-l">Active stores</div><div className="od-stat-v">{s.active}</div><div className="od-stat-h">{s.paid} paid · {s.free} free{s.shut ? ` · ${s.shut} closed, frozen or dormant` : ""}</div></div>
-          <div className="od-stat"><div className="od-stat-l">Migrated data</div><div className="od-stat-v">{s.live}</div><div className="od-stat-h">stores with a finished migration or an auto-sync</div></div>
-          <div className="od-stat"><div className="od-stat-l">Stuck</div><div className="od-stat-v" style={{ color: s.stuck ? "var(--zs-warn)" : undefined }}>{s.stuck}</div><div className="od-stat-h">installed 2+ days, nothing live</div></div>
-          <div className="od-stat"><div className="od-stat-l">Migration runs</div><div className="od-stat-v">{s.runs}</div><div className="od-stat-h">{label} · {s.items} items created</div></div>
-          <div className="od-stat"><div className="od-stat-l">Reviewed</div><div className="od-stat-v">{s.reviewed}</div><div className="od-stat-h">{s.notReviewed} active stores not yet</div></div>
-          <div className="od-stat"><div className="od-stat-l">Review requests</div><div className="od-stat-v">{s.reviewRequests}</div><div className="od-stat-h">sent, {label?.toLowerCase()}</div></div>
-        </div>
-
-        <div className="od-card">
-          <div className="od-card-h">
-            <div>
-              <p className="od-card-t">Merchant growth</p>
-              <div>
-                <span className="od-big">{s.change > 0 ? "+" : ""}{s.change}</span>
-                {s.changePct != null && s.change !== 0 && <span className={s.change > 0 ? "od-up" : "od-down"}>{s.change > 0 ? "↑" : "↓"}{Math.abs(s.changePct)}%</span>}
-              </div>
-            </div>
-            <span className="od-small">{label} · UTC · <span style={{ color: "#1F9E6A" }}>■</span> installs <span style={{ color: "#C0271A" }}>■</span> uninstalls</span>
-          </div>
-          <Chart series={d.series} />
-          <p className="od-note">Exact from 17 Oct 2026, when the event log started. Earlier uninstalls were erased by Shopify&apos;s 48-hour data deletion, so Partners shows more history than this chart.</p>
-        </div>
-
-        <Traffic t={d.traffic} label={label} />
-
-        <AppStoreRank r={d.rank} />
-
-
-        <EmailStats e={d.emails} />
-
         <div className="od-two">
           <div className="od-card">
             <p className="od-card-t">Where active stores stop</p>
@@ -450,6 +440,40 @@ export default function OwnerDashboard() {
             ) : <p className="od-note">Nothing happened in this period.</p>}
           </div>
         </div>
+
+        <div className="od-grid">
+          <div className="od-stat"><div className="od-stat-l">Installed</div><div className="od-stat-v" style={{ color: s.installs ? "var(--zs-ok)" : undefined }}>{s.installs ? `+${s.installs}` : 0}</div><div className="od-stat-h">{label}</div></div>
+          <div className="od-stat"><div className="od-stat-l">Uninstalled</div><div className="od-stat-v" style={{ color: s.uninstalls ? "var(--zs-bad)" : undefined }}>{s.uninstalls ? `-${s.uninstalls}` : 0}</div><div className="od-stat-h">{label}</div></div>
+          <div className="od-stat"><div className="od-stat-l">Active stores</div><div className="od-stat-v">{s.active}</div><div className="od-stat-h">{s.paid} paid · {s.free} free{s.shut ? ` · ${s.shut} closed, frozen or dormant` : ""}</div></div>
+          <div className="od-stat"><div className="od-stat-l">Migrated data</div><div className="od-stat-v">{s.live}</div><div className="od-stat-h">stores with a finished migration or an auto-sync</div></div>
+          <div className="od-stat"><div className="od-stat-l">Stuck</div><div className="od-stat-v" style={{ color: s.stuck ? "var(--zs-warn)" : undefined }}>{s.stuck}</div><div className="od-stat-h">installed 2+ days, nothing live</div></div>
+          <div className="od-stat"><div className="od-stat-l">Migration runs</div><div className="od-stat-v">{s.runs}</div><div className="od-stat-h">{label} · {s.items} items created</div></div>
+          <div className="od-stat"><div className="od-stat-l">Reviewed</div><div className="od-stat-v">{s.reviewed}</div><div className="od-stat-h">{s.notReviewed} active stores not yet</div></div>
+          <div className="od-stat"><div className="od-stat-l">Review requests</div><div className="od-stat-v">{s.reviewRequests}</div><div className="od-stat-h">sent, {label?.toLowerCase()}</div></div>
+        </div>
+
+        <OwnerMoney r={d.revenue} paidByPlan={s.paid} />
+
+        <div className="od-card">
+          <div className="od-card-h">
+            <div>
+              <p className="od-card-t">Merchant growth</p>
+              <div>
+                <span className="od-big">{s.change > 0 ? "+" : ""}{s.change}</span>
+                {s.changePct != null && s.change !== 0 && <span className={s.change > 0 ? "od-up" : "od-down"}>{s.change > 0 ? "↑" : "↓"}{Math.abs(s.changePct)}%</span>}
+              </div>
+            </div>
+            <span className="od-small">{label} · UTC · <span style={{ color: "#1F9E6A" }}>■</span> installs <span style={{ color: "#C0271A" }}>■</span> uninstalls</span>
+          </div>
+          <Chart series={d.series} />
+          <p className="od-note">Exact from 17 Oct 2026, when the event log started. Earlier uninstalls were erased by Shopify&apos;s 48-hour data deletion, so Partners shows more history than this chart.</p>
+        </div>
+
+        <Traffic t={d.traffic} label={label} />
+
+        <AppStoreRank r={d.rank} />
+
+        <EmailStats e={d.emails} names={storeNames} />
 
         <div className="od-card" style={{ paddingBottom: 6 }}>
           <div className="od-tabs">
@@ -490,13 +514,14 @@ export default function OwnerDashboard() {
                             </>
                           ) : (
                             <button className="od-btn p" disabled={!r.canEmail || busy(r.shop, "review")}
-                              title={r.canEmail ? "Email this store a review request" : "No email, or the store unsubscribed"}
+                              title={r.noEmail ? "On the owner's no-email list: never emailed" : r.canEmail ? "Email this store a review request" : "No email, or the store unsubscribed"}
                               onClick={() => setArm(r.shop)}>
                               {busy(r.shop, "review") ? "Sending…" : r.reviewAskedAt ? "Ask again" : "Ask for review"}
                             </button>
                           )
                         )}
-                        {r.email && r.active && <a className="od-btn" href={mailtoFor(r, d.apiKey)} target="_blank" rel="noreferrer">Email</a>}
+                        {r.noEmail ? <span className="od-chip mut" title="On the owner's no-email list: never emailed">no email</span>
+                          : r.email && r.active && <a className="od-btn" href={mailtoFor(r, d.apiKey)} target="_blank" rel="noreferrer">Email</a>}
                         <label className="od-check"><input type="checkbox" checked={!!r.reviewedAt} onChange={(e) => post("reviewed", r.shop, e.target.checked ? "1" : "0")} /> reviewed</label>
                         <a className="od-btn" href={`https://${r.shop}`} target="_blank" rel="noreferrer" title="Open this store in a new tab">View store</a>
                       </div>

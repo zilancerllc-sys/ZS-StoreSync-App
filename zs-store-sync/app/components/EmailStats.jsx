@@ -5,6 +5,9 @@
 // every Zilancer app. Numbers come from Resend webhooks recorded by ZS
 // Bundles (lib/email-log.server.js there); other apps fetch them with
 // lib/email-stats.server.js. No email addresses are shown or stored.
+// `names` (optional): { "x.myshopify.com": "Store name" } from names the app
+// already stores; By store shows the name with the handle under it, and the
+// search matches either. A store with no stored name shows its handle.
 import { useMemo, useState } from "react";
 import { EMAIL_TYPE_LABELS } from "../lib/email-track";
 
@@ -51,7 +54,9 @@ function Totals({ t }) {
   );
 }
 
-export default function EmailStats({ e }) {
+const handleOf = (shop) => shop.replace(/\.myshopify\.com$/, "");
+
+export default function EmailStats({ e, names }) {
   const [q, setQ] = useState("");
   const [shownStores, setShownStores] = useState(15);
   const stores = useMemo(() => {
@@ -64,9 +69,9 @@ export default function EmailStats({ e }) {
     }
     const needle = q.trim().toLowerCase();
     return [...m.entries()]
-      .filter(([shop]) => !needle || shop.includes(needle))
+      .filter(([shop]) => !needle || shop.includes(needle) || String(names?.[shop] || "").toLowerCase().includes(needle))
       .sort((a, b) => (a[0] ? 0 : 1) - (b[0] ? 0 : 1));
-  }, [e, q]);
+  }, [e, q, names]);
 
   if (!e) return null;
   return (
@@ -115,7 +120,7 @@ export default function EmailStats({ e }) {
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "14px 0 6px", gap: 10, flexWrap: "wrap" }}>
                 <p className="od-card-t" style={{ margin: 0 }}>By store</p>
-                <input className="em-search" placeholder="Find a store" value={q} onChange={(ev) => setQ(ev.target.value)} />
+                <input className="em-search" placeholder="Find a store (name or handle)" value={q} onChange={(ev) => setQ(ev.target.value)} />
               </div>
               <div style={{ overflowX: "auto" }}>
                 <table className="em-tbl">
@@ -123,7 +128,14 @@ export default function EmailStats({ e }) {
                   <tbody>
                     {stores.slice(0, shownStores).map(([shop, list]) => (
                       <tr key={shop || "-"}>
-                        <td style={{ whiteSpace: "nowrap" }}>{shop ? shop.replace(/\.myshopify\.com$/, "") : <span className="em-mut">store not known</span>}</td>
+                        <td style={{ whiteSpace: "nowrap" }}>
+                          {!shop ? <span className="em-mut">store not known</span> : names?.[shop] ? (
+                            <>
+                              <div style={{ fontWeight: 600 }}>{names[shop]}</div>
+                              <div className="em-mut">{handleOf(shop)}</div>
+                            </>
+                          ) : handleOf(shop)}
+                        </td>
                         <td>
                           {list.slice(0, shop ? 8 : 12).map((r) => (
                             <div className="em-row" key={r.id}>

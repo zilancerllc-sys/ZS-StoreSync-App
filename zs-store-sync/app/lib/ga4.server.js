@@ -93,16 +93,17 @@ const SURFACE = {
 };
 
 // startDate: "YYYY-MM-DD". Returns { connected, error?, ...numbers }.
-export async function listingTraffic(startDate) {
+// endDate: "YYYY-MM-DD" (defaults to today; a past day such as Yesterday ends there).
+export async function listingTraffic(startDate, endDate = "today") {
   const c = credentials();
   if (!c) return { connected: false };
-  const key = startDate;
+  const key = `${startDate}|${endDate}`;
   const hit = reportCache.get(key);
   if (hit && hit.at > Date.now() - CACHE_MS) return hit.data;
 
   try {
     const token = await accessToken(c);
-    const dateRanges = [{ startDate, endDate: "today" }];
+    const dateRanges = [{ startDate, endDate }];
     const [totals, byUrl, events, site] = await Promise.all([
       runReport(token, {
         dateRanges,

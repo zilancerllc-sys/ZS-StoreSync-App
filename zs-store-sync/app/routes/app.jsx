@@ -191,6 +191,9 @@ function AppShell({ apiKey, shop, supportEmail, plan, isOwner, setup }) {
 
   const current = activeItemFor(location.pathname, location.search, location.hash);
   const currentLabel = current ? current.rawLabel || t(current.label) : "";
+  // The owner dashboard is a full-width page of its own: no sidebar (or its
+  // Menu bar) and no free-setup banner there; every other page keeps them.
+  const bare = /^\/app\/stores\/?$/.test(location.pathname);
 
   // v2's AppProvider takes only children and apiKey, and always injects App
   // Bridge — the `embedded` prop it used to need is gone.
@@ -214,22 +217,26 @@ function AppShell({ apiKey, shop, supportEmail, plan, isOwner, setup }) {
       {/* Every page sits right of the app's own sidebar (like ZS B2B Gateway). */}
       <style dangerouslySetInnerHTML={{ __html: SIDEBAR_STYLES }} />
       <div className="zs-shell">
-        <AppSidebar
-          isOwner={isOwner}
-          plan={plan}
-          shop={shop}
-          open={menuOpen}
-          onClose={() => setMenuOpen(false)}
-        />
-        <button
-          type="button"
-          className={"zs-nav-backdrop" + (menuOpen ? " is-open" : "")}
-          aria-hidden="true"
-          tabIndex={-1}
-          onClick={() => setMenuOpen(false)}
-        />
+        {!bare && (
+          <>
+            <AppSidebar
+              isOwner={isOwner}
+              plan={plan}
+              shop={shop}
+              open={menuOpen}
+              onClose={() => setMenuOpen(false)}
+            />
+            <button
+              type="button"
+              className={"zs-nav-backdrop" + (menuOpen ? " is-open" : "")}
+              aria-hidden="true"
+              tabIndex={-1}
+              onClick={() => setMenuOpen(false)}
+            />
+          </>
+        )}
         <div className="zs-shell-main">
-          <div className="zs-menu-bar">
+          {!bare && <div className="zs-menu-bar">
             <button
               type="button"
               className="zs-menu-btn"
@@ -243,8 +250,8 @@ function AppShell({ apiKey, shop, supportEmail, plan, isOwner, setup }) {
               {t("Menu")}
             </button>
             <span className="zs-menu-title">{currentLabel}</span>
-          </div>
-          <SetupBar appName="ZS StoreSync" shop={shop} email={supportEmail} />
+          </div>}
+          {!bare && <SetupBar appName="ZS StoreSync" shop={shop} email={supportEmail} />}
           <Suspense fallback={null}>
             <Await resolve={setup} errorElement={null}>
               {(status) => <SetupStatus status={status} />}

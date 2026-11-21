@@ -24,10 +24,13 @@ import { unauthenticated } from "../shopify.server";
 import { isOwnerShop } from "./owner.server";
 import { isCompShop } from "../credits.server";
 import { blockerFrom, BLOCKER_LABEL } from "./setup-status.server";
+import { isNoEmail } from "./no-email";
 
 const DAY = 24 * 3600 * 1000;
 export const PERIODS = {
   today: { label: "Today", days: 1 },
+  // The whole UTC day before today (same UTC day boundary as Today).
+  yesterday: { label: "Yesterday", days: 1, back: 1 },
   "7d": { label: "7 days", days: 7 },
   "30d": { label: "30 days", days: 30 },
   all: { label: "All time", days: null },
@@ -45,7 +48,10 @@ const iso = (d) => (d ? new Date(d).toISOString() : null);
 export async function loadOwnerDashboard(periodKey = "7d") {
   const period = PERIODS[periodKey] ? periodKey : "7d";
   const now = Date.now();
-  const start = period === "all" ? 0 : startOfUtcDay(now) - (PERIODS[period].days - 1) * DAY;
+  const back = PERIODS[period].back || 0;
+  const start = period === "all" ? 0 : startOfUtcDay(now) - (PERIODS[period].days - 1 + back) * DAY;
+  // Last moment counted: now, or the end of the UTC day for a period in the past.
+  const end = back ? startOfUtcDay(now) - (back - 1) * DAY - 1 : now;
 
   const [contacts, sessions, events, subsRows, connGroups, sourceRows, jobGroups, lastJobs, periodJobs, scheduleGroups, metas, allConns, secrets, offline, lastRuns, allSchedules] =
     await Promise.all([
@@ -61,7 +67,7 @@ export async function loadOwnerDashboard(periodKey = "7d") {
       prisma.migrationJob.groupBy({ by: ["shop"], _max: { createdAt: true } }),
       prisma.migrationJob.groupBy({
         by: ["shop"],
-        where: { createdAt: { gte: new Date(start) }, mode: { notIn: ["undo", "dryrun", "restore"] }, status: { in: ["completed", "partial"] } },
+        where: { createdAt: { gte: new Date(start), lte: new Date(end) }, mode: { notIn: ["undo", "dryrun", "restore"] }, status: { in: ["completed", "partial"] } },
         _count: { _all: true },
         _sum: { createdCount: true },
       }),
@@ -208,7 +214,9 @@ export async function loadOwnerDashboard(periodKey = "7d") {
       stuck: active && !live && !isSource && !!installedAt && now - new Date(installedAt).getTime() > STUCK_AFTER_MS,
       reviewedAt: iso(meta?.reviewedAt),
       reviewAskedAt: iso(c?.reviewAskSentAt),
-      canEmail: !!(c?.email && c.optedIn && !c.unsubscribedAt && !c.uninstalledAt),
+      canEmail: !!(c?.email && c.optedIn && !c.unsubscribedAt && !c.uninstalledAt) && !isNoEmail({ shop, email }),
+      // On the owner's no-email list (lib/no-email.js): never emailed, by any path.
+      noEmail: isNoEmail({ shop, email }),
       isTest:
         !!meta?.isTest ||
         isOwnerShop(shop) ||
@@ -240,26 +248,26 @@ export async function loadOwnerDashboard(periodKey = "7d") {
       return r.active && !(eventsOf[r.shop] || []).some((e) => e.type === "install");
     }).length;
 
-  // Hourly for today, daily otherwise; each point is the count at the end of
-  // its bucket (now, for the last one).
-  const hourly = period === "today";
+  // Hourly for a single day, daily otherwise; each point is the count at the
+  // end of its bucket (now, for the last one).
+  const hourly = PERIODS[period].days === 1;
   const step = hourly ? 3600 * 1000 : DAY;
   const buckets = [];
-  for (let t = chartStart; t <= now; t += step) {
-    const end = Math.min(t + step - 1, now);
+  for (let t = chartStart; t <= end; t += step) {
+    const bucketEnd = Math.min(t + step - 1, end);
     const inBucket = realEvents.filter((e) => {
       const x = e.createdAt.getTime();
-      return x >= t && x <= end;
+      return x >= t && x <= bucketEnd;
     });
     buckets.push({
       at: new Date(t).toISOString(),
-      merchants: activeAt(end),
+      merchants: activeAt(bucketEnd),
       installs: inBucket.filter((e) => e.type === "install").length,
       uninstalls: inBucket.filter((e) => e.type === "uninstall").length,
     });
   }
 
-  const inPeriod = realEvents.filter((e) => e.createdAt.getTime() >= start);
+  const inPeriod = realEvents.filter((e) => e.createdAt.getTime() >= start && e.createdAt.getTime() <= end);
   const before = activeAt(start - 1);
   const activeNow = real.filter((r) => r.active).length;
   const activeReal = real.filter((r) => r.active);
@@ -267,6 +275,7 @@ export async function loadOwnerDashboard(periodKey = "7d") {
   return {
     period,
     start: new Date(chartStart).toISOString(),
+    end: new Date(end).toISOString(),
     periods: Object.entries(PERIODS).map(([key, p]) => ({ key, label: p.label })),
     stats: {
       installs: inPeriod.filter((e) => e.type === "install").length,

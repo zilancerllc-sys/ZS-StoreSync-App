@@ -411,6 +411,7 @@ export async function runDueLifecycleEmails(now = new Date()) {
 export async function requestReview(shop) {
   const c = await db.merchantContact.findUnique({ where: { shop } });
   if (!c || !c.email) return { ok: false, reason: "no email address on file" };
+  if (isNoEmail({ shop, email: c.email })) return { ok: false, reason: "the store is on the owner's no-email list" };
   if (c.uninstalledAt) return { ok: false, reason: "the store has uninstalled" };
   if (!c.optedIn || c.unsubscribedAt) return { ok: false, reason: "the store unsubscribed from email" };
   const sent = await sendReviewRequestEmail({ to: c.email, shop: c.shop, token: c.unsubscribeToken }).catch(() => false);
