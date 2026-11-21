@@ -703,7 +703,7 @@ export default function Start() {
   const { shop, role, code, pulling, readySources, hasMigrated } = useLoaderData();
 
   return (
-    <s-page heading={t("Get started")}>
+    <s-page heading={t("Get started")} inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">

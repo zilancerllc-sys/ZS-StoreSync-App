@@ -408,7 +408,7 @@ export default function Sync() {
   };
 
   return (
-    <s-page heading={t("Sync Changes")}>
+    <s-page heading={t("Sync Changes")} inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">

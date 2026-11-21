@@ -166,7 +166,7 @@ export default function Preview() {
   const typeName = (id) => t(TYPES.find((x) => x.id === id)?.name || id);
 
   return (
-    <s-page heading={t("Preview & Compare")}>
+    <s-page heading={t("Preview & Compare")} inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">

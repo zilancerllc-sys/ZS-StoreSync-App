@@ -768,7 +768,7 @@ export default function Index() {
   }[k] || <ArrowLeftRight size={17}/>);
 
   return (
-    <s-page heading="ZS StoreSync">
+    <s-page heading="ZS StoreSync" inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">

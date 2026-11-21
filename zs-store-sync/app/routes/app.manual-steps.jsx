@@ -60,7 +60,7 @@ export default function ManualSteps() {
     });
   };
   return (
-    <s-page heading={t("Manual steps")}>
+    <s-page heading={t("Manual steps")} inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">

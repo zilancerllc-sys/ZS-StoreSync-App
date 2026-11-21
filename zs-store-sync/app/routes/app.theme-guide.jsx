@@ -150,7 +150,7 @@ function Step({ n, title, children }) {
 export default function ThemeGuide() {
   const t = useT();
   return (
-    <s-page heading={t("Copy your theme")}>
+    <s-page heading={t("Copy your theme")} inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">

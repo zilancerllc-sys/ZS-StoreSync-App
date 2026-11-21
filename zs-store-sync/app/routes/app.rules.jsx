@@ -234,7 +234,7 @@ export default function Rules() {
   const { connections, source } = data;
 
   return (
-    <s-page heading={t("Price & stock rules")}>
+    <s-page heading={t("Price & stock rules")} inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">

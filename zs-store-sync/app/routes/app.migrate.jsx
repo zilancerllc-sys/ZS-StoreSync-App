@@ -547,7 +547,7 @@ export default function Migrate() {
   const authedConns = connections.filter(usable);
 
   return (
-    <s-page heading={t("New Migration")}>
+    <s-page heading={t("New Migration")} inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">

@@ -142,7 +142,7 @@ export default function Settings() {
   };
 
   return (
-    <s-page heading={t("Settings")}>
+    <s-page heading={t("Settings")} inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">

@@ -513,6 +513,9 @@ body{margin:0}
    beside the sidebar they fill the content column instead. */
 .zs-shell-main .zs-section-wrap{width:auto !important; left:auto !important; right:auto !important; margin-left:0 !important; margin-right:0 !important}
 .zs-shell-main [id]{scroll-margin-top:12px}
+/* Full width (owner 2026-11-21): every page uses the whole content column
+   right of the sidebar; pages keep their own ~24px inner padding. */
+.zs-shell-main .zs-wrap{max-width:none !important}
 .zs-menu-bar{display:none}
 .zs-nav-backdrop{display:none}
 @media (max-width:759px){

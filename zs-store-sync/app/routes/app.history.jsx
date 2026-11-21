@@ -264,7 +264,7 @@ export default function History() {
   }, [logFetcher.state, logFetcher.data]);
 
   return (
-    <s-page heading={t("Migration History")}>
+    <s-page heading={t("Migration History")} inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
       <div className="zs-section-wrap">
         <div className="zs-root">

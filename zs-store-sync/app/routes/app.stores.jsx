@@ -120,7 +120,7 @@ export const action = async ({ request }) => {
 const styles = `
   :root{--zs-red:#DD3B2A;--zs-crimson:#C0271A;--zs-bg:#f1f1f1;--zs-surface:#fff;--zs-soft:#FFF8F6;--zs-bd:rgba(192,39,26,0.12);--zs-bd-s:rgba(192,39,26,0.26);--zs-tx:#4A1C16;--zs-tx-s:#2E0804;--zs-tx-m:#8A4E44;--zs-tx-f:#B98E84;--zs-ok:#1F9E6A;--zs-ok-bg:rgba(31,158,106,0.12);--zs-warn:#B7791F;--zs-warn-bg:rgba(183,121,31,0.12);--zs-bad:#C0271A;--zs-bad-bg:rgba(192,39,26,0.1);--zs-line:#0F9D94}
   .od{background:var(--zs-bg);min-height:100vh;color:var(--zs-tx);font-family:'Inter',system-ui,sans-serif;padding:24px}
-  .od-in{max-width:1240px;margin:0 auto}
+  .od-in{max-width:none;margin:0 auto}
   .od-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin:8px 0 22px}
   .od-title{font-size:30px;font-weight:700;letter-spacing:-0.02em;margin:0;color:var(--zs-tx-s)}
   .od-sub{color:var(--zs-tx-m);font-size:14px;margin:4px 0 0}

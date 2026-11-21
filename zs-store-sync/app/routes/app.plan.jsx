@@ -628,7 +628,7 @@ export default function Plan() {
   };
 
   return (
-    <s-page heading={t("Pricing Plans")}>
+    <s-page heading={t("Pricing Plans")} inlineSize="large">
       <style dangerouslySetInnerHTML={{ __html: brandStyles + pageStyles }} />
 
       <div className="zs-section-wrap">
