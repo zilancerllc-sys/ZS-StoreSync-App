@@ -469,12 +469,6 @@ export default function OwnerDashboard() {
           <p className="od-note">Exact from 17 Oct 2026, when the event log started. Earlier uninstalls were erased by Shopify&apos;s 48-hour data deletion, so Partners shows more history than this chart.</p>
         </div>
 
-        <Traffic t={d.traffic} label={label} />
-
-        <AppStoreRank r={d.rank} />
-
-        <EmailStats e={d.emails} names={storeNames} />
-
         <div className="od-card" style={{ paddingBottom: 6 }}>
           <div className="od-tabs">
             {TABS.map(([k, l]) => (
@@ -542,6 +536,12 @@ export default function OwnerDashboard() {
             <button className="od-btn" disabled={dl} onClick={async () => { setDl(true); try { await downloadFile("/app/stores-export.csv", "installed-stores.csv"); } finally { setDl(false); } }}>{dl ? "Preparing…" : "Download CSV"}</button>
           </div>
         </div>
+
+        <Traffic t={d.traffic} label={label} />
+
+        <AppStoreRank r={d.rank} />
+
+        <EmailStats e={d.emails} names={storeNames} />
       </div></div>
       {fetcher.data?.message && fetcher.state === "idle" && (
         <div className={`od-toast${fetcher.data.ok ? "" : " err"}`}>{fetcher.data.message}</div>
